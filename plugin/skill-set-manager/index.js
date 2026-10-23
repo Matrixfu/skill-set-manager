@@ -250,30 +250,37 @@ export function apply(ctx, config) {
   ctx.on('skills/change', () => {});
 
   // 兜底通道：Remote 面不可达时 client 走同源 fetch（同一实现，非第二套逻辑）。
+  // 注意：webServer 用 ctx.get 可选取用（headless profile 无此服务时不得崩 entry）。
   try {
-    ctx.webServer?.register?.({
-      path: '/api/skill-set-manager',
-      handler: async (req, res) => {
-        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
-        let body = '';
-        for await (const chunk of req) body += chunk;
-        try {
-          const { method, args } = JSON.parse(body || '{}');
-          const fn = remote[method];
-          if (typeof fn !== 'function' || !['state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList'].includes(method)) {
-            res.writeHead(400, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ error: `unknown method: ${method}` }));
-            return;
+    const webServer = ctx.get('webServer');
+    if (!webServer) {
+      ctx.logger.warn('skill-set-manager：无 webServer 服务，fetch 兜底通道不可用（Remote 面不受影响）');
+    } else {
+      webServer.register({
+        kind: 'exact',
+        path: '/api/skill-set-manager',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+          let body = '';
+          for await (const chunk of req) body += chunk;
+          try {
+            const { method, args } = JSON.parse(body || '{}');
+            const fn = remote[method];
+            if (typeof fn !== 'function' || !['state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList'].includes(method)) {
+              res.writeHead(400, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: `unknown method: ${method}` }));
+              return;
+            }
+            const value = await fn.call(remote, args);
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ value }));
+          } catch (e) {
+            res.writeHead(500, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: String(e?.message ?? e) }));
           }
-          const value = await fn.call(remote, args);
-          res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ value }));
-        } catch (e) {
-          res.writeHead(500, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ error: String(e?.message ?? e) }));
-        }
-      },
-    });
+        },
+      });
+    }
   } catch (e) {
     ctx.logger.warn(`skill-set-manager webServer 兜底通道注册失败（不影响 Remote 面）: ${e?.message ?? e}`);
   }
