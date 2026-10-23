@@ -4,9 +4,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { effectiveNames } from './sets.js';
+import { effectiveNames, loadSet, RESIDENT_SLUG } from './sets.js';
 import { resolveSkillTargets } from './resolver.js';
 import { readManaged, writeManaged } from './managed.js';
+import { readBinding } from './binding.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
 
 export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = fs } = {}) {
@@ -67,5 +68,43 @@ export function readbackCheck(roots, projectRoot, setSlug, { fs: fsImpl = fs } =
     actual: [...new Set(actual)].sort(),
     missing: expected.filter((n) => !actualSet.has(n)),
     extra: [...actualSet].filter((n) => !expected.includes(n)).sort(),
+  };
+}
+
+/**
+ * footer 徽标数据源（§7.5 + Review-Focus 1/2）：
+ * - 冻结绑定：binding 指向已删除的技能集 → 清单原样保留、不再驱动、红标改绑。
+ * - 失效链接：managed 记录的条目在盘上已 missing。
+ * - 外来条目：盘上有、managed 没有——只报告不动手（ADR-0003）。
+ */
+export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
+  const binding = readBinding(projectRoot, { fs: fsImpl });
+  const managed = readManaged(projectRoot, { fs: fsImpl });
+  const base = { ok: true, missing: [], extra: [], foreign: [], brokenLinks: [], frozen: false, unbound: false, binding, setSlug: binding?.setSlug ?? null, detail: '' };
+  if (!binding || !binding.setSlug) return { ...base, unbound: true, detail: '未绑定：插件不改动该项目' };
+  if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
+    return { ...base, ok: false, frozen: true, detail: `冻结绑定：技能集「${binding.setSlug}」已删除，生效清单原样保留，请改绑` };
+  }
+  const rc = readbackCheck(roots, projectRoot, binding.setSlug, { fs: fsImpl });
+  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const entries = managed?.entries ?? {};
+  const brokenLinks = Object.keys(entries).filter((name) => {
+    const k = entryKind(path.join(skillsDir, entries[name].flat ? `${name}.md` : name), { fs: fsImpl });
+    return k === 'missing';
+  });
+  const foreign = rc.extra.filter((n) => !(n in entries));
+  const ok = rc.ok && brokenLinks.length === 0;
+  return {
+    ...base,
+    ok,
+    missing: rc.missing,
+    extra: rc.extra,
+    foreign,
+    brokenLinks,
+    detail: ok ? '托管清单与目录一致' : [
+      rc.missing.length ? `缺失: ${rc.missing.join(', ')}` : '',
+      rc.extra.length ? `多出: ${rc.extra.join(', ')}` : '',
+      brokenLinks.length ? `失效链接: ${brokenLinks.join(', ')}` : '',
+    ].filter(Boolean).join('；'),
   };
 }
