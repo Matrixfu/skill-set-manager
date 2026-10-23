@@ -1,6 +1,7 @@
 /** 项目绑定文件（§11）：<projectRoot>/.dsh/skill-set-binding.json。 */
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeTextAtomic } from './atomic.js';
 
 const bindingFile = (projectRoot) => path.join(projectRoot, '.dsh', 'skill-set-binding.json');
 
@@ -16,7 +17,6 @@ export function readBinding(projectRoot, { fs: fsImpl = fs } = {}) {
 
 export function writeBinding(projectRoot, setSlug, { fs: fsImpl = fs } = {}) {
   const doc = { setSlug, updatedAt: new Date().toISOString() };
-  fsImpl.mkdirSync(path.dirname(bindingFile(projectRoot)), { recursive: true });
-  fsImpl.writeFileSync(bindingFile(projectRoot), JSON.stringify(doc, null, 2) + '\n');
+  writeTextAtomic(bindingFile(projectRoot), JSON.stringify(doc, null, 2) + '\n', { fs: fsImpl });
   return doc;
 }

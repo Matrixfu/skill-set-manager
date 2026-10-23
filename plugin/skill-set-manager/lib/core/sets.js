@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SKILL_NAME_RE } from './paths.js';
+import { writeTextAtomic } from './atomic.js';
 
 export const RESIDENT_SLUG = '_resident';
 
@@ -55,8 +56,7 @@ export function saveSet(roots, set) {
   }
   const prev = readJson(setPath(roots, slug));
   const doc = { slug, name, description, skills: [...skills], createdAt: prev?.createdAt ?? new Date().toISOString(), updatedAt: new Date().toISOString() };
-  fs.mkdirSync(roots.setsDir, { recursive: true });
-  fs.writeFileSync(setPath(roots, slug), JSON.stringify(doc, null, 2) + '\n');
+  writeTextAtomic(setPath(roots, slug), JSON.stringify(doc, null, 2) + '\n');
   return doc;
 }
 
@@ -86,11 +86,15 @@ export function copySet(roots, slug, name) {
 export function loadResident(roots) {
   return readJson(path.join(roots.setsDir, `${RESIDENT_SLUG}.json`)) ?? { slug: RESIDENT_SLUG, name: '常驻技能', skills: [] };
 }
-export function saveResident(roots, skills) {
+export function saveResident(roots, skills, { links } = {}) {
   for (const s of skills) if (!SKILL_NAME_RE.test(s)) throw new Error(`技能名不合法: ${s}`);
-  const doc = { slug: RESIDENT_SLUG, name: '常驻技能', skills: [...skills], updatedAt: new Date().toISOString() };
-  fs.mkdirSync(roots.setsDir, { recursive: true });
-  fs.writeFileSync(path.join(roots.setsDir, `${RESIDENT_SLUG}.json`), JSON.stringify(doc, null, 2) + '\n');
+  const prev = readJson(path.join(roots.setsDir, `${RESIDENT_SLUG}.json`));
+  const doc = {
+    slug: RESIDENT_SLUG, name: '常驻技能', skills: [...skills],
+    links: links ?? prev?.links ?? {}, // 全局区自建链接台账（退常驻精确回收）
+    updatedAt: new Date().toISOString(),
+  };
+  writeTextAtomic(path.join(roots.setsDir, `${RESIDENT_SLUG}.json`), JSON.stringify(doc, null, 2) + '\n');
   return doc;
 }
 

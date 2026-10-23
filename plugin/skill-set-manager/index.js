@@ -16,6 +16,7 @@ import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
+import { syncResident } from './lib/core/resident.js';
 
 /** 行级配置（cordis.patch.yml 的 config 块；用户 patch 层升级存活）。 */
 export const Config = z.object({
@@ -81,6 +82,7 @@ export function apply(ctx, config) {
       const store = await storeOf();
       return {
         ...loc,
+        sessionId: req?.sessionId ?? null,
         binding,
         set,
         sets: sets.listSets(roots),
@@ -125,7 +127,8 @@ export function apply(ctx, config) {
     }
 
     async setResident(req) {
-      return sets.saveResident(roots, req.names);
+      sets.saveResident(roots, req.names ?? []);
+      return await syncResident(roots);
     }
 
     async saveAsFromEffective(req) {
@@ -220,6 +223,11 @@ export function apply(ctx, config) {
       ctx.logger.warn(`skill-set-manager 启动还原失败: ${e?.message ?? e}`);
     }
   }).catch((e) => ctx.logger.warn(`skill-set-manager 存储打开失败: ${e?.message ?? e}`));
+
+  // 常驻链接幂等修复（§5.3：常驻 = 库 → 全局生效区的链接，重启/外部改动后自愈）。
+  syncResident(roots).then((r) => {
+    if (r.warnings.length) ctx.logger.warn(`skill-set-manager 常驻同步警告: ${r.warnings.join('; ')}`);
+  }).catch((e) => ctx.logger.warn(`skill-set-manager 常驻同步失败: ${e?.message ?? e}`));
 
   // 新会话自动绑定（默认关；开启后仅对无绑定的项目落默认集）。
   if (config.autoBindNewProject && config.autoBindSlug) {

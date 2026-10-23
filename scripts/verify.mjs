@@ -134,6 +134,17 @@ function findLatestSession(projectRoot) {
   }
   return null;
 }
+/** 全部候选会话文件（新→旧）：服务重启会开新会话，#6 需回退到最近一个 ≥2 轮的会话。 */
+function listSessionFiles(projectRoot) {
+  const dir = path.join(os.homedir(), '.dsh', 'sessions', sessionDirKey(projectRoot));
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((d) => d.startsWith('session-'))
+    .map((d) => { try { return { d, m: fs.statSync(path.join(dir, d)).mtimeMs }; } catch { return { d, m: 0 }; } })
+    .sort((a, b) => b.m - a.m)
+    .map((s) => path.join(dir, s.d, 'session.v4.jsonl.zstd'))
+    .filter((f) => fs.existsSync(f));
+}
 
 // ---------- case 表（§17 编号 + Review-Focus 注入项） ----------
 const CASES = [
@@ -181,21 +192,50 @@ const CASES = [
     },
   },
   {
+    id: 'resident-global', title: '常驻 = 链入全局生效区（§5.3）；同名不抢占、退常驻精确回收（M2）',
+    async run(f) {
+      await withRoots(f);
+      for (const n of ['res-a', 'res-b']) writeSkill(f.library, n);
+      const s = await core('sets');
+      const { syncResident } = await core('resident');
+      const { entryKind } = await core('linkx');
+      mkdirp(path.join(f.userDsh, 'res-b')); // 全局区既有同名外来条目
+      fs.writeFileSync(path.join(f.userDsh, 'res-b', 'SKILL.md'), '# foreign\n');
+      await s.saveResident(f.roots, ['res-a', 'res-b']);
+      const r = await syncResident(f.roots);
+      eq(entryKind(path.join(f.userDsh, 'res-a')), 'junction', 'res-a 链入全局生效区');
+      eq(fs.readFileSync(path.join(f.userDsh, 'res-b', 'SKILL.md'), 'utf8'), '# foreign\n', '全局区外来同名不被抢占');
+      ok(r.warnings.some((w) => w.includes('res-b')), '全局区冲突有警告');
+      await s.saveResident(f.roots, []);
+      await syncResident(f.roots);
+      ok(!fs.existsSync(path.join(f.userDsh, 'res-a')), '取消常驻 → 精确回收自建链接');
+      ok(fs.existsSync(path.join(f.userDsh, 'res-b')), '非我创建的条目不误删');
+      await s.saveResident(f.roots, ['res-a']);
+      await withRoots(f, { crossHarnessResident: true }); // 开关开 → 同时链跨 harness 区
+      await syncResident(f.roots);
+      eq(entryKind(path.join(f.userAgentsSkills, 'res-a')), 'junction', '开关开时链跨 harness 区');
+    },
+  },
+  {
     id: '4', title: '新项目绑定后自动生成生效清单；.managed.json 不被扫成条目（§17#4）',
     async run(f) {
       await withRoots(f);
       for (const n of ['lib-docx', 'lib-pdf', 'resident-x']) writeSkill(f.library, n);
       const s = await core('sets'); await s.saveResident(f.roots, ['resident-x']);
+      const { syncResident } = await core('resident'); await syncResident(f.roots);
       await s.saveSet(f.roots, { slug: 'doc', name: '文档', skills: ['lib-docx', 'lib-pdf'] });
       const { writeBinding } = await core('binding');
       const { planEffective, applyPlan } = await core('effective');
       const { readManaged } = await core('managed');
+      const { entryKind } = await core('linkx');
       await writeBinding(f.projectA, 'doc');
       const plan = await planEffective(f.roots, f.projectA, 'doc');
       await applyPlan(f.projectA, plan);
-      setEq(skillDirNames(f.projectA), ['resident-x', 'lib-docx', 'lib-pdf'], '项目条目 == 常驻+集');
+      setEq(skillDirNames(f.projectA), ['lib-docx', 'lib-pdf'], '项目条目 = 集（常驻在全局区，§5.3）');
+      eq(entryKind(path.join(f.userDsh, 'resident-x')), 'junction', '常驻在全局生效区可见');
       const mg = await readManaged(f.projectA);
       eq(mg.setSlug, 'doc', '托管清单记录来源技能集');
+      eq(mg.entries['lib-docx'].from, 'library', 'managed.from = 来源标签（§11）');
       lacks(await scanNames(f, f.projectA), '.managed', '.managed.json 不应被扫成条目');
       lacks(await scanNames(f, f.projectA), '.managed.json', '.managed.json 不应被扫成条目');
     },
@@ -223,11 +263,45 @@ const CASES = [
     id: '6', title: '切换后同会话下一轮请求生效（§17#6，权威=会话落盘 skill-catalog）',
     status: 'live', // 需活会话轮次：--assert-catalog auto|<file> 时执行（T9 接通）
     async run(f, ctx) {
-      const file = ctx.assertCatalog === 'auto' ? findLatestSession(ctx.catalogProject || f.projectA) : ctx.assertCatalog;
+      const project = ctx.catalogProject || f.projectA;
+      let file = ctx.assertCatalog === 'auto' ? null : ctx.assertCatalog;
+      let rounds = [];
+      if (file) rounds = catalogEventsFromSession(file);
+      else {
+        let first = null;
+        for (const cand of listSessionFiles(project)) { // 服务重启会开新会话：回退到最近一个 ≥2 轮的会话
+          if (!first) first = cand;
+          const r = catalogEventsFromSession(cand);
+          if (r.length >= 2) { file = cand; rounds = r; break; }
+        }
+        if (!rounds.length && first) { file = first; rounds = catalogEventsFromSession(first); }
+      }
       ok(file && fs.existsSync(file), `找不到待解析会话文件（--assert-catalog auto 需要已存在会话的项目）`);
-      const rounds = catalogEventsFromSession(file);
-      ok(rounds.length >= 2, `skill-catalog 事件不足 2 轮（${rounds.length}），无法断言“切换后下一轮变化”`);
-      const [before, after] = rounds.slice(-2);
+      ok(rounds.length >= 2, `skill-catalog 事件不足 2 轮（${rounds.length}，会话 ${file}），无法断言“切换后下一轮变化”`);
+      const pairOf = (rs) => { // 找相邻两轮满足 expectAdd 的最新证据对
+        for (let i = rs.length - 2; i >= 0; i--) {
+          const b = rs[i], a = rs[i + 1];
+          const ad = a.filter((n) => !b.includes(n));
+          if (ctx.expectAdd.every((n) => ad.includes(n)) && !ctx.expectAdd.some((n) => b.includes(n))) return { before: b, after: a };
+        }
+        return null;
+      };
+      let before; let after;
+      if (ctx.expectAdd?.length) {
+        let found = rounds.length >= 2 ? pairOf(rounds) : null;
+        if (!found && ctx.assertCatalog === 'auto') {
+          for (const cand of listSessionFiles(project)) { // 跨会话搜索：重启切会话不失效
+            const rs = catalogEventsFromSession(cand);
+            found = pairOf(rs);
+            if (found) { file = cand; break; }
+          }
+        }
+        ok(found, `所有会话的相邻两轮中未找到满足 --expect-add（${ctx.expectAdd.join(', ')}）的生效证据`);
+        before = found.before; after = found.after;
+        ctx.log(`expect-add ok: ${ctx.expectAdd.join(', ')}（会话 ${path.basename(path.dirname(file))}）`);
+      } else {
+        [before, after] = rounds.slice(-2);
+      }
       const added = after.filter((n) => !before.includes(n)), removed = before.filter((n) => !after.includes(n));
       ok(added.length || removed.length, '最后两轮 skill-catalog 无差异：未证明切换热生效');
       lacks(after, '.managed', '注入清单不应含 .managed');
@@ -250,6 +324,24 @@ const CASES = [
       ok(!sc.ok, '人为不一致 → selfCheck.ok 应为 false');
       has(sc.missing, 'lib-b', 'missing 应含被摘条目');
       has(sc.extra.concat(sc.foreign), 'ghost', 'extra/foreign 应含外来条目');
+    },
+  },
+  {
+    id: 'frozen', title: '冻结绑定：集被删 → 清单原样保留、不再驱动、红标改绑（Review-Focus 1）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'f1');
+      const s = await core('sets'); await s.saveSet(f.roots, { slug: 'frz', name: 'F', skills: ['f1'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
+      const { readManaged } = await core('managed');
+      await writeBinding(f.projectA, 'frz');
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'frz'));
+      await s.deleteSet(f.roots, 'frz');
+      const sc = await selfCheck(f.roots, f.projectA);
+      eq(sc.frozen, true, 'frozen 判定');
+      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'f1')), '冻结：生效清单原样保留');
+      ok('f1' in (await readManaged(f.projectA)).entries, '冻结：托管清单不回收');
     },
   },
   {
@@ -335,6 +427,30 @@ const CASES = [
     },
   },
   {
+    id: 'conflict-foreign', title: '目标同名外来条目：跳过并警告，绝不删除（M3/§7.3）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'alpha');
+      const s = await core('sets'); await s.saveSet(f.roots, { slug: 'doc', name: 'D', skills: ['alpha'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
+      const { readManaged } = await core('managed');
+      const foreign = path.join(f.projectA, '.dsh', 'skills', 'alpha');
+      mkdirp(foreign);
+      fs.writeFileSync(path.join(foreign, 'SKILL.md'), '# user content\n');
+      await writeBinding(f.projectA, 'doc');
+      const plan = await planEffective(f.roots, f.projectA, 'doc');
+      ok((plan.warnForeign ?? []).some((w) => w.name === 'alpha'), '冲突应列入 warnForeign');
+      ok(!(plan.add ?? []).some((a) => a.name === 'alpha'), '冲突不进 add（不抢占）');
+      const applied = await applyPlan(f.projectA, plan);
+      eq(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), '# user content\n', '外来内容不被覆盖');
+      ok(applied.warnings.some((w) => w.includes('alpha')), 'apply 报冲突警告');
+      ok(!('alpha' in ((await readManaged(f.projectA))?.entries ?? {})), '冲突条目不记托管');
+      const sc = await selfCheck(f.roots, f.projectA);
+      ok(sc.foreign.includes('alpha'), 'selfCheck 报外来条目');
+    },
+  },
+  {
     id: 'dangling', title: '悬空引用：写入前警告、不静默写入（Review-Focus 3）',
     async run(f) {
       await withRoots(f);
@@ -404,9 +520,9 @@ const CASES = [
       const r2 = await ensureGitignoreLine(f.projectA, { enabled: true });
       ok(r2.changed, '无关注释不阻止署名条目行');
       ok(fs.readFileSync(g, 'utf8').split('\n').some((l) => l.trim() === '.dsh/skills/'), '条目行存在即生效');
-      await ensureGitignoreLine(f.projectA, { enabled: false });
-      eq(fs.readFileSync(g, 'utf8'), fs.readFileSync(g, 'utf8'), '开关关闭不写不删');
       const before = fs.readFileSync(g, 'utf8');
+      await ensureGitignoreLine(f.projectA, { enabled: false });
+      eq(fs.readFileSync(g, 'utf8'), before, '开关关闭不写不删');
       await ensureGitignoreLine(f.projectA, { enabled: false });
       eq(fs.readFileSync(g, 'utf8'), before, '开关关闭二次调用仍不动');
     },
@@ -422,6 +538,7 @@ function parseArgs() {
     else if (a[i] === '--keep-fixtures') ctx.keep = true;
     else if (a[i] === '--assert-catalog') ctx.assertCatalog = a[++i];
     else if (a[i] === '--catalog-project') ctx.catalogProject = a[++i];
+    else if (a[i] === '--expect-add') ctx.expectAdd = a[++i].split(',').map((x) => x.trim()).filter(Boolean);
     else if (a[i] === '--list-cases') { for (const c of CASES) console.log(`${c.id}\t${c.status || 'active'}\t${c.title}`); process.exit(0); }
   }
   return ctx;

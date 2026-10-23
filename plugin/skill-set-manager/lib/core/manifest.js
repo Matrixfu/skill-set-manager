@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { parseFrontmatter } from './resolver.js';
+import { writeTextAtomic } from './atomic.js';
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
@@ -50,7 +51,7 @@ export function registerLibrary(roots, { fs: fsImpl = fs } = {}) {
       files,
       dirDigest,
     };
-    fsImpl.writeFileSync(mfPath, JSON.stringify(manifest, null, 2) + '\n');
+    writeTextAtomic(mfPath, JSON.stringify(manifest, null, 2) + '\n', { fs: fsImpl });
     registered.push(manifest.name);
     manifests.push(mfPath);
   }

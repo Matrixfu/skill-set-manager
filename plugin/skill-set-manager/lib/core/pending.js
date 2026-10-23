@@ -10,12 +10,14 @@ import { readManaged, writeManaged } from './managed.js';
 import { readBinding, writeBinding } from './binding.js';
 import { planEffective, applyPlan } from './effective.js';
 import { resolveSkillTargets } from './resolver.js';
-import { makeEntry, removeEntry } from './linkx.js';
+import { makeEntry, removeEntry, entryKind } from './linkx.js';
 
 export async function startOverride(store, roots, projectRoot, { add = [], remove = [] } = {}, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl });
   if (!managed) throw new Error('临时覆盖要求该项目已绑定技能集（无托管清单）');
   const snapshot = { setSlug: managed.setSlug, entries: structuredClone(managed.entries), sessionOverride: managed.sessionOverride };
+  // 先落标记后动目录（§6.6 崩溃即设计前提）：标记在 = 可还原；目录动了没标记 = 不可还原
+  await store.put('pending', projectKey(projectRoot), { projectRoot, setSlug: managed.setSlug, previousManaged: snapshot, added: [], removed: [] });
   const entries = { ...managed.entries };
   const skillsDir = path.join(projectRoot, '.dsh', 'skills');
   const removed = remove.filter((n) => n in entries);
@@ -30,6 +32,7 @@ export async function startOverride(store, roots, projectRoot, { add = [], remov
     for (const name of add) {
       const t = targets.get(name);
       if (!t) { missingAdd.push(name); continue; }
+      if (entryKind(path.join(skillsDir, name), { fs: fsImpl }) !== 'missing') { missingAdd.push(name); continue; } // 同名外来条目：不抢占（§7.3）
       const made = makeEntry(t.path, path.join(skillsDir, name), { fs: fsImpl });
       entries[name] = { kind: made.kind, from: t.path, ...(made.copied ? { copied: true } : {}), ...(made.flat ? { flat: true } : {}) };
       added.push(name);
