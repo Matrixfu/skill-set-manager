@@ -280,7 +280,7 @@ const CASES = [
       const inner = gitProject(path.join(f.projectA, 'inner')); mkdirp(path.join(inner, 'sub'));
       eq(path.resolve(findProjectRoot(path.join(inner, 'sub'))), path.resolve(inner), '嵌套仓库独立');
       const noGit = path.join(f.base, 'projects', 'no-git'); mkdirp(path.join(noGit, 'x'));
-      eq(path.resolve(findProjectRoot(path.join(noGit, 'x'))), path.resolve(noGit), '无版本库 → 退回会话目录');
+      eq(path.resolve(findProjectRoot(path.join(noGit, 'x'))), path.resolve(path.join(noGit, 'x')), '无版本库 → 退回会话目录本身');
     },
   },
   {
@@ -356,7 +356,7 @@ const CASES = [
       fake.symlinkSync = () => { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; };
       const made = await makeEntry(target, link, { fs: fake });
       eq(made.kind, 'copy', 'EPERM → 复制兜底');
-      eq(await entryKind(link), 'copy', 'entryKind 判定为 copy');
+      eq(entryKind(link), 'dir', '副本落地为真实目录（copy/dir 之分记在托管清单，fs 层不猜）');
       fs.writeFileSync(path.join(target, 'SKILL.md'), 'changed-in-library\n');
       ok(!fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8').includes('changed-in-library'), '副本不随库演进');
       fs.writeFileSync(path.join(target, 'SKILL.md'), '---\nname: lib-copy\ndescription: x\n---\n');
