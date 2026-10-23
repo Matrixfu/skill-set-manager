@@ -207,7 +207,7 @@ const CASES = [
       const { writeBinding, readBinding } = await core('binding');
       const { planEffective, applyPlan } = await core('effective');
       await writeBinding(f.projectA, 'one'); await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'one'));
-      await writeBinding(f.projectB, 'two'); await applyPlan(f.projectB, await planEffective(f.projectB, 'two'));
+      await writeBinding(f.projectB, 'two'); await applyPlan(f.projectB, await planEffective(f.roots, f.projectB, 'two'));
       const bBefore = skillDirNames(f.projectB), bindBefore = await readBinding(f.projectB);
       await writeBinding(f.projectA, 'three'); await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'three'));
       setEq(skillDirNames(f.projectB), bBefore, '改 A 不动 B 目录');
