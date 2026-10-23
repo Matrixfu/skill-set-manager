@@ -14,7 +14,7 @@ import { readBinding, writeBinding } from './lib/core/binding.js';
 import { readManaged } from './lib/core/managed.js';
 import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
-import { openDomain } from './lib/core/storage.js';
+import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 
 /** 行级配置（cordis.patch.yml 的 config 块；用户 patch 层升级存活）。 */
@@ -77,15 +77,20 @@ export function apply(ctx, config) {
       const set = binding?.setSlug ? sets.loadSet(roots, binding.setSlug) : null;
       const eff = binding?.setSlug ? sets.effectiveNames(roots, binding.setSlug) : { names: [], missing: [] };
       const sc = selfCheck(roots, loc.projectRoot);
+      const managed = readManaged(loc.projectRoot);
+      const store = await storeOf();
       return {
         ...loc,
         binding,
         set,
+        sets: sets.listSets(roots),
+        library: (await this.libraryList()).library,
         effective: eff,
         resident: sets.loadResident(roots).skills,
         selfCheck: { ok: sc.ok, frozen: sc.frozen, unbound: sc.unbound, missing: sc.missing, extra: sc.extra, foreign: sc.foreign, brokenLinks: sc.brokenLinks, detail: sc.detail },
-        managed: readManaged(loc.projectRoot)?.entries ?? {},
-        gitignoreLine: binding ? (await import('node:fs')).default.existsSync((await import('node:path')).join(loc.projectRoot, '.gitignore')) : false,
+        managed: managed?.entries ?? {},
+        sessionOverrideActive: (managed?.sessionOverride?.added?.length ?? 0) + (managed?.sessionOverride?.removed?.length ?? 0) > 0,
+        undoAvailable: !!(await store.get('undo', projectKey(loc.projectRoot))),
       };
     }
 
