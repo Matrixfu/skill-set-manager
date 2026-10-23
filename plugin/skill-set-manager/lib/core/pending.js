@@ -34,7 +34,7 @@ export async function startOverride(store, roots, projectRoot, { add = [], remov
       if (!t) { missingAdd.push(name); continue; }
       if (entryKind(path.join(skillsDir, name), { fs: fsImpl }) !== 'missing') { missingAdd.push(name); continue; } // 同名外来条目：不抢占（§7.3）
       const made = makeEntry(t.path, path.join(skillsDir, name), { fs: fsImpl });
-      entries[name] = { kind: made.kind, from: t.path, ...(made.copied ? { copied: true } : {}), ...(made.flat ? { flat: true } : {}) };
+      entries[name] = { kind: made.kind, from: t.origin ?? t.path, ...(made.copied ? { copied: true } : {}), ...(made.flat ? { flat: true } : {}) };
       added.push(name);
     }
   }

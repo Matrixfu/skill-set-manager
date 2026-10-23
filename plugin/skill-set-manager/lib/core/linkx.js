@@ -50,6 +50,7 @@ export function removeEntry(linkPath, kind, { fs: fsImpl = fs } = {}) {
     else fsImpl.rmSync(linkPath, { recursive: true, force: true });
     return true;
   } catch (e) {
+    if (e.code === 'ENOENT') return false; // 已被外部手删：视作已摘，台账照常收敛
     if (e.code === 'ENOTDIR' || e.code === 'EPERM') {
       // 失效 junction（本体已没了）：rmdir 有时报 ENOTDIR/EPERM，强制摘
       try { fsImpl.rmSync(linkPath, { force: true }); return true; } catch {}

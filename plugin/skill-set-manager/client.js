@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
       open: false, sessionId: null, state: null, subs: new Set(),
       setOpen(v) { this.open = v; this.subs.forEach((f) => f()); },
       setSession(id) { if (id && id !== this.sessionId) { this.sessionId = id; this.subs.forEach((f) => f()); } },
+      clearSessionIf(id) { if (id && this.sessionId === id) { this.sessionId = null; this.subs.forEach((f) => f()); } },
       setState(s) { this.state = s; this.subs.forEach((f) => f()); },
     };
     function useBus() {
@@ -59,14 +60,16 @@ window.__ModuleLoader__.load({
       const face = ctx.get('remote')?.['skill-set-manager'];
       let faceErr = null;
       if (face && typeof face[method] === 'function') {
-        try {
-          const r = await face[method](args ?? {});
+        let r;
+        try { r = await face[method](args ?? {}); } catch (e) { faceErr = e; }
+        if (r !== undefined) {
           if (r && typeof r === 'object' && ('value' in r || 'error' in r)) {
+            // 业务错误：直接上报，不走 fetch 重试（副作用操作避免跑两遍）
             if (r.error) throw new Error(typeof r.error === 'string' ? r.error : r.error?.message ?? JSON.stringify(r.error));
             return r.value;
           }
           return r;
-        } catch (e) { faceErr = e; }
+        }
       }
       try {
         const res = await fetch('/api/skill-set-manager', {
@@ -164,8 +167,8 @@ window.__ModuleLoader__.load({
           } }), ' ', lib.name))),
         h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
         h('div', { className: 'ssm-chips' },
-          ...(st.binding?.setSlug ? [...eff].filter((n) => !resident.has(n)).map((n) => h('label', { key: n, className: 'ssm-chip' },
-            h('input', { type: 'checkbox', checked: true, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }), ' ', n))
+          ...(st.binding?.setSlug ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip' },
+            h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name))
             : []),
           st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
         h('div', { className: 'ssm-hint' }, t('hintP2')));
@@ -182,7 +185,13 @@ window.__ModuleLoader__.load({
 
     function ComposerChip({ ctx, t, sessionId }) {
       const b = useBus();
-      React.useEffect(() => { bus.setSession(sessionId); }, [sessionId]);
+      React.useEffect(() => {
+        bus.setSession(sessionId);
+        (async () => { // §12 P0：徽标/集名常驻显示——挂载即拉一次状态，不必先开面板
+          try { const v = await call(ctx, 'state', { sessionId }); if (bus.sessionId === sessionId) bus.setState(v); } catch {}
+        })();
+        return () => bus.clearSessionIf(sessionId);
+      }, [ctx, sessionId]);
       return h('button', { className: 'ssm-chip-btn', title: t('panel'), onClick: () => bus.setOpen(!b.open) },
         h(Dot, { st: b.state }), t('chip'), h(Name, { st: b.state }),
         b.state?.selfCheck && !b.state.selfCheck.ok && !b.state.selfCheck.unbound ? h('span', { className: 'ssm-badge' }, '!') : null);
