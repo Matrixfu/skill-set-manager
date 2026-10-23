@@ -505,6 +505,34 @@ const CASES = [
     },
   },
   {
+    id: 'stale-remove', title: '条目被外部手删后：切换/退常驻不抛错、台账照常收敛（复审 minor#1）',
+    async run(f) {
+      await withRoots(f);
+      for (const n of ['m1', 'm2']) writeSkill(f.library, n);
+      const s = await core('sets');
+      await s.saveSet(f.roots, { slug: 'sa', name: 'A', skills: ['m1'] });
+      await s.saveSet(f.roots, { slug: 'sb', name: 'B', skills: ['m2'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan } = await core('effective');
+      await writeBinding(f.projectA, 'sa');
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'sa'));
+      fs.rmdirSync(path.join(f.projectA, '.dsh', 'skills', 'm1')); // 外部手删 managed 条目
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'sb')); // 切换不抛错
+      has(skillDirNames(f.projectA), 'm2', '切换后新条目就位');
+      const { readManaged } = await core('managed');
+      ok(!('m1' in (await readManaged(f.projectA)).entries), '被手删条目随切换出台账');
+      const { syncResident } = await core('resident');
+      const { entryKind } = await core('linkx');
+      await s.saveResident(f.roots, ['m1']);
+      await syncResident(f.roots);
+      eq(entryKind(path.join(f.userDsh, 'm1')), 'junction', '常驻链接就位');
+      fs.rmdirSync(path.join(f.userDsh, 'm1')); // 外部手删常驻链接
+      await s.saveResident(f.roots, []);
+      const r = await syncResident(f.roots); // 退常驻不抛错
+      eq(r.warnings.filter((w) => w.includes('m1')).length, 0, '外部手删后退常驻无异常警告');
+    },
+  },
+  {
     id: 'gitignore', title: '.gitignore 署名行幂等 + 开关（§7.6）',
     async run(f) {
       const g = path.join(f.projectA, '.gitignore');
