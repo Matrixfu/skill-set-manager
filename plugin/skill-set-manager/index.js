@@ -1,0 +1,267 @@
+/**
+ * skill-set-manager host 半：Config 校验、roots 装配、storageDomain（失败回退 JSON）、
+ * 启动无条件还原 pending（§6.6）、Remote 操作面（操作唯一实现，§14）、webServer 兜底通道。
+ */
+import z from '@deepseek-ai/schemastery';
+import fs from 'node:fs';
+import path from 'node:path';
+import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
+import { buildRoots } from './lib/core/paths.js';
+import { registerLibrary } from './lib/core/manifest.js';
+import * as sets from './lib/core/sets.js';
+import { findProjectRoot } from './lib/core/projectRoot.js';
+import { readBinding, writeBinding } from './lib/core/binding.js';
+import { readManaged } from './lib/core/managed.js';
+import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
+import { ensureGitignoreLine } from './lib/core/gitignore.js';
+import { openDomain } from './lib/core/storage.js';
+import { startOverride, endOverride, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
+
+/** 行级配置（cordis.patch.yml 的 config 块；用户 patch 层升级存活）。 */
+export const Config = z.object({
+  gitignoreLine: z.boolean().default(true),
+  residentLinkToCrossHarness: z.boolean().default(false),
+  autoBindNewProject: z.boolean().default(false),
+  autoBindSlug: z.string().default(''),
+  customSkillDirs: z.array(z.string()).default([]),
+});
+
+export const inject = ['sessionQuery', 'workingDirectory', 'agents', 'sessions'];
+
+const EFFECTIVE_PRESETS = new Set(['standard', 'ptc', 'cordis']);
+
+export function apply(ctx, config) {
+  const roots = buildRoots({
+    customSkillDirs: config.customSkillDirs,
+    crossHarnessResident: config.residentLinkToCrossHarness,
+  });
+  let storePromise;
+  const storeOf = () => (storePromise ??= openDomain(ctx, { fallbackDir: roots.dshHome }));
+
+  class SkillSetManagerRemote extends TypertRemoteService {
+    constructor(ctx) {
+      super(ctx, 'skillSetManager', { namespace: 'skill-set-manager' });
+    }
+
+    /** 会话 → 项目根 + preset 判定（投影优先，header 可能过期——探针取证）。 */
+    async locate(req) {
+      const sessionId = req?.sessionId;
+      let cwd = req?.cwd;
+      let preset;
+      let presetSource = 'request';
+      if (sessionId) {
+        try {
+          const session = ctx.sessions.get(sessionId);
+          if (session && !cwd) cwd = ctx.workingDirectory.get(session);
+        } catch {}
+        try {
+          const obs = await ctx.sessionQuery.observeSession(sessionId);
+          preset = obs?.projections?.values?.agentPreset;
+          presetSource = 'projection';
+        } catch {
+          const header = ctx.sessionQuery.stat?.(sessionId) ?? ctx.sessions.info?.(sessionId);
+          if (header) { preset = header.agentPreset; presetSource = 'header(stale-possible)'; }
+        }
+      }
+      if (!cwd) cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+      const presetWarn = preset && !EFFECTIVE_PRESETS.has(preset)
+        ? `当前 preset「${preset}」未挂载技能注入，切换技能集不会改变可见技能（§10.2 #1）`
+        : null;
+      return { cwd, projectRoot, preset, presetSource, presetWarn, rootDrift: projectRoot !== cwd };
+    }
+
+    async state(req) {
+      const loc = await this.locate(req);
+      const binding = readBinding(loc.projectRoot);
+      const set = binding?.setSlug ? sets.loadSet(roots, binding.setSlug) : null;
+      const eff = binding?.setSlug ? sets.effectiveNames(roots, binding.setSlug) : { names: [], missing: [] };
+      const sc = selfCheck(roots, loc.projectRoot);
+      return {
+        ...loc,
+        binding,
+        set,
+        effective: eff,
+        resident: sets.loadResident(roots).skills,
+        selfCheck: { ok: sc.ok, frozen: sc.frozen, unbound: sc.unbound, missing: sc.missing, extra: sc.extra, foreign: sc.foreign, brokenLinks: sc.brokenLinks, detail: sc.detail },
+        managed: readManaged(loc.projectRoot)?.entries ?? {},
+        gitignoreLine: binding ? (await import('node:fs')).default.existsSync((await import('node:path')).join(loc.projectRoot, '.gitignore')) : false,
+      };
+    }
+
+    async listSets() {
+      return { sets: sets.listSets(roots), resident: sets.loadResident(roots) };
+    }
+
+    async saveSet(req) {
+      return sets.saveSet(roots, req.set);
+    }
+
+    async deleteSet(req) {
+      const store = await storeOf();
+      const affected = [];
+      for (const table of ['pending', 'undo']) {
+        for (const key of await store.keys(table)) {
+          const rec = await store.get(table, key);
+          const pr = rec?.projectRoot ?? rec?.projectRoot;
+          if (pr && readBinding(pr)?.setSlug === req.slug && !affected.includes(pr)) affected.push(pr);
+        }
+      }
+      const deleted = sets.deleteSet(roots, req.slug);
+      return { deleted, affectedProjects: affected }; // 冻结绑定由 selfCheck 红标兜底（§5.8）
+    }
+
+    async renameSet(req) {
+      return sets.renameSet(roots, req.slug, req.name);
+    }
+
+    async copySet(req) {
+      return sets.copySet(roots, req.slug, req.name);
+    }
+
+    async setResident(req) {
+      return sets.saveResident(roots, req.names);
+    }
+
+    async saveAsFromEffective(req) {
+      const loc = await this.locate(req);
+      const binding = readBinding(loc.projectRoot);
+      const names = req.names ?? sets.effectiveNames(roots, binding?.setSlug).names;
+      return sets.saveAsSet(roots, { name: req.name, names });
+    }
+
+    async exportSet(req) {
+      return sets.exportSet(roots, req.slug);
+    }
+
+    async importSets(req) {
+      return sets.importSets(roots, req.payload);
+    }
+
+    /** 绑定 + 直接写 + 幂等补 .gitignore 署名行（§7.6）。 */
+    async bind(req) {
+      const loc = await this.locate(req);
+      if (!sets.loadSet(roots, req.slug) && req.slug !== sets.RESIDENT_SLUG) throw new Error(`技能集不存在: ${req.slug}`);
+      writeBinding(loc.projectRoot, req.slug);
+      const plan = await planEffective(roots, loc.projectRoot, req.slug);
+      const result = applyPlan(loc.projectRoot, plan);
+      ensureGitignoreLine(loc.projectRoot, { enabled: config.gitignoreLine });
+      return { ...result, plan, projectRoot: loc.projectRoot };
+    }
+
+    /** 切换：先压一次性 undo 快照，再 bind（§5.2 撤销入口）。 */
+    async switchSet(req) {
+      const store = await storeOf();
+      const loc = await this.locate(req);
+      await pushUndo(store, roots, loc.projectRoot);
+      const bound = await this.bind(req);
+      return { ...bound, undoAvailable: true };
+    }
+
+    async undoSwitch(req) {
+      const store = await storeOf();
+      const loc = await this.locate(req);
+      return { restored: await applyUndo(store, roots, loc.projectRoot) };
+    }
+
+    async startOverride(req) {
+      const store = await storeOf();
+      const loc = await this.locate(req);
+      const snap = await startOverride(store, roots, loc.projectRoot, { add: req.add ?? [], remove: req.remove ?? [] });
+      return { snapshot: snap };
+    }
+
+    async endOverride(req) {
+      const store = await storeOf();
+      const loc = await this.locate(req);
+      return { ended: await endOverride(store, roots, loc.projectRoot) };
+    }
+
+    /** 库登记 + 候选清单（建集勾选数据源）。 */
+    async libraryList() {
+      registerLibrary(roots);
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const library = [];
+      let names;
+      try { names = fs.readdirSync(roots.libraryRoot); } catch { names = []; }
+      for (const n of names) {
+        if (n.startsWith('.')) continue;
+        let mf = null;
+        try { mf = JSON.parse(fs.readFileSync(path.join(roots.libraryRoot, n, '.manifest.json'), 'utf8')); } catch {}
+        library.push({ name: n, source: mf?.source ?? 'unknown', commit: mf?.commit ?? null, hasSkillMd: fs.existsSync(path.join(roots.libraryRoot, n, 'SKILL.md')) });
+      }
+      return { library };
+    }
+  }
+
+  // @Remote 的显式等价：网关 source-mode 读取的 prototype marker（形状照抄 dsh-typert-protocol 源码
+  // addMarker/remoteMethods；加载器解析器不保证支持装饰符语法——ledger 裁定）。
+  const REMOTE_METHODS = ['state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList'];
+  Object.defineProperty(SkillSetManagerRemote.prototype, '@deepseek-ai/dsh-typert-protocol/remote-methods', {
+    configurable: true,
+    value: Object.freeze({ version: 1, methods: Object.freeze(REMOTE_METHODS.map((name) => Object.freeze({ kind: 'direct', exportName: name }))) }),
+  });
+
+  const remote = new SkillSetManagerRemote(ctx);
+
+  // 启动无条件还原（崩溃残留即设计前提）；失败不阻塞激活，只警告。
+  storeOf().then(async (store) => {
+    try {
+      const r = await restoreAllPending(store, roots);
+      if (r.warnings.length) ctx.logger.warn(`skill-set-manager 启动还原警告: ${r.warnings.join('; ')}`);
+      if (r.restored.length) ctx.logger.info(`skill-set-manager 启动还原 ${r.restored.length} 个项目的临时覆盖`);
+    } catch (e) {
+      ctx.logger.warn(`skill-set-manager 启动还原失败: ${e?.message ?? e}`);
+    }
+  }).catch((e) => ctx.logger.warn(`skill-set-manager 存储打开失败: ${e?.message ?? e}`));
+
+  // 新会话自动绑定（默认关；开启后仅对无绑定的项目落默认集）。
+  if (config.autoBindNewProject && config.autoBindSlug) {
+    ctx.on('session/created', async (session) => {
+      try {
+        const cwd = ctx.workingDirectory.get(session);
+        const projectRoot = findProjectRoot(cwd);
+        if (readBinding(projectRoot)) return;
+        if (!sets.loadSet(roots, config.autoBindSlug)) return;
+        writeBinding(projectRoot, config.autoBindSlug);
+        applyPlan(projectRoot, await planEffective(roots, projectRoot, config.autoBindSlug));
+        ensureGitignoreLine(projectRoot, { enabled: config.gitignoreLine });
+      } catch (e) {
+        ctx.logger.warn(`skill-set-manager 自动绑定失败: ${e?.message ?? e}`);
+      }
+    });
+  }
+
+  // 技能目录变化 = 缓存失效点（本实现无缓存：roots 为纯路径装配，扫描即时——裁定记录在 ledger）。
+  ctx.on('skills/change', () => {});
+
+  // 兜底通道：Remote 面不可达时 client 走同源 fetch（同一实现，非第二套逻辑）。
+  try {
+    ctx.webServer?.register?.({
+      path: '/api/skill-set-manager',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        try {
+          const { method, args } = JSON.parse(body || '{}');
+          const fn = remote[method];
+          if (typeof fn !== 'function' || !['state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList'].includes(method)) {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: `unknown method: ${method}` }));
+            return;
+          }
+          const value = await fn.call(remote, args);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ value }));
+        } catch (e) {
+          res.writeHead(500, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: String(e?.message ?? e) }));
+        }
+      },
+    });
+  } catch (e) {
+    ctx.logger.warn(`skill-set-manager webServer 兜底通道注册失败（不影响 Remote 面）: ${e?.message ?? e}`);
+  }
+}

@@ -1,0 +1,5 @@
+# Bundle patch：一行 host 插件（id 与包名对应）；client 半由 package.json 的 dsh.client 声明挂载。
+- insert:
+    - id: skill-set-manager
+      name: '@matrixfu/skill-set-manager'
+      config: {}
