@@ -104,27 +104,32 @@ function decompressSession(file) {
   if (r.status === 0 && r.stdout.length) return r.stdout.toString('utf8');
   return zlib.zstdDecompressSync(fs.readFileSync(file)).toString('utf8'); // 只解第一帧，兜底
 }
-/** 返回该会话历轮注入的技能名清单数组（按出现顺序）。 */
+/** 返回该会话历轮注入的技能名清单数组（按出现顺序）。权威源 = data.source.entries[].name。 */
 function catalogEventsFromSession(file) {
   const out = [];
   for (const line of decompressSession(file).split('\n')) {
     if (!line.includes('skill-catalog')) continue;
     let obj; try { obj = JSON.parse(line); } catch { continue; }
     if (obj.type !== 'user/message' || obj.data?.source?.kind !== 'skill-catalog') continue;
+    const entries = obj.data?.source?.entries;
+    if (Array.isArray(entries) && entries.length) { out.push([...new Set(entries.map((e) => e.name))]); continue; }
     const text = JSON.stringify(obj.data);
     const names = new Set();
     const m = text.match(/(?:^|[^a-z0-9-])([a-z0-9]+(?:-[a-z0-9]+)*)(?:[/\\]SKILL\.md|\\n)/g) || [];
     for (const s of m) names.add(s.replace(/[^a-z0-9-]+$/, '').replace(/^[^a-z0-9-]+/, ''));
-    out.push([...names]);
+    if (names.size) out.push([...names]);
   }
   return out;
 }
 function findLatestSession(projectRoot) {
   const dir = path.join(os.homedir(), '.dsh', 'sessions', sessionDirKey(projectRoot));
   if (!fs.existsSync(dir)) return null;
-  const sess = fs.readdirSync(dir).filter((d) => d.startsWith('session-')).sort();
+  const sess = fs.readdirSync(dir)
+    .filter((d) => d.startsWith('session-'))
+    .map((d) => { try { return { d, m: fs.statSync(path.join(dir, d)).mtimeMs }; } catch { return { d, m: 0 }; } })
+    .sort((a, b) => a.m - b.m); // 最近写入的会话 = 活会话（名字排序不可靠）
   for (let i = sess.length - 1; i >= 0; i--) {
-    const file = path.join(dir, sess[i], 'session.v4.jsonl.zstd');
+    const file = path.join(dir, sess[i].d, 'session.v4.jsonl.zstd');
     if (fs.existsSync(file)) return file;
   }
   return null;
