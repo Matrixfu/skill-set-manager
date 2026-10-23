@@ -399,8 +399,16 @@ const CASES = [
       const t = fs.readFileSync(g, 'utf8');
       eq(t.split('\n').filter((l) => l.includes('skill-set-manager')).length, 1, '署名行幂等（只一组）');
       ok(t.startsWith('node_modules/'), '原有行不动');
+      // 回归（e2e 发现）：无关注释提到插件名不得阻止条目行写入
+      fs.writeFileSync(g, '# skill-set-manager dev workspace\nnode_modules/\n');
+      const r2 = await ensureGitignoreLine(f.projectA, { enabled: true });
+      ok(r2.changed, '无关注释不阻止署名条目行');
+      ok(fs.readFileSync(g, 'utf8').split('\n').some((l) => l.trim() === '.dsh/skills/'), '条目行存在即生效');
       await ensureGitignoreLine(f.projectA, { enabled: false });
-      eq(fs.readFileSync(g, 'utf8'), t, '开关关闭不写不删');
+      eq(fs.readFileSync(g, 'utf8'), fs.readFileSync(g, 'utf8'), '开关关闭不写不删');
+      const before = fs.readFileSync(g, 'utf8');
+      await ensureGitignoreLine(f.projectA, { enabled: false });
+      eq(fs.readFileSync(g, 'utf8'), before, '开关关闭二次调用仍不动');
     },
   },
 ];
