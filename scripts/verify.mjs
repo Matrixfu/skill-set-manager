@@ -156,7 +156,7 @@ const CASES = [
       eq((await s.loadSet(f.roots, 'math-set')).name, '数学', '读回 math-set 显示名');
       setEq((await s.listSets(f.roots)).map((x) => x.slug), ['doc-processing', 'math-set', 'all-set'], 'listSets');
       await s.renameSet(f.roots, 'math-set', '数学增强');
-      ok(!fs.existsSync(path.join(f.sets ?? path.join(f.dshHome, 'skill-sets'), 'math-set.json')) || (await s.loadSet(f.roots, 'math-set')) === null, '重命名后旧引用不可用');
+      eq((await s.loadSet(f.roots, 'math-set')).name, '数学增强', '重命名只改显示名，slug 稳定（binding 引用不断）');
       const c = await s.copySet(f.roots, 'doc-processing', 'doc-copy');
       await s.saveSet(f.roots, { slug: c.slug, name: c.name, description: c.description, skills: ['lib-math'] });
       eq((await s.loadSet(f.roots, 'doc-processing')).skills, ['lib-docx', 'lib-pdf'], '复制集改动不影响原集');
