@@ -424,6 +424,68 @@ const CASES = [
     },
   },
   {
+    id: 'update-skip-local', title: '升级三份比对：本地改动默认跳过并报告（§17#9 数据侧，P1a-T2）',
+    async run(f) {
+      await withRoots(f);
+      const repo = fs.mkdtempSync(path.join(f.base, 'uprepo-'));
+      const sk = path.join(repo, 'skills/alpha');
+      fs.mkdirSync(path.join(sk, 'reference'), { recursive: true });
+      fs.writeFileSync(path.join(sk, 'SKILL.md'), 'v1 body\n');
+      fs.writeFileSync(path.join(sk, 'gone.md'), 'to-be-removed\n');
+      fs.writeFileSync(path.join(sk, 'stable.md'), 'stable\n');
+      fs.writeFileSync(path.join(sk, 'reference/placeholder.md'), 'p\n'); // 保证目录入 git
+      execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main'], { stdio: 'ignore' });
+      const gcommit = (m) => {
+        execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+        execFileSync('git', ['-c', 'user.name=v', '-c', 'user.email=v@v', '-C', repo, 'commit', '-qm', m], { stdio: 'ignore' });
+      };
+      gcommit('v1');
+      const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+      const url = pathToFileURL(repo).toString();
+      const g = await core('github');
+      const got = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'upwt1-')), git, url });
+      await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'b' });
+      // 上游 v2：SKILL.md 改、reference/x.md 增、gone.md 删；stable.md 不动
+      fs.writeFileSync(path.join(sk, 'SKILL.md'), 'v2 body\n');
+      fs.writeFileSync(path.join(sk, 'reference/x.md'), 'new\n');
+      fs.rmSync(path.join(sk, 'gone.md'));
+      gcommit('v2');
+      const head2 = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      // 本地：SKILL.md 也改（上游+本地双改 → 跳过）；notes.md 本地独有（不入 action）
+      const libAlpha = path.join(f.library, 'alpha');
+      fs.writeFileSync(path.join(libAlpha, 'SKILL.md'), 'local body\n');
+      fs.writeFileSync(path.join(libAlpha, 'notes.md'), 'mine\n');
+      const u = await core('updates');
+      const remote = await u.remoteHead({ owner: 'o', repo: 'r' }, { git, url });
+      eq(remote, head2, 'remoteHead == v2 HEAD');
+      const fetch = async () => g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'upwt2-')), git, url });
+      const chk = await u.checkUpdate(f.roots, 'alpha', { fetch });
+      eq(chk.upToDate, false, 'upToDate=false');
+      eq(chk.remote, head2, 'checkUpdate.remote');
+      const act = Object.fromEntries(chk.files.map((x) => [x.path, x.action]));
+      eq(act['SKILL.md'], 'skip-modified', '双改 → 跳过保留本地');
+      eq(act['reference/x.md'], 'add', '上游新增 → add');
+      eq(act['gone.md'], 'remove', '上游删&本地未改 → remove');
+      eq(act['stable.md'], 'same', '未变 → same');
+      ok(!chk.files.some((x) => x.path === 'notes.md'), '本地独有文件不入 action 列表');
+      let bk = 0;
+      const ap = await u.applyUpdate(f.roots, 'alpha', { fetch, backup: async () => { bk++; return 'bk'; } });
+      eq(bk, 1, '升级前自动备份（§17#9/#10 前置）');
+      eq(JSON.stringify(ap.skipped), JSON.stringify(['SKILL.md']), 'skipped 报告含本地改动文件');
+      ok(fs.readFileSync(path.join(libAlpha, 'SKILL.md'), 'utf8').includes('local body'), '本地改动未被覆盖');
+      ok(fs.readFileSync(path.join(libAlpha, 'reference/x.md'), 'utf8').includes('new'), '新增文件已写入');
+      ok(!fs.existsSync(path.join(libAlpha, 'gone.md')), '上游删已落实');
+      ok(fs.readFileSync(path.join(libAlpha, 'notes.md'), 'utf8').includes('mine'), '本地独有文件不动');
+      const m2 = JSON.parse(fs.readFileSync(path.join(libAlpha, '.manifest.json'), 'utf8'));
+      eq(m2.commit, head2, 'manifest commit 前进');
+      const H = (t) => 'sha256:' + crypto.createHash('sha256').update(t).digest('hex');
+      eq(m2.files['SKILL.md'], H('v1 body\n'), '跳过文件 baseline 保持旧上游哈希（下轮仍可识别本地偏差）');
+      const chk2 = await u.checkUpdate(f.roots, 'alpha', { fetch: async () => ({ commit: m2.commit, skillsDir: path.join(f.base, 'nowhere') }) });
+      eq(chk2.upToDate, true, '已到 HEAD → upToDate');
+      ok(chk2.files.every((x) => x.action === 'same'), 'upToDate 时全 same');
+    },
+  },
+  {
     id: '10', title: '卸载→回收站→恢复（§17#10）', status: 'pending-scope',
     note: '验收对象是 P1「备份与回收站」；范围裁定待用户确认后启用', run: async () => {},
   },

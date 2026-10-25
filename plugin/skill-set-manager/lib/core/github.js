@@ -50,7 +50,8 @@ export async function fetchRepo(spec, { tmpDir, git = defaultGit, url } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
   const run = (args) => {
     let r;
-    try { r = git(args, tmpDir); }
+    // 强制 LF：autocrlf 机器上检出 CRLF 会使逐文件哈希随行尾漂移（manifest 不可移植）。
+    try { r = git(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], tmpDir); }
     catch (e) { throw new Error(`git ${args[0]} failed: ${e?.message ?? e}`); }
     if (!r || r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r?.stderr ?? '').split('\n')[0].trim() || `exit ${r?.status}`}`);
     return r;

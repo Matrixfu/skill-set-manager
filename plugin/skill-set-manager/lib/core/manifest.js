@@ -7,7 +7,7 @@ import { writeTextAtomic } from './atomic.js';
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-function walkFiles(root, { fs: fsImpl = fs }) {
+export function walkFiles(root, { fs: fsImpl = fs } = {}) {
   const files = {};
   const walk = (dir, rel) => {
     for (const ent of fsImpl.readdirSync(dir, { withFileTypes: true })) {
@@ -40,6 +40,12 @@ function buildManifest(dir, name, { source = 'unknown', commit = null }, fsImpl)
     files,
     dirDigest,
   };
+}
+
+/** 读单个技能目录的 manifest；缺失/损坏返回 null。 */
+export function readManifest(dir, { fs: fsImpl = fs } = {}) {
+  try { return JSON.parse(fsImpl.readFileSync(path.join(dir, '.manifest.json'), 'utf8')); }
+  catch { return null; }
 }
 
 /** 单技能直写 manifest（GitHub 安装/恢复用；覆盖式）。P1a-T0。 */
