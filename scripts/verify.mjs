@@ -556,6 +556,13 @@ const CASES = [
       const r2 = b.restore(f.roots, 'alpha', list[0].dir);
       eq(r2.verified, true, '二次恢复仍哈希一致');
       eq(b.listBackups(f.roots, 'alpha').length, before2 + 1, '覆盖恢复前自动快照');
+      // n8：oplog 只保留最近 200 条（无界增长防线）
+      const oplogFile = path.join(f.library, '.backups', 'oplog.json');
+      fs.writeFileSync(oplogFile, JSON.stringify(Array.from({ length: 250 }, (_, i) => ({ ts: 'x', action: 'uninstall', name: 'n' + i }))));
+      await lc.uninstallSkill(f.roots, { name: 'alpha', bindings: [f.projectA, f.projectB] }); // alpha 已被 restore 复原，再卸一次
+      const log = JSON.parse(fs.readFileSync(oplogFile, 'utf8'));
+      eq(log.length, 200, 'oplog 封顶 200 条（review n8）');
+      eq(log.at(-1).name, 'alpha', '封顶保留的是最新记录');
     },
   },
   {

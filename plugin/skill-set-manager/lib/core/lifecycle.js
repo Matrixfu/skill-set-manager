@@ -54,6 +54,7 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
   let log = [];
   try { log = JSON.parse(fsImpl.readFileSync(logFile, 'utf8')); } catch {}
   log.push({ ts: new Date().toISOString(), action: 'uninstall', name, backup, removedFromSets, rewrittenProjects, frozenProjects });
+  if (log.length > 200) log = log.slice(-200); // 封顶保最新（review n8，审计流水无界增长防线）
   fsImpl.mkdirSync(path.dirname(logFile), { recursive: true });
   writeTextAtomic(logFile, JSON.stringify(log, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
 
