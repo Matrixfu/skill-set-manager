@@ -358,6 +358,22 @@ const CASES = [
       ok(Object.keys(m.files).includes('SKILL.md') && Object.keys(m.files).includes('extra.txt'), 'files 应逐文件');
       for (const v of Object.values(m.files)) ok(String(v).startsWith('sha256:'), 'files 值为 sha256: 前缀');
       ok(String(m.dirDigest).startsWith('sha256:'), 'dirDigest');
+      // P1a-T0：source/commit 参数贯通 + 单技能直写（GitHub 安装用）
+      writeSkill(f.library, 'lib-b');
+      await registerLibrary(f.roots, { source: 'github:o/r', commit: 'abc1234' });
+      const m2 = JSON.parse(fs.readFileSync(path.join(f.library, 'lib-b', '.manifest.json'), 'utf8'));
+      eq(m2.source, 'github:o/r', 'registerLibrary source 参数');
+      eq(m2.commit, 'abc1234', 'registerLibrary commit 参数');
+      const ma2 = JSON.parse(fs.readFileSync(path.join(f.library, 'lib-a', '.manifest.json'), 'utf8'));
+      eq(ma2.source, 'unknown', '已有 manifest 不被参数重刷');
+      const { writeSkillManifest } = await core('manifest');
+      ok(typeof writeSkillManifest === 'function', 'writeSkillManifest 应导出');
+      writeSkill(f.library, 'lib-c');
+      const m3 = await writeSkillManifest(path.join(f.library, 'lib-c'), { source: 'github:a/b', commit: 'dead00' });
+      eq(m3.source, 'github:a/b', 'writeSkillManifest source');
+      eq(m3.commit, 'dead00', 'writeSkillManifest commit');
+      ok(Object.keys(m3.files).includes('SKILL.md'), 'writeSkillManifest files 逐文件');
+      eq(JSON.parse(fs.readFileSync(path.join(f.library, 'lib-c', '.manifest.json'), 'utf8')).commit, 'dead00', 'writeSkillManifest 落盘');
     },
   },
   {

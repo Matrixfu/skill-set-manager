@@ -24,7 +24,32 @@ function walkFiles(root, { fs: fsImpl = fs }) {
 }
 
 /** 逐文件哈希 + 目录摘要（§11 manifest 形状，#8 验收字段）。 */
-export function registerLibrary(roots, { fs: fsImpl = fs } = {}) {
+function buildManifest(dir, name, { source = 'unknown', commit = null }, fsImpl) {
+  const skillMd = fsImpl.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  const fm = parseFrontmatter(skillMd);
+  const files = walkFiles(dir, { fs: fsImpl });
+  const dirDigest = 'sha256:' + sha256(Buffer.from(
+    Object.entries(files).sort().map(([k, v]) => `${k}:${v}`).join('\n'),
+  ));
+  return {
+    name: (fm && fm.name) || name,
+    source,
+    commit,
+    installedAt: new Date().toISOString(),
+    managed: true,
+    files,
+    dirDigest,
+  };
+}
+
+/** 单技能直写 manifest（GitHub 安装/恢复用；覆盖式）。P1a-T0。 */
+export function writeSkillManifest(dir, { source = 'unknown', commit = null, fs: fsImpl = fs } = {}) {
+  const manifest = buildManifest(dir, path.basename(dir), { source, commit }, fsImpl);
+  writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { fs: fsImpl });
+  return manifest;
+}
+
+export function registerLibrary(roots, { fs: fsImpl = fs, source = 'unknown', commit = null } = {}) {
   const registered = [];
   const manifests = [];
   let names;
@@ -35,22 +60,8 @@ export function registerLibrary(roots, { fs: fsImpl = fs } = {}) {
     try { if (!fsImpl.statSync(dir).isDirectory()) continue; } catch { continue; }
     const mfPath = path.join(dir, '.manifest.json');
     try { fsImpl.statSync(mfPath); continue; } catch {} // 已有 manifest 不覆盖
-    let skillMd;
-    try { skillMd = fsImpl.readFileSync(path.join(dir, 'SKILL.md'), 'utf8'); } catch { continue; }
-    const fm = parseFrontmatter(skillMd);
-    const files = walkFiles(dir, { fs: fsImpl });
-    const dirDigest = 'sha256:' + sha256(Buffer.from(
-      Object.entries(files).sort().map(([k, v]) => `${k}:${v}`).join('\n'),
-    ));
-    const manifest = {
-      name: (fm && fm.name) || name,
-      source: 'unknown',
-      commit: null,
-      installedAt: new Date().toISOString(),
-      managed: true,
-      files,
-      dirDigest,
-    };
+    let manifest;
+    try { manifest = buildManifest(dir, name, { source, commit }, fsImpl); } catch { continue; }
     writeTextAtomic(mfPath, JSON.stringify(manifest, null, 2) + '\n', { fs: fsImpl });
     registered.push(manifest.name);
     manifests.push(mfPath);
