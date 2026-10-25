@@ -8,7 +8,7 @@ import path from 'node:path';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { parseSkillSetLine, parseToolArgs, TOOL_ACTIONS } from './lib/core/commandLine.js';
 import { buildRoots } from './lib/core/paths.js';
-import { registerLibrary, readManifest, walkFiles } from './lib/core/manifest.js';
+import { registerLibrary, readManifest, walkFiles, claimSource } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
 import { findProjectRoot } from './lib/core/projectRoot.js';
 import { readBinding, writeBinding } from './lib/core/binding.js';
@@ -20,7 +20,8 @@ import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 import { syncResident } from './lib/core/resident.js';
 import os from 'node:os';
-import { parseRepoSpec, normalizeRepoSource, fetchRepo, installSkills } from './lib/core/github.js';
+import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
+import { normalizeRepoSource } from './lib/core/source.js';
 import * as updates from './lib/core/updates.js';
 import * as bk from './lib/core/backup.js';
 import * as lifecycle from './lib/core/lifecycle.js';
@@ -53,7 +54,7 @@ export function apply(ctx, config) {
     'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
-    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'unbind',
+    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'unbind', 'claimSource',
   ];
 
   class SkillSetManagerRemote extends TypertRemoteService {
@@ -281,6 +282,12 @@ export function apply(ctx, config) {
         });
       }
       return { library };
+    }
+
+    /** 认领来源（§8.1）：本地技能补 manifest（认领时的盘上内容即基线）；source='unknown' 撤认领回落本地态。 */
+    async claimSource(req) {
+      const mf = claimSource(roots, { name: req.name, source: req.source, commit: req.commit ?? null });
+      return { name: mf.name, source: mf.source, commit: mf.commit, files: Object.keys(mf.files).length, dirDigest: mf.dirDigest };
     }
 
     // ---- P1a：GitHub 安装 / 升级 / 卸载 / 回收站（全部薄包装 core，同一实现） ----

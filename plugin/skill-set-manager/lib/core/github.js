@@ -8,38 +8,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { writeSkillManifest } from './manifest.js';
 
-/** owner/repo[@ref][/subpath] → {owner, repo, ref|null, subpath|null}；非法 throw 业务错。 */
-export function parseRepoSpec(spec) {
-  if (typeof spec !== 'string' || !spec.trim()) throw new Error('技能来源须为非空字符串');
-  const rest = spec.trim().replace(/^(https?:\/\/(?:www\.)?github\.com\/|github\.com\/)/, '');
-  const at = rest.indexOf('@');
-  const repoPart = at >= 0 ? rest.slice(0, at) : rest;
-  const refPart = at >= 0 ? rest.slice(at + 1) : null;
-  const segs = repoPart.split('/').filter(Boolean);
-  if (segs.length < 2) throw new Error(`技能来源格式错误 "${spec}"：期望 owner/repo[@ref][/subpath]`);
-  const [owner, repo] = segs;
-  let subpath = segs.length > 2 ? segs.slice(2).join('/') : null;
-  if (refPart === null) return { owner, repo, ref: null, subpath };
-  const rs = refPart.split('/');
-  const ref = rs[0];
-  if (!ref) throw new Error(`技能来源格式错误 "${spec}"：ref 为空`);
-  const tail = rs.slice(1).join('/');
-  if (subpath && tail) throw new Error(`技能来源格式错误 "${spec}"：@ 前后不得同时带路径`);
-  if (!subpath) subpath = tail || null;
-  return { owner, repo, ref, subpath };
-}
+/** 来源解析与归一在叶子模块 source.js（github 与 manifest 共用，避免 ESM 环）；此处转发保持既有 import 不变。 */
+export { parseRepoSpec, normalizeRepoSource } from './source.js';
 
 const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-
-/**
- * 来源归一（P2）：`github:` 前缀写法（manifest 规范形）、`github.com/…`、`https://github.com/…`
- * 与裸 `owner/repo[/subpath]` 一律解析后写回规范形 `github:owner/repo[/subpath]`。
- * parseRepoSpec 本身不剥 `github:` 前缀，认领来源与按 pin 安装都先过这里（单一口径）。
- */
-export function normalizeRepoSource(source) {
-  const spec = parseRepoSpec(String(source ?? ''));
-  return `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`;
-}
 
 /** 目录树整拷（无 manifest 语义；T3 备份/恢复复用）。 */
 export function copyDirTree(src, dst, fsImpl = fs) {

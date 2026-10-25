@@ -1117,6 +1117,42 @@ const CASES = [
       ok(s.importPreview(roots2, null).errors.length >= 1, 'payload 非对象 → errors');
     },
   },
+  {
+    id: 'claim-source', title: '认领来源：本地技能补 manifest（逐文件哈希即基线）、非法来源不落盘、撤认领回落 unknown（§8.1，P2-T4）',
+    async run(f) {
+      await withRoots(f);
+      const dir = writeSkill(f.library, 'local-skill');
+      const { claimSource, readManifest, walkFiles } = await core('manifest');
+      eq(readManifest(dir), null, '认领前无 manifest（本地技能未登记）');
+      const mf = await claimSource(f.roots, { name: 'local-skill', source: 'github:foo/bar/skills', commit: 'abc1234' });
+      eq(mf.source, 'github:foo/bar/skills', '来源写规范形');
+      eq(mf.commit, 'abc1234', 'commit 入册');
+      eq(Object.keys(mf.files).sort(), ['SKILL.md'], '逐文件哈希表覆盖 SKILL.md');
+      ok(/^sha256:/.test(mf.dirDigest), '目录摘要在');
+      eq(Object.entries(walkFiles(dir)).every(([p, v]) => mf.files[p] === v), true, '认领后盘上 == 基线（libraryList 的 localModified 口径）');
+      // 非法来源：抛业务错且盘上仍无 manifest
+      const had = fs.existsSync(path.join(dir, '.manifest.json'));
+      let threw = false;
+      try { claimSource(f.roots, { name: 'local-skill', source: 'not-a-repo' }); } catch { threw = true; }
+      ok(threw, '非法来源（单段名）抛业务错');
+      eq(fs.existsSync(path.join(dir, '.manifest.json')), had, '非法来源不动盘');
+      // 重新认领 = 以当前盘上内容为新基线
+      fs.writeFileSync(path.join(dir, 'extra.md'), 'x');
+      const mf2 = await claimSource(f.roots, { name: 'local-skill', source: 'github:other/repo' });
+      eq(Object.keys(mf2.files).sort(), ['SKILL.md', 'extra.md'], '重新认领：当前盘上内容即新基线');
+      eq(mf2.source, 'github:other/repo', '改认领覆盖来源');
+      eq(mf2.commit, null, '未给 commit 记 null');
+      // 撤认领 = 回落 source:'unknown'（§8.1 本地技能态），哈希基线保留
+      const mf3 = await claimSource(f.roots, { name: 'local-skill', source: 'unknown' });
+      eq(mf3.source, 'unknown', '撤认领回落 unknown');
+      eq(Object.keys(mf3.files).sort(), ['SKILL.md', 'extra.md'], '撤认领保留哈希基线');
+      // 库外与非法名
+      let t2 = false; try { claimSource(f.roots, { name: 'no-such-skill', source: 'github:a/b' }); } catch { t2 = true; }
+      ok(t2, '库内不存在的技能不可认领');
+      let t3 = false; try { claimSource(f.roots, { name: 'Bad_Name', source: 'github:a/b' }); } catch { t3 = true; }
+      ok(t3, '非 kebab-case 名拒绝认领');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------

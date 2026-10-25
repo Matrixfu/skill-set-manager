@@ -47,6 +47,8 @@ window.__ModuleLoader__.load({
         importAllPresent: '技能齐备', importMissing: '本机缺失', importNoPin: '无来源 pin，装不了',
         importChoiceInstall: '按 pin 安装', importChoicePlaceholder: '先占位', importChoiceIgnore: '忽略',
         importDefaultHint: '每个缺失技能选一项；不选 = 忽略（插件不自动联网安装）',
+        claimGo: '认领来源', claimSourcePh: '来源 owner/repo[/subpath]', claimCommitPh: 'commit（可空）',
+        claimUndo: '撤认领', claimHint: '认领 = 以当前盘上内容为基线写 manifest（此后本地改动可被升级识别并跳过）',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -84,6 +86,8 @@ window.__ModuleLoader__.load({
         importAllPresent: 'all skills present', importMissing: 'missing locally', importNoPin: 'no source pin — cannot install',
         importChoiceInstall: 'Install by pin', importChoicePlaceholder: 'Placeholder', importChoiceIgnore: 'Ignore',
         importDefaultHint: 'Pick one per missing skill; unpicked = ignore (no automatic network install)',
+        claimGo: 'Claim source', claimSourcePh: 'source owner/repo[/subpath]', claimCommitPh: 'commit (optional)',
+        claimUndo: 'Unclaim', claimHint: 'Claiming writes a manifest with the current files as baseline (later local edits are then detected and skipped on update)',
       },
     };
 
@@ -433,6 +437,8 @@ window.__ModuleLoader__.load({
       const [filter, setFilter] = React.useState('');
       const [busy, setBusy] = React.useState(null);
       const [msg, setMsg] = React.useState(null); // {kind:'err'|'ok', text}
+      const [claimOf, setClaimOf] = React.useState(null); // 认领来源行内编辑中的技能名（Electron 无 window.prompt，§6.4）
+      const [claimDraft, setClaimDraft] = React.useState({ source: '', commit: '' });
       const [confirmUn, setConfirmUn] = React.useState(null); // name
       const [backupsOf, setBackupsOf] = React.useState(null); // {name, list}
       const [upRes, setUpRes] = React.useState({}); // name -> checkUpdate result
@@ -491,7 +497,23 @@ window.__ModuleLoader__.load({
                   } }
                 , `${t('backupsTitle')}(${x.backupCount})`)
                 : null,
+              !String(x.source).startsWith('github:')
+                ? h('button', { disabled: !!busy, onClick: () => { setClaimOf(claimOf === x.name ? null : x.name); setClaimDraft({ source: '', commit: x.commit ? String(x.commit) : '' }); } }, t('claimGo'))
+                : null,
               h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
+            // 行内认领来源（§8.1）：自绘输入行，不用 window.prompt（§6.4）
+            claimOf === x.name
+              ? h(React.Fragment, null,
+                  h('div', { className: 'ssm-row' },
+                    h('input', { className: 'ssm-input', style: { maxWidth: 230 }, autoFocus: true, placeholder: t('claimSourcePh'), value: claimDraft.source, disabled: !!busy, onChange: (e) => setClaimDraft({ ...claimDraft, source: e.target.value }) }),
+                    h('input', { className: 'ssm-input', style: { maxWidth: 120 }, placeholder: t('claimCommitPh'), value: claimDraft.commit, disabled: !!busy, onChange: (e) => setClaimDraft({ ...claimDraft, commit: e.target.value }) }),
+                    h('button', { disabled: !!busy || !claimDraft.source.trim(), onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: claimDraft.source.trim(), commit: claimDraft.commit.trim() || null }); setClaimOf(null); await load(); }) }, '✓'),
+                    x.source !== 'unknown' && x.source !== 'placeholder'
+                      ? h('button', { disabled: !!busy, onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: 'unknown' }); setClaimOf(null); await load(); }) }, t('claimUndo'))
+                      : null,
+                    h('button', { disabled: !!busy, onClick: () => setClaimOf(null) }, '×')),
+                  h('div', { className: 'ssm-hint' }, t('claimHint')))
+              : null,
             upRes[x.name]
               ? h(React.Fragment, null,
                 h('div', { className: 'ssm-hint' }, upRes[x.name].upToDate

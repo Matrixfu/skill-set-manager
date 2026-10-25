@@ -4,6 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { parseFrontmatter } from './resolver.js';
 import { writeTextAtomic } from './atomic.js';
+import { SKILL_NAME_RE } from './paths.js';
+import { normalizeRepoSource } from './source.js';
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
@@ -53,6 +55,28 @@ export function writeSkillManifest(dir, { source = 'unknown', commit = null, fs:
   const manifest = buildManifest(dir, path.basename(dir), { source, commit }, fsImpl);
   writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { fs: fsImpl });
   return manifest;
+}
+
+/**
+ * 认领来源（§8.1）：给库内本地技能补写 manifest——**认领时的盘上内容即基线**，
+ * 之后本地改动才谈得上「升级时跳过并保留」。只作用于技能库（库外条目他人所有，ADR-0003）。
+ * `source` 走 normalizeRepoSource 单一口径（非法来源抛业务错、不落盘）；
+ * 字面 `'unknown'` = 撤认领，回落 §8.1 的「本地技能已登记」态（哈希基线保留）。
+ */
+export function claimSource(roots, { name, source, commit = null }, { fs: fsImpl = fs } = {}) {
+  if (!SKILL_NAME_RE.test(String(name ?? ''))) throw new Error(`技能名不合法（非 kebab-case）: ${name}`);
+  const dir = path.join(roots.libraryRoot, name);
+  let isDir = false;
+  try { isDir = fsImpl.statSync(dir).isDirectory(); } catch {}
+  if (!isDir) throw new Error(`技能库内不存在该技能（认领来源只作用于 ~/.dsh/skill-library）: ${name}`);
+  const raw = String(source ?? '').trim();
+  const unknown = raw === '' || raw === 'unknown';
+  const canonical = unknown ? 'unknown' : normalizeRepoSource(raw); // 非法来源在此抛
+  return writeSkillManifest(dir, {
+    source: canonical,
+    commit: canonical === 'unknown' ? null : (commit ? String(commit).trim() : null),
+    fs: fsImpl,
+  });
 }
 
 export function registerLibrary(roots, { fs: fsImpl = fs, source = 'unknown', commit = null } = {}) {
