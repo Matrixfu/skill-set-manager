@@ -168,7 +168,7 @@ window.__ModuleLoader__.load({
           h('b', null, t('panel')),
           st.binding?.setSlug ? h('span', { className: 'ssm-cur' }, st.set?.name ?? st.binding.setSlug) : h('span', { className: 'ssm-cur' }, t('noBinding')),
           h('span', { className: 'ssm-grow' }, null),
-          bs ? h('button', { className: 'ssm-x', title: t('openRight'), onClick: () => bs.openTab({ type: 'skill-set-manager', title: t('tabTitle') }, { sessionId }) }, '⇥') : null,
+          bs || ctx.get('betterSidebar') ? h('button', { className: 'ssm-x', title: t('openRight'), onClick: () => (bs ?? ctx.get('betterSidebar'))?.openTab({ type: 'skill-set-manager', title: t('tabTitle') }, { sessionId }) }, '⇥') : null,
           h('button', { className: 'ssm-x', onClick: onClose, 'aria-label': t('close') }, '×')),
         st.projectRoot ? h('div', { className: 'ssm-root' }, t('projectRoot'), '：', st.projectRoot, st.rootDrift ? h('span', { className: 'ssm-warn-inline' }, t('rootDrift')) : null) : null,
         st.presetWarn ? h('div', { className: 'ssm-warn' }, st.presetWarn) : null,
@@ -581,20 +581,27 @@ window.__ModuleLoader__.load({
           document.head.append(style);
           return () => style.remove();
         });
-        // 右栏详情 tab（§12.209）：betterSidebar 是第三方服务——缺席/晚启动则整体静默退化（P1b-T0）。
-        // 注册必须挂 ctx.effect disposer：重复 id 会抛「already registered」，切换泄漏即永久失去该 tab。
-        const bs = ctx.get('betterSidebar');
-        if (bs) ctx.effect(() => {
-          const off = bs.registerTab({
-            id: 'skill-set-manager',
-            title: () => t('tabTitle'),
-            description: () => t('tabDesc'),
-            order: 40,
-            single: true,
-            badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && bus.state.selfCheck && !bus.state.selfCheck.ok && !bus.state.selfCheck.unbound) ? '!' : null,
-            component: (props) => h(RightPanel, { ctx, t, scope: props.scope, onOpenFile: props.onOpenFile }),
-          });
-          return () => off();
+        // 右栏详情 tab（§12.209）：betterSidebar 是第三方服务，启动顺序不保证——
+        // apply 时取不到则每秒重试直到成功；注册 disposer 恒挂 ctx.effect（重复 id 抛错，泄漏即永久失去 tab）。
+        ctx.effect(() => {
+          let off = null;
+          const tryReg = () => {
+            const svc = ctx.get('betterSidebar');
+            if (!svc) return false;
+            try { off = svc.registerTab({
+              id: 'skill-set-manager',
+              title: () => t('tabTitle'),
+              description: () => t('tabDesc'),
+              order: 40,
+              single: true,
+              badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && bus.state.selfCheck && !bus.state.selfCheck.ok && !bus.state.selfCheck.unbound) ? '!' : null,
+              component: (props) => h(RightPanel, { ctx, t, scope: props.scope, onOpenFile: props.onOpenFile }),
+            }); } catch { off = null; return false; } // 已注册（热替换竞态）：视为成功，不再重试
+            return true;
+          };
+          if (tryReg()) return () => off?.();
+          const id = setInterval(() => { if (tryReg()) clearInterval(id); }, 1000);
+          return () => { clearInterval(id); off?.(); };
         }, 'skill-set-manager.rightTab');
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
           name: 'conversation.input.left', id: PKG, order: 30, label: () => t('chip'),
@@ -604,7 +611,7 @@ window.__ModuleLoader__.load({
         }, (props) => h(SidebarChip, { ctx, t, wide: props?.wide })));
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay', id: PKG, order: 30,
-        }, () => h(OverlayHost, { ctx, t, bs })));
+        }, () => h(OverlayHost, { ctx, t, bs: ctx.get('betterSidebar') })));
         // 设置页（§10.1.4 探针事实：注册面仅 id/order/label；label thunk 随 locale 自动跟随）
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: PKG, order: 90, label: () => t('settingsLabel'),
