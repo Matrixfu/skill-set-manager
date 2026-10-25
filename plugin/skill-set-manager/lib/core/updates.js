@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readManifest, writeSkillManifest, walkFiles } from './manifest.js';
+import { writeTextAtomic } from './atomic.js';
 
 const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 
@@ -100,6 +101,6 @@ export async function applyUpdate(roots, name, { fetch, backup, fs: fsImpl = fs 
   }
   const manifest = writeSkillManifest(dir, { source: chk.source, commit: chk.remote, fs: fsImpl });
   for (const p of skipped) if (p in oldBaseline) manifest.files[p] = oldBaseline[p];
-  fsImpl.writeFileSync(path.join(dir, '.manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
   return { ...chk, updated, skipped, backup: backupPath };
 }

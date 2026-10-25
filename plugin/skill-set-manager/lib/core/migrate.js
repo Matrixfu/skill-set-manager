@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { copyDirTree } from './github.js';
 import { syncResident } from './resident.js';
+import { entryKind, removeEntry } from './linkx.js';
 
 const hasSkillMd = (d, fsImpl) => { try { fsImpl.statSync(path.join(d, 'SKILL.md')); return true; } catch { return false; } };
 
@@ -58,8 +59,8 @@ export async function apply(roots, { moves, ledger }, { fs: fsImpl = fs } = {}) 
     done.add(mv.name);
     await ledger.save(data);
   }
-  const warns = await syncResident(roots, { fs: fsImpl }); // 常驻子集链回原区（§8.2）
-  return { moved: [...done], warnings: Array.isArray(warns) ? warns : [] };
+  const res = await syncResident(roots, { fs: fsImpl }); // 常驻子集链回原区（§8.2）
+  return { moved: [...done], warnings: res?.warnings ?? [] }; // syncResident 返回对象不是数组（review m4）
 }
 
 /** 回滚：按 ledger 逆序移回；原位被占则跳过并报告。 */
@@ -70,6 +71,9 @@ export async function undo(roots, { ledger }, { fs: fsImpl = fs } = {}) {
   for (const item of [...data.moved].reverse()) {
     try {
       if (fsImpl.existsSync(item.to)) {
+        // 常驻链先摘（apply 时 syncResident 把曾常驻技能链回了原区，review m4）
+        const kFrom = entryKind(item.from, { fs: fsImpl });
+        if (kFrom === 'junction' || kFrom === 'symlink') removeEntry(item.from, kFrom, { fs: fsImpl });
         if (fsImpl.existsSync(item.from)) warnings.push(`原位已存在同名目录，跳过 "${item.name}"`);
         else { moveDir(item.to, item.from, fsImpl); restored.push(item.name); }
       }
@@ -78,5 +82,5 @@ export async function undo(roots, { ledger }, { fs: fsImpl = fs } = {}) {
     await ledger.save(data);
   }
   const w2 = await syncResident(roots, { fs: fsImpl });
-  return { restored, warnings: [...warnings, ...(Array.isArray(w2) ? w2 : [])] };
+  return { restored, warnings: [...warnings, ...(w2?.warnings ?? [])] };
 }

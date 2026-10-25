@@ -11,6 +11,7 @@ import { readBinding, bindingFile } from './binding.js';
 import { readManaged, writeManaged, managedFile } from './managed.js';
 import { planEffective, applyPlan } from './effective.js';
 import { entryKind, removeEntry } from './linkx.js';
+import { writeTextAtomic } from './atomic.js';
 
 export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImpl = fs } = {}) {
   const backup = snapshot(roots, name, { fs: fsImpl });
@@ -54,7 +55,7 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
   try { log = JSON.parse(fsImpl.readFileSync(logFile, 'utf8')); } catch {}
   log.push({ ts: new Date().toISOString(), action: 'uninstall', name, backup, removedFromSets, rewrittenProjects, frozenProjects });
   fsImpl.mkdirSync(path.dirname(logFile), { recursive: true });
-  fsImpl.writeFileSync(logFile, JSON.stringify(log, null, 2) + '\n');
+  writeTextAtomic(logFile, JSON.stringify(log, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
 
   return { backup, removedFromSets, rewrittenProjects, frozenProjects, warnings };
 }

@@ -13,6 +13,7 @@ import { findProjectRoot } from './lib/core/projectRoot.js';
 import { readBinding, writeBinding } from './lib/core/binding.js';
 import { readManaged } from './lib/core/managed.js';
 import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
+import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
@@ -323,34 +324,42 @@ export function apply(ctx, config) {
     }
 
     async diagnoseRun(req) {
-      const loc = await this.locate(req);
-      return diagnose(roots, { projectRoot: loc.projectRoot, cwd: loc.cwd, workspaceScopeInstalled: this._workspaceScopeInstalled() });
+      // 无活动会话时项目面如实置空，不得拿 host 进程 cwd 冒充（review M2）
+      const loc = req?.sessionId ? await this.locate(req) : { cwd: null, projectRoot: null };
+      return diagnose(roots, {
+        projectRoot: loc.projectRoot,
+        cwd: loc.cwd ?? process.cwd(),
+        workspaceScopeInstalled: this._workspaceScopeInstalled(),
+      });
     }
 
-    /** 自动修复①（§9）：按托管清单回收失效链接后按当前集重建。 */
+    /** 自动修复①（§9）：按托管清单回收失效链接后按当前集重建。
+     *  死 stub 判定用 entryKind（stat 失败即 missing，含死链）；摘除走 linkx.removeEntry
+     *  （Windows 死 junction 的 ENOTDIR/EPERM 兜底，review m9）；flat 条目按 `<name>.md` 口径（m7）。 */
     async reclaimDeadLinks(req) {
+      if (!req?.sessionId) throw new Error('无活动会话：无法定位项目，请先在对话页打开会话（review M2）');
       const loc = await this.locate(req);
       const managed = readManaged(loc.projectRoot) ?? { entries: {} };
       const reclaimed = [];
+      const warnings = [];
+      const skillsDir = path.join(loc.projectRoot, '.dsh', 'skills');
       for (const name of Object.keys(managed.entries)) {
-        const p = path.join(loc.projectRoot, '.dsh', 'skills', name);
-        try { fs.statSync(p); } catch {
-          try { fs.rmSync(p, { recursive: true, force: true }); } catch {} // 死链本体已不存在，直接摘挂角
-          delete managed.entries[name];
-          reclaimed.push(name);
-        }
+        const p = path.join(skillsDir, managed.entries[name]?.flat ? `${name}.md` : name);
+        if (entryKind(p) !== 'missing') continue;
+        try { removeEntry(p); } catch (e) { warnings.push(`${name}: 死链摘除失败 ${e?.message ?? e}`); continue; } // 摘除失败不动台账
+        delete managed.entries[name];
+        reclaimed.push(name);
       }
       if (reclaimed.length) writeManaged(loc.projectRoot, managed);
       let rebuilt = null;
-      if (managed.setSlug || readBinding(loc.projectRoot)?.setSlug) {
-        const slug = readBinding(loc.projectRoot)?.setSlug;
-        if (slug) rebuilt = applyPlan(loc.projectRoot, await planEffective(roots, loc.projectRoot, slug));
-      }
-      return { reclaimed, rebuilt };
+      const slug = readBinding(loc.projectRoot)?.setSlug;
+      if (slug) rebuilt = applyPlan(loc.projectRoot, await planEffective(roots, loc.projectRoot, slug));
+      return { reclaimed, rebuilt, warnings };
     }
 
-    /** 自动修复②（§9 / review minor#2 转正）：托管条目外删后按当前集重建。 */
+    /** 自动修复②（§9 / review minor#2 转正，M1 后 planEffective 会把外删条目带回 add）：按当前集重建。 */
     async rebuildManaged(req) {
+      if (!req?.sessionId) throw new Error('无活动会话：无法定位项目，请先在对话页打开会话（review M2）');
       const loc = await this.locate(req);
       const slug = readBinding(loc.projectRoot)?.setSlug;
       if (!slug) throw new Error('未绑定技能集，无从重建');

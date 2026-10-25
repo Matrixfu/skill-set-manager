@@ -618,6 +618,8 @@ const CASES = [
       await withRoots(f);
       writeSkill(f.userDsh, 'gamma'); writeSkill(f.userDsh, 'delta');
       writeSkill(f.library, 'delta'); // 库同名 → 不得移动（no-clobber）
+      const { saveResident } = await core('sets');
+      saveResident(f.roots, ['gamma']); // gamma 曾常驻：apply 后链回原区，undo 必须先摘链（review m4）
       const m = await core('migrate');
       const pv = m.preview(f.roots);
       eq(JSON.stringify(pv.moves.map((x) => x.name)), JSON.stringify(['gamma']), '只移 gamma');
@@ -626,7 +628,8 @@ const CASES = [
       const L = { data: null };
       const ledger = { load: async () => L.data, save: async (d) => { L.data = JSON.parse(JSON.stringify(d)); } };
       const ap = await m.apply(f.roots, { moves: pv.moves, ledger });
-      ok(!fs.existsSync(path.join(f.userDsh, 'gamma')), '原区消失');
+      const { entryKind } = await core('linkx');
+      eq(entryKind(path.join(f.userDsh, 'gamma')), 'junction', '原区真身消失、仅剩常驻链（§8.2）');
       ok(fs.existsSync(path.join(f.library, 'gamma', 'SKILL.md')), '入库');
       eq(JSON.stringify(L.data.moved.map((x) => x.name)), JSON.stringify(['gamma']), 'ledger 记录');
       ok(ap.moved.includes('gamma'), 'apply 返回');
@@ -644,6 +647,7 @@ const CASES = [
       // 回滚
       await m.undo(f.roots, { ledger });
       ok(fs.existsSync(path.join(f.userDsh, 'gamma', 'SKILL.md')) && fs.existsSync(path.join(f.userDsh, 'm2', 'SKILL.md')), '回滚复原');
+      eq(entryKind(path.join(f.userDsh, 'gamma')), 'dir', 'undo 先摘常驻链再回移（review m4）');
       ok(!fs.existsSync(path.join(f.library, 'gamma')), '库侧移除');
       eq(JSON.stringify(L.data.moved), JSON.stringify([]), 'ledger 清空');
     },
