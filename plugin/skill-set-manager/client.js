@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
         confirmSwitch: '确认切换：将改写仓库根的 .dsh/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
         regen: '重新生成', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
+        copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         residentPick: '勾选常驻', noSession: '先在对话页打开一个会话',
       },
       en: {
@@ -33,6 +34,7 @@ window.__ModuleLoader__.load({
         confirmSwitch: 'Confirm switch: rewrites .dsh/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
         regen: 'Regenerate', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
+        copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         residentPick: 'Toggle resident', noSession: 'Open a conversation session first',
       },
     };
@@ -91,6 +93,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false);
       const [confirm, setConfirm] = React.useState(null); // {kind:'switch'|'del', slug}
       const [draft, setDraft] = React.useState('');
+      const [renaming, setRenaming] = React.useState(null); // slug | null（面板内改名，Electron 无 window.prompt）
+      const [renameDraft, setRenameDraft] = React.useState('');
+      const [io, setIo] = React.useState(null); // {mode:'export'|'import', text, copied?}
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -146,13 +151,47 @@ window.__ModuleLoader__.load({
             st.binding?.setSlug === s.slug ? h('span', { className: 'ssm-cur-tag' }, t('current')) : null),
           h('span', { className: 'ssm-grow' }, null),
           h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'copySet', { slug: s.slug })) }, t('copy')),
-          h('button', { disabled: busy, onClick: async () => { const n = window.prompt(t('rename'), s.name); if (n && n !== s.name) await run(() => call(ctx, 'renameSet', { slug: s.slug, name: n })); } }, t('rename')),
-          h('button', { disabled: busy, onClick: async () => { try { const j = await call(ctx, 'exportSet', { slug: s.slug }); await navigator.clipboard.writeText(JSON.stringify(j, null, 2)); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, t('exportJson')),
-          h('button', { disabled: busy, onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del')))),
+          h('button', { disabled: busy, onClick: () => { setRenaming(s.slug); setRenameDraft(s.name); } }, t('rename')),
+          h('button', { disabled: busy, onClick: async () => { try { const j = await call(ctx, 'exportSet', { slug: s.slug }); setIo({ mode: 'export', text: JSON.stringify(j, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, t('exportJson')),
+          h('button', { disabled: busy, onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del')),
+          renaming === s.slug
+            ? h('div', { className: 'ssm-row' },
+                h('input', { className: 'ssm-input', autoFocus: true, value: renameDraft, disabled: busy, onChange: (e) => setRenameDraft(e.target.value) }),
+                h('button', { disabled: busy || !renameDraft.trim() || renameDraft.trim() === s.name, onClick: () => run(() => call(ctx, 'renameSet', { slug: s.slug, name: renameDraft.trim() })).then(() => setRenaming(null)) }, '✓'),
+                h('button', { disabled: busy, onClick: () => setRenaming(null) }, '×'))
+            : null)),
         h('div', { className: 'ssm-row' },
           h('input', { className: 'ssm-input', placeholder: t('newName'), value: draft, onChange: (e) => setDraft(e.target.value) }),
           h('button', { disabled: busy || !draft.trim(), onClick: () => run(() => call(ctx, 'saveAsFromEffective', { sessionId, name: draft.trim() }).then(() => setDraft(''))) }, t('saveAs')),
-          h('button', { disabled: busy, onClick: async () => { const txt = window.prompt(t('importJson'), '{"sets":[]}'); if (txt) await run(() => call(ctx, 'importSets', { payload: JSON.parse(txt) })); } }, t('importJson'))),
+          h('button', { disabled: busy, onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, t('importJson'))),
+        io
+          ? h('div', { className: 'ssm-io' },
+              h('textarea', {
+                className: 'ssm-textarea', rows: 8, spellCheck: false,
+                readOnly: io.mode === 'export', value: io.text, disabled: busy,
+                onChange: (e) => setIo({ ...io, text: e.target.value, copied: false }),
+              }),
+              h('div', { className: 'ssm-row' },
+                io.mode === 'export'
+                  ? h('button', {
+                      disabled: busy,
+                      onClick: async () => {
+                        try { await navigator.clipboard.writeText(io.text); setIo({ ...io, copied: true }); }
+                        catch (e) { setError(`${t('copyFail')}: ${e?.message ?? e}`); }
+                      },
+                    }, t('copyClip'))
+                  : h('button', {
+                      disabled: busy || !io.text.trim(),
+                      onClick: () => {
+                        let payload;
+                        try { payload = JSON.parse(io.text); } catch (e) { setError(`${t('importJson')}: JSON ${e?.message ?? e}`); return; }
+                        run(() => call(ctx, 'importSets', { payload })).then(() => setIo(null));
+                      },
+                    }, t('importJson')),
+                io.mode === 'export' && io.copied ? h('span', { className: 'ssm-ok' }, t('copied')) : null,
+                h('span', { className: 'ssm-grow' }, null),
+                h('button', { disabled: busy, onClick: () => setIo(null) }, '×')))
+          : null,
         st.undoAvailable ? h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, t('undo'))) : null,
         h('div', { className: 'ssm-sec' }, t('managedSec')),
         h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
@@ -241,6 +280,9 @@ window.__ModuleLoader__.load({
 .ssm-row button:not(.ssm-pick){background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
 .ssm-row button:not(.ssm-pick):hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ssm-input{flex:1;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 7px;min-width:0}
+.ssm-io{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.ssm-textarea{width:100%;box-sizing:border-box;resize:vertical;font:11px/1.5 ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px}
+.ssm-ok{font-size:11px;color:var(--dsw-alias-accent-default)}
 .ssm-confirm{font-size:11px;padding:5px 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 .ssm-chips{display:flex;flex-wrap:wrap;gap:4px;font-size:11px}
