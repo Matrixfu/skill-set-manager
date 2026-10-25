@@ -46,8 +46,8 @@ window.__ModuleLoader__.load({
         importPreviewBtn: '预览导入', importApply: '应用导入', importConflict: '显示名已存在（该项跳过）',
         importAllPresent: '技能齐备', importMissing: '本机缺失', importNoPin: '无来源 pin，装不了',
         importChoiceInstall: '按 pin 安装', importChoicePlaceholder: '先占位', importChoiceIgnore: '忽略',
-        importDefaultHint: '每个缺失技能选一项；不选 = 忽略（插件不自动联网安装）',
-        claimGo: '认领来源', claimSourcePh: '来源 owner/repo[/subpath]', claimCommitPh: 'commit（可空）',
+        importDefaultHint: '每个缺失技能选一项；不选 = 忽略（插件不自动联网安装）', importApplied: '导入完成',
+        claimGo: '认领来源', claimEdit: '改认领', claimSourcePh: '来源 owner/repo[/subpath]', claimCommitPh: 'commit（可空）',
         claimUndo: '撤认领', claimHint: '认领 = 以当前盘上内容为基线写 manifest（此后本地改动可被升级识别并跳过）',
       },
       en: {
@@ -85,8 +85,8 @@ window.__ModuleLoader__.load({
         importPreviewBtn: 'Preview import', importApply: 'Apply import', importConflict: 'name exists (this item is skipped)',
         importAllPresent: 'all skills present', importMissing: 'missing locally', importNoPin: 'no source pin — cannot install',
         importChoiceInstall: 'Install by pin', importChoicePlaceholder: 'Placeholder', importChoiceIgnore: 'Ignore',
-        importDefaultHint: 'Pick one per missing skill; unpicked = ignore (no automatic network install)',
-        claimGo: 'Claim source', claimSourcePh: 'source owner/repo[/subpath]', claimCommitPh: 'commit (optional)',
+        importDefaultHint: 'Pick one per missing skill; unpicked = ignore (no automatic network install)', importApplied: 'Import done',
+        claimGo: 'Claim source', claimEdit: 'Re-claim', claimSourcePh: 'source owner/repo[/subpath]', claimCommitPh: 'commit (optional)',
         claimUndo: 'Unclaim', claimHint: 'Claiming writes a manifest with the current files as baseline (later local edits are then detected and skipped on update)',
       },
     };
@@ -258,6 +258,14 @@ window.__ModuleLoader__.load({
                         onClick: () => setIo({ ...io, choices: { ...io.choices, [m.name]: 'ignore' } }),
                       }, (io.choices[m.name] === 'ignore' ? '✓ ' : '') + t('importChoiceIgnore'))))))
                 : null,
+              // 导入结果回显（评审 I2）：四组计数 + 警告留在面板里，不静默关面板
+              io.applied
+                ? h('div', { className: 'ssm-io' },
+                    h('div', { className: 'ssm-ok' },
+                      `${t('importApplied')}：` + ([[io.applied.created?.length ?? 0, t('sets')], [io.applied.installed?.length ?? 0, t('importChoiceInstall')], [io.applied.placeholders?.length ?? 0, t('importChoicePlaceholder')], [io.applied.ignored?.length ?? 0, t('importChoiceIgnore')], [(io.applied.nameConflicts?.length ?? 0) + (io.applied.errors?.length ?? 0), t('importConflict')]].filter((p) => p[0]).map((p) => `${p[1]} ${p[0]}`).join(' · ') || t('none')),
+                      (io.applied.created ?? []).length ? `（${io.applied.created.map((c) => c.slug).join('、')}）` : ''),
+                    ...(io.applied.warnings ?? []).map((w, i) => h('div', { key: 'aw' + i, className: 'ssm-warn' }, `⚠ ${w}`)))
+                : null,
               h('div', { className: 'ssm-row' },
                 io.mode === 'export'
                   ? h('button', {
@@ -272,7 +280,7 @@ window.__ModuleLoader__.load({
                         disabled: busy,
                         onClick: async () => {
                           setBusy(true); setError(null);
-                          try { await call(ctx, 'importApply', { payload: io.payload, choices: io.choices }); setIo(null); }
+                          try { setIo({ ...io, applied: await call(ctx, 'importApply', { payload: io.payload, choices: io.choices }) }); } // 结果留在面板里回显（评审 I2）
                           catch (e) { setError(`${t('importApply')}: ${e?.message ?? e}`); }
                           finally { setBusy(false); await reload(); }
                         },
@@ -497,9 +505,16 @@ window.__ModuleLoader__.load({
                   } }
                 , `${t('backupsTitle')}(${x.backupCount})`)
                 : null,
-              !String(x.source).startsWith('github:')
-                ? h('button', { disabled: !!busy, onClick: () => { setClaimOf(claimOf === x.name ? null : x.name); setClaimDraft({ source: '', commit: x.commit ? String(x.commit) : '' }); } }, t('claimGo'))
-                : null,
+              h('button', {
+                disabled: !!busy,
+                title: t('claimHint'),
+                onClick: () => {
+                  const on = claimOf === x.name;
+                  setClaimOf(on ? null : x.name);
+                  // github 行预填现值（改认领：换来源或补 commit），本地/占位行留空
+                  if (!on) setClaimDraft({ source: String(x.source).startsWith('github:') ? String(x.source) : '', commit: x.commit ? String(x.commit) : '' });
+                },
+              }, String(x.source).startsWith('github:') ? t('claimEdit') : t('claimGo')),
               h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
             // 行内认领来源（§8.1）：自绘输入行，不用 window.prompt（§6.4）
             claimOf === x.name

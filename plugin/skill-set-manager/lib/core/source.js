@@ -30,8 +30,18 @@ export function parseRepoSpec(spec) {
  * `github:owner/repo[/subpath]`（@ref 丢弃——commit 另存于 manifest）。
  * 认领来源（§8.1）与按 pin 安装（§5.6）都先过这里。
  */
-export function normalizeRepoSource(source) {
+/**
+ * 一次解析、两种口径同时出（评审 C1 修复）：`canonical` 写 manifest / 参与比较，
+ * `spec` 直接喂 fetchRepo（owner 绝不能带 `github:` 前缀，否则拼出的 remote URL 必 404）。
+ * 「归一化输出再当输入解析」= 双重前缀；解析只做一次即从根上断掉。
+ */
+export function resolveRepoSource(source) {
   // parseRepoSpec 只认 URL/裸写法，`github:` 前缀（manifest 规范形）在此剥掉
   const spec = parseRepoSpec(String(source ?? '').trim().replace(/^github:/, ''));
-  return `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`;
+  const canonical = `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`;
+  return { canonical, spec: { owner: spec.owner, repo: spec.repo, ref: null, subpath: spec.subpath } };
+}
+
+export function normalizeRepoSource(source) {
+  return resolveRepoSource(source).canonical;
 }

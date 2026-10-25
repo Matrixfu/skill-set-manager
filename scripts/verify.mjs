@@ -1003,6 +1003,8 @@ const CASES = [
       eq(parseSkillSetLine('use 文档处理'), { action: 'use', arg: '文档处理', yes: false }, '显示名可作参数（多字节不拆）');
       eq(parseSkillSetLine('use x --yes'), { action: 'use', arg: 'x', yes: true }, '--yes 在尾');
       eq(parseSkillSetLine('--yes use x'), { action: 'use', arg: 'x', yes: true }, '--yes 在首');
+      eq(parseSkillSetLine('use 我的 前端 集'), { action: 'use', arg: '我的 前端 集', yes: false }, '显示名含空格：整段作 arg（评审 M1）');
+      eq(parseSkillSetLine('use 我的 前端 集 --yes'), { action: 'use', arg: '我的 前端 集', yes: true }, '含空格显示名 + --yes 仍可剥');
       eq(parseSkillSetLine('bogus'), { action: 'bogus', arg: null, yes: false }, '未知子命令原样带回（处理器出帮助）');
     },
   },
@@ -1051,6 +1053,29 @@ const CASES = [
       const r2 = await p.endOverrideIfActive(store, f.roots, f.projectA);
       eq(r2.ended, false, '无覆盖 → ended:false');
       eq(fs.readFileSync(file, 'utf8'), before, '无覆盖不动盘');
+      // 评审 I1：同一仓库两个会话——别的会话结束不得误伤会话 A 的覆盖（§6.6「只对本次会话生效」）
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ev-b'], sessionId: 'sess-A' });
+      has(skillDirNames(f.projectA), 'ev-b', '会话 A 开覆盖：条目在盘');
+      eq((await store.get('pending', projectKey(f.projectA)))?.sessionId, 'sess-A', 'pending 记录写入归属会话');
+      const rOther = await p.endOverrideIfActive(store, f.roots, f.projectA, 'sess-B');
+      eq([rOther.ended, rOther.skipped], [false, 'other-session'], '会话 B 结束/归档 → 跳过');
+      has(skillDirNames(f.projectA), 'ev-b', 'B 结束不动 A 的覆盖');
+      eq((await p.endOverrideIfActive(store, f.roots, f.projectA, 'sess-A')).ended, true, '归属会话自己结束 → 还原');
+      lacks(skillDirNames(f.projectA), 'ev-b', 'A 结束：覆盖条目已摘');
+      // 旧记录（无 sessionId）与拿不到结束会话 id：按 P1 口径照还原（向后兼容）
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ev-b'], sessionId: 'sess-A' });
+      await store.put('pending', projectKey(f.projectA), { ...(await store.get('pending', projectKey(f.projectA))), sessionId: null });
+      eq((await p.endOverrideIfActive(store, f.roots, f.projectA, 'sess-Z')).ended, true, '记录无归属 → 照旧还原');
+      lacks(skillDirNames(f.projectA), 'ev-b', '兼容路径也还原');
+      // 评审 M9：冻结绑定（集已删）→ 只摘本次覆盖加的条目，其余清单原样保留（§5.8）
+      await s.deleteSet(f.roots, 'ev-set');
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ev-b'], sessionId: 'sess-A' });
+      has(skillDirNames(f.projectA), 'ev-b', '冻结期仍可开覆盖');
+      await p.endOverrideIfActive(store, f.roots, f.projectA, 'sess-A');
+      has(skillDirNames(f.projectA), 'ev-a', '冻结：原有托管条目不被空清单摘光');
+      lacks(skillDirNames(f.projectA), 'ev-b', '冻结：本次覆盖加的条目照摘');
+      eq(await store.get('pending', projectKey(f.projectA)), null, '冻结：pending 标记照清');
+      ok(!(await readManaged(f.projectA)).sessionOverride, '冻结：sessionOverride 照清');
     },
   },
   {
@@ -1115,6 +1140,30 @@ const CASES = [
       eq(bad.created.length, 0, '非法 payload 不半写');
       eq(s.importPreview(roots2, { sets: [{ name: '坏集', skills: ['Bad_Name'] }] }).errors.length, 1, '预览同样报非法');
       ok(s.importPreview(roots2, null).errors.length >= 1, 'payload 非对象 → errors');
+      // 评审 C1：解析一次出双口径——spec.owner 绝不能带 `github:` 前缀（真 GitHub 拼 remote URL 必 404）
+      const { resolveRepoSource, normalizeRepoSource } = await core('source');
+      eq(resolveRepoSource('github:foo/bar/skills'), { canonical: 'github:foo/bar/skills', spec: { owner: 'foo', repo: 'bar', ref: null, subpath: 'skills' } }, '规范形再解析：owner 不带 github: 前缀');
+      eq([resolveRepoSource('foo/bar').spec.owner, resolveRepoSource('https://github.com/a/b/c').spec.owner], ['foo', 'a'], '裸写法与 URL 同口径');
+      eq(normalizeRepoSource('github:a/b'), 'github:a/b', 'normalizeRepoSource 保持幂等');
+      // 评审 M10：install 抛错 → 可见警告 + 改判忽略，集创建不受影响
+      const resErr = await s.importApply(roots2, { sets: [{ slug: 'boom', name: '炸掉集', skills: ['boom-skill'], pins: { 'boom-skill': { source: 'github:x/y', commit: 'c' } } }] }, {
+        choices: { 'boom-skill': 'install' },
+        install: async () => { throw new Error('上游 404'); },
+      });
+      setEq(resErr.ignored, ['boom-skill'], 'install 抛错改判忽略');
+      ok(resErr.warnings.some((w) => w.includes('boom-skill') && w.includes('上游 404')), 'install 抛错出可见警告');
+      eq(resErr.created.length, 1, 'install 抛错不毁集创建');
+      // 评审 M2：placeholder 来源不进 pin、也不当 pin（否则导入端「按 pin 安装」必败）
+      const exPh = s.exportSet(roots2, 'pkg');
+      ok(!('bare' in (exPh.sets[0].pins ?? {})), '占位来源不进导出 pin');
+      const pvPh = s.importPreview(roots2, { sets: [{ name: '占位 pin 集', skills: ['ghost-skill'], pins: { 'ghost-skill': { source: 'placeholder', commit: null } } }] });
+      eq(pvPh.items[0].missing[0].pin, null, 'placeholder pin 视为无 pin');
+      // 评审 M3：库内空壳目录（无 SKILL.md）→ 占位补写并计数
+      mkdirp(path.join(roots2.libraryRoot, 'shell-skill'));
+      fs.writeFileSync(path.join(roots2.libraryRoot, 'shell-skill', 'README.md'), 'x');
+      const resShell = await s.importApply(roots2, { sets: [{ slug: 'shell', name: '空壳集', skills: ['shell-skill'] }] }, { choices: { 'shell-skill': 'placeholder' } });
+      setEq(resShell.placeholders, ['shell-skill'], '空壳目录计入 placeholders');
+      ok(fs.existsSync(path.join(roots2.libraryRoot, 'shell-skill', 'SKILL.md')), '空壳目录补写 SKILL.md');
     },
   },
   {

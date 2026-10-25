@@ -21,7 +21,7 @@ import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pus
 import { syncResident } from './lib/core/resident.js';
 import os from 'node:os';
 import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
-import { normalizeRepoSource } from './lib/core/source.js';
+import { resolveRepoSource } from './lib/core/source.js';
 import * as updates from './lib/core/updates.js';
 import * as bk from './lib/core/backup.js';
 import * as lifecycle from './lib/core/lifecycle.js';
@@ -186,8 +186,8 @@ export function apply(ctx, config) {
         const res = await sets.importApply(roots, req.payload, {
           choices: req.choices ?? {},
           install: async (name, pin) => {
-            const canonical = normalizeRepoSource(pin.source); // 归一 → 规范形（manifest 与解析同一口径）
-            const spec = parseRepoSpec(canonical);
+            const { canonical, spec } = resolveRepoSource(pin.source); // 解析一次：canonical 入 manifest，spec 供 fetch（owner 不带 github: 前缀，评审 C1）
+            if (spec.owner.includes(':')) throw new Error(`来源解析异常：owner="${spec.owner}" 仍带前缀（按 pin 安装会拼出错误 remote URL）`);
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-pin-'));
             tmps.push(tmpDir);
             const got = await fetchRepo(spec, { tmpDir, ...(req.url ? { url: req.url } : {}) });
@@ -244,7 +244,7 @@ export function apply(ctx, config) {
     async startOverride(req) {
       const store = await storeOf();
       const loc = await this.locate(req);
-      const snap = await startOverride(store, roots, loc.projectRoot, { add: req.add ?? [], remove: req.remove ?? [] });
+      const snap = await startOverride(store, roots, loc.projectRoot, { add: req.add ?? [], remove: req.remove ?? [], sessionId: req.sessionId ?? null });
       return { snapshot: snap };
     }
 
@@ -512,6 +512,15 @@ export function apply(ctx, config) {
     return lines.join('\n');
   };
 
+  /** 命令面契约：处理器必须返回 {kind:'success'|'error'}，不得让异常冒到宿主（评审 I3：技能集 JSON 可手改坏）。 */
+  const guard = (fn) => async (inv) => {
+    try { return await fn(inv); }
+    catch (e) { return { kind: 'error', text: `操作失败：${e?.message ?? e}` }; }
+  };
+
+  /** slug 或显示名——命令与工具同一匹配口径（评审 M7）。 */
+  const matchSets = (all, ref) => all.filter((s) => s.slug === ref || s.name === ref);
+
   /** `/skill-set` 处理器：解析 → remote → 文本（无业务逻辑）。 */
   async function runSkillSet(inv) {
     const { action, arg, yes } = parseSkillSetLine(inv?.rawInput);
@@ -528,8 +537,7 @@ export function apply(ctx, config) {
     if (action === 'use') {
       if (!sessionId) return { kind: 'error', text: NO_SESSION };
       if (!arg) return { kind: 'error', text: `缺少技能集。\n${HELP}` };
-      const all = (await remote.listSets()).sets;
-      const hit = all.filter((s) => s.slug === arg || s.name === arg);
+      const hit = matchSets((await remote.listSets()).sets, arg);
       if (!hit.length) return { kind: 'error', text: `找不到技能集「${arg}」。/skill-set list 查看全部。` };
       if (hit.length > 1) return { kind: 'error', text: `「${arg}」匹配多个集：${hit.map((s) => `${s.slug}（${s.name}）`).join('、')}——请用 slug。` };
       const st = await remote.state({ sessionId });
@@ -557,8 +565,8 @@ export function apply(ctx, config) {
   else
     ctx.effect(() => {
       const defs = [
-        { name: 'skill-set', description: '查看与切换本项目的技能集（list / show / use <集> / undo）', input: { hint: '<list|show|use <集>|undo [--yes]>' }, handler: runSkillSet },
-        { name: 'skill-doctor', description: '技能诊断：六类状态分组 + 修复指引', handler: runDoctor },
+        { name: 'skill-set', description: '查看与切换本项目的技能集（list / show / use <集> / undo）', input: { hint: '<list | show | use <集> [--yes] | undo>' }, handler: guard(runSkillSet) },
+        { name: 'skill-doctor', description: '技能诊断：六类状态分组 + 修复指引', handler: guard(runDoctor) },
       ];
       const offs = [];
       for (const def of defs) {
@@ -609,13 +617,12 @@ export function apply(ctx, config) {
             if (action === 'show') {
               const st = await remote.state({ sessionId });
               return {
-                ok: st.selfCheck.ok, projectRoot: st.projectRoot, rootDrift: st.rootDrift,
+                ok: true, selfCheckOk: st.selfCheck.ok, projectRoot: st.projectRoot, rootDrift: st.rootDrift,
                 set: st.set?.slug ?? null, effective: st.effective.names, missing: st.effective.missing,
                 text: fmtShow(st),
               };
             }
-            const all = (await remote.listSets()).sets;
-            const hit = all.filter((s) => s.slug === slug || s.name === slug);
+            const hit = matchSets((await remote.listSets()).sets, slug);
             if (!hit.length) throw new Error(`找不到技能集「${slug}」：先 action=list 查看全部`);
             if (hit.length > 1) throw new Error(`「${slug}」匹配多个集：${hit.map((s) => `${s.slug}（${s.name}）`).join('、')}——改用 slug`);
             const st = await remote.state({ sessionId });
@@ -669,24 +676,29 @@ export function apply(ctx, config) {
   // 事件级还原（§6.6 P2）：会话结束（session/disposed）或归档（workspace/session-stop，
   // 探针取证：parallel 派发、payload 只有 sessionId）即尽力还原该项目临时覆盖，不再等重启。
   // 定位不到会话 cwd 就绝不动盘——不拿 host 进程 cwd 冒充项目根（review M2 同族）。
-  const cwdOfSession = (sessionId) => {
+  const cwdOfSession = (sessionId, sessionHint = null) => {
     if (!sessionId) return null;
-    try { const s = ctx.sessions.get(sessionId); if (s) { const c = ctx.workingDirectory.get(s); if (c) return c; } } catch {}
+    // 事件自带的 session 对象优先（处置时机注册表可能已摘除该会话，评审 M8），再回落注册表/落盘索引
+    for (const s of [sessionHint, (() => { try { return ctx.sessions.get(sessionId); } catch { return null; } })()]) {
+      if (!s) continue;
+      try { const c = ctx.workingDirectory.get(s); if (c) return c; } catch {}
+    }
     try { const h = ctx.sessionQuery.stat?.(sessionId) ?? ctx.sessions.info?.(sessionId); if (h?.cwd) return h.cwd; } catch {}
     return null;
   };
-  const restoreOnSessionEnd = async (sessionId, label) => {
+  const restoreOnSessionEnd = async (sessionId, label, sessionHint = null) => {
     try {
-      const cwd = cwdOfSession(sessionId);
+      const cwd = cwdOfSession(sessionId, sessionHint);
       if (!cwd) return; // 无 cwd = 无法定位项目：启动无条件还原仍是兜底（§6.6 设计前提不变）
       const projectRoot = findProjectRoot(cwd);
-      const r = await endOverrideIfActive(await storeOf(), roots, projectRoot);
+      // 带 ending sessionId：同仓库另一会话开着覆盖时不误伤（§6.6「只对本次会话生效」，评审 I1）
+      const r = await endOverrideIfActive(await storeOf(), roots, projectRoot, sessionId);
       if (r.ended) ctx.logger.info(`skill-set-manager：会话${label}已还原 ${projectRoot} 的临时覆盖`);
     } catch (e) {
       ctx.logger.warn(`skill-set-manager 会话${label}还原失败: ${e?.message ?? e}`);
     }
   };
-  ctx.on('session/disposed', (session) => { void restoreOnSessionEnd(session?.id, '结束'); });
+  ctx.on('session/disposed', (session) => { void restoreOnSessionEnd(session?.id, '结束', session); });
   ctx.on('workspace/session-stop', (request) => { void restoreOnSessionEnd(request?.sessionId, '归档'); });
 
   // 技能目录变化 = 缓存失效点（本实现无缓存：roots 为纯路径装配，扫描即时——裁定记录在 ledger）。

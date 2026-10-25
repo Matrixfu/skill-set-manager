@@ -12,7 +12,8 @@ export function parseSkillSetLine(raw) {
     if (t === '--yes' || t === '-y') yes = true;
     else rest.push(t);
   }
-  return { action: rest[0] ?? 'show', arg: rest[1] ?? null, yes };
+  // 子命令后的全部非旗标 token 拼成 arg：显示名可含空格（`use 我的 前端 集`），多余 token 不该被静默吞掉（评审 M1）
+  return { action: rest[0] ?? 'show', arg: rest.slice(1).join(' ') || null, yes };
 }
 
 /**

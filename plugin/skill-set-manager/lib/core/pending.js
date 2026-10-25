@@ -9,15 +9,18 @@ import { projectKey } from './storage.js';
 import { readManaged, writeManaged } from './managed.js';
 import { readBinding, writeBinding } from './binding.js';
 import { planEffective, applyPlan } from './effective.js';
+import { loadSet, RESIDENT_SLUG } from './sets.js';
 import { resolveSkillTargets } from './resolver.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
 
-export async function startOverride(store, roots, projectRoot, { add = [], remove = [] } = {}, { fs: fsImpl = fs } = {}) {
+export async function startOverride(store, roots, projectRoot, { add = [], remove = [], sessionId = null } = {}, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl });
   if (!managed) throw new Error('临时覆盖要求该项目已绑定技能集（无托管清单）');
   const snapshot = { setSlug: managed.setSlug, entries: structuredClone(managed.entries), sessionOverride: managed.sessionOverride };
   // 先落标记后动目录（§6.6 崩溃即设计前提）：标记在 = 可还原；目录动了没标记 = 不可还原
-  await store.put('pending', projectKey(projectRoot), { projectRoot, setSlug: managed.setSlug, previousManaged: snapshot, added: [], removed: [] });
+  // sessionId = 本次覆盖的归属会话（§6.6「只对本次会话生效」）：事件还原据此判断是否该动手（评审 I1）
+  const rec = (added, removed) => ({ projectRoot, setSlug: managed.setSlug, sessionId: sessionId ?? null, previousManaged: snapshot, added, removed });
+  await store.put('pending', projectKey(projectRoot), rec([], []));
   const entries = { ...managed.entries };
   const skillsDir = path.join(projectRoot, '.dsh', 'skills');
   const removed = remove.filter((n) => n in entries);
@@ -40,28 +43,32 @@ export async function startOverride(store, roots, projectRoot, { add = [], remov
   }
   // 先写标记后动目录的反序风险取「先落标记」：标记在 = 可还原；目录动了没标记 = 不可还原
   writeManaged(projectRoot, { setSlug: managed.setSlug, entries, sessionOverride: { added, removed } }, { fs: fsImpl });
-  await store.put('pending', projectKey(projectRoot), { projectRoot, setSlug: managed.setSlug, previousManaged: snapshot, added, removed });
+  await store.put('pending', projectKey(projectRoot), rec(added, removed));
   return { ...snapshot, missingAdd };
 }
 
-/** 手动结束覆盖：按 binding 还原目录，清标记。 */
+/** 手动结束覆盖：按 binding 还原目录，清标记（面板按钮=用户明示意图，无条件执行）。 */
 export async function endOverride(store, roots, projectRoot) {
   const key = projectKey(projectRoot);
   const rec = await store.get('pending', key);
   if (!rec) return false;
-  await restoreProject(roots, rec.projectRoot);
+  const restored = await restoreProject(roots, rec.projectRoot);
   await store.delete('pending', key);
-  return true;
+  return restored; // 已解绑/冻结无可还原目标：如实返回，标记照样清掉
 }
 
 /**
  * 事件级还原（§6.6 P2）：会话结束/归档时**有 pending 标记才动手**——
  * 真相源是 pending 记录（startOverride 先落标记后动目录），因此对未覆盖项目零副作用。
  * 无标记时不动目录也不写文件，事件可以每个会话都挂而不用担心误伤。
+ * **归属判定（评审 I1）**：记录带 sessionId 且与本次结束的会话不同 → 跳过；
+ * 旧记录（无 sessionId）或拿不到结束会话 id 时按 P1 口径照还原。
  */
-export async function endOverrideIfActive(store, roots, projectRoot) {
+export async function endOverrideIfActive(store, roots, projectRoot, endingSessionId = null) {
   const rec = await store.get('pending', projectKey(projectRoot));
   if (!rec) return { ended: false };
+  if (rec.sessionId && endingSessionId && rec.sessionId !== endingSessionId)
+    return { ended: false, skipped: 'other-session', projectRoot, ownerSession: rec.sessionId };
   const ended = await endOverride(store, roots, projectRoot);
   return { ended: !!ended, projectRoot };
 }
@@ -69,6 +76,21 @@ export async function endOverrideIfActive(store, roots, projectRoot) {
 async function restoreProject(roots, projectRoot) {
   const binding = readBinding(projectRoot);
   if (!binding?.setSlug) return false; // 未绑定/已解绑：无目标态可还原
+  // 冻结绑定（集已删，§5.8「清单原样保留」）：不按空清单重放（那会摘光托管条目，评审 M9）；
+  // 只摘本次覆盖加的条目，其余条目与台账原样留着，等用户改名/重建集。
+  if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
+    const mg = readManaged(projectRoot);
+    if (mg?.sessionOverride) {
+      const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+      for (const n of mg.sessionOverride.added ?? []) {
+        const kind = mg.entries?.[n]?.kind;
+        if (kind) removeEntry(path.join(skillsDir, n), kind);
+        if (mg.entries) delete mg.entries[n];
+      }
+      writeManaged(projectRoot, { ...mg, sessionOverride: null });
+    }
+    return false;
+  }
   // 还原=放弃会话覆盖回到绑定态：先清 sessionOverride 标记再收敛盘，否则
   // planEffective 按覆盖口径收敛、覆盖标记与盘面互相矛盾（活体口径教训）。
   const managed = readManaged(projectRoot);

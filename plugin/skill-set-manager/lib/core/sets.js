@@ -130,18 +130,18 @@ export function exportSet(roots, slug) {
   const pins = {};
   for (const n of set.skills) {
     const mf = readJson(path.join(roots.libraryRoot, n, '.manifest.json'));
-    if (mf && mf.source && mf.source !== 'unknown') pins[n] = { source: mf.source, commit: mf.commit };
+    if (mf && mf.source && mf.source !== 'unknown' && mf.source !== 'placeholder') pins[n] = { source: mf.source, commit: mf.commit };
   }
   return { sets: [{ slug: set.slug, name: set.name, description: set.description ?? '', skills: set.skills, ...(Object.keys(pins).length ? { pins } : {}) }] };
 }
 
 // ---------- 导入（§5.6：预览 → 三选一「按 pin 安装 / 忽略 / 先占位」，插件不自动联网） ----------
 
-/** pin 归一：无 source 或 source=unknown 一律视为无 pin（按 pin 安装按钮随之禁用）。 */
+/** pin 归一：无 source、source=unknown 或 placeholder 一律视为无 pin（按 pin 安装按钮随之禁用，评审 M2）。 */
 function pinOf(pins, name) {
   const p = pins && typeof pins === 'object' ? pins[name] : null;
   const source = typeof p?.source === 'string' ? p.source.trim() : '';
-  if (!source || source === 'unknown') return null;
+  if (!source || source === 'unknown' || source === 'placeholder') return null;
   return { source, commit: typeof p.commit === 'string' ? p.commit : null };
 }
 
@@ -182,9 +182,10 @@ export function importPreview(roots, payload) {
 /** 占位技能体（§5.6「先占位」）：让名字先存在、集不悬空，manifest 标 source=placeholder。 */
 function makePlaceholder(roots, name) {
   const dir = path.join(roots.libraryRoot, name);
-  if (fs.existsSync(dir)) return false; // 本体已在就不覆盖
+  const md = path.join(dir, 'SKILL.md');
+  if (fs.existsSync(md)) return false; // 已有技能体就不覆盖（空壳目录仍补写，评审 M3）
   fs.mkdirSync(dir, { recursive: true });
-  writeTextAtomic(path.join(dir, 'SKILL.md'),
+  writeTextAtomic(md,
     `---\nname: ${name}\ndescription: 占位：导入时选「先占位」，技能体尚未安装\n---\n\n# ${name}\n\n占位技能：技能体尚未安装。装上真身后请删除本目录（或从 GitHub 安装覆盖）。\n`);
   writeSkillManifest(dir, { source: 'placeholder' });
   return true;
@@ -215,8 +216,10 @@ export async function importApply(roots, payload, { choices = {}, install = null
         try { await install(n, pin); installed.push(n); }
         catch (e) { warnings.push(`${n}: 按 pin 安装失败（${e?.message ?? e}）`); ignored.push(n); }
       } else if (choice === 'placeholder') {
-        try { makePlaceholder(roots, n); placeholders.push(n); }
-        catch (e) { warnings.push(`${n}: 占位失败（${e?.message ?? e}）`); }
+        try {
+          if (makePlaceholder(roots, n)) placeholders.push(n);
+          else warnings.push(`${n}: 库内已有 SKILL.md，占位未写（保留现有技能体）`);
+        } catch (e) { warnings.push(`${n}: 占位失败（${e?.message ?? e}）`); }
       } else ignored.push(n);
     }
   }

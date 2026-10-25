@@ -60,7 +60,7 @@ export async function openDomain(ctx, { fallbackDir } = {}) {
       version: 1,
       layout: 'per-record',
       tables: {
-        pending: { valueSchema: z.object({ projectRoot: z.string(), setSlug: z.string().nullable(), previousManaged: z.unknown(), added: z.array(z.string()), removed: z.array(z.string()) }) },
+        pending: { valueSchema: z.object({ projectRoot: z.string(), setSlug: z.string().nullable(), sessionId: z.string().nullable().optional(), previousManaged: z.unknown(), added: z.array(z.string()), removed: z.array(z.string()) }) },
         undo: { valueSchema: z.object({ projectRoot: z.string(), setSlug: z.string().nullable(), managed: z.unknown(), pushedAt: z.string() }) },
         oplog: { valueSchema: z.object({ at: z.string(), kind: z.string(), detail: z.unknown() }) },
         bindings: { valueSchema: z.object({ projectRoot: z.string() }) },
