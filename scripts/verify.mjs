@@ -594,6 +594,42 @@ const CASES = [
     },
   },
   {
+    id: 'migrate', title: '迁移向导：预览/移动/ledger 幂等续跑/一键回滚（§8.2，P1a-T5）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.userDsh, 'gamma'); writeSkill(f.userDsh, 'delta');
+      writeSkill(f.library, 'delta'); // 库同名 → 不得移动（no-clobber）
+      const m = await core('migrate');
+      const pv = m.preview(f.roots);
+      eq(JSON.stringify(pv.moves.map((x) => x.name)), JSON.stringify(['gamma']), '只移 gamma');
+      eq(pv.keep[0]?.name, 'delta', '同名 keep'); eq(pv.keep[0]?.reason, 'exists', 'keep 理由');
+      ok(pv.warnings.some((w) => w.includes('只剩常驻')), '向导明说「其他 harness 将只剩常驻技能」');
+      const L = { data: null };
+      const ledger = { load: async () => L.data, save: async (d) => { L.data = JSON.parse(JSON.stringify(d)); } };
+      const ap = await m.apply(f.roots, { moves: pv.moves, ledger });
+      ok(!fs.existsSync(path.join(f.userDsh, 'gamma')), '原区消失');
+      ok(fs.existsSync(path.join(f.library, 'gamma', 'SKILL.md')), '入库');
+      eq(JSON.stringify(L.data.moved.map((x) => x.name)), JSON.stringify(['gamma']), 'ledger 记录');
+      ok(ap.moved.includes('gamma'), 'apply 返回');
+      // 中断续跑：m1 成功 m2 抛 → 重跑补齐且不重复
+      writeSkill(f.userDsh, 'm1'); writeSkill(f.userDsh, 'm2');
+      const moves2 = [{ name: 'm1', from: path.join(f.userDsh, 'm1'), to: path.join(f.library, 'm1') }, { name: 'm2', from: path.join(f.userDsh, 'm2'), to: path.join(f.library, 'm2') }];
+      const boomFs = { ...fs, renameSync: (a, b) => { if (String(a).includes('m2')) throw new Error('boom'); return fs.renameSync(a, b); } };
+      let boom = null;
+      try { await m.apply(f.roots, { moves: moves2, ledger }, { fs: boomFs }); } catch (e) { boom = e; }
+      ok(boom, '中断上抛');
+      ok(fs.existsSync(path.join(f.library, 'm1')), 'm1 已入库');
+      const ap2 = await m.apply(f.roots, { moves: moves2, ledger });
+      ok(fs.existsSync(path.join(f.library, 'm2', 'SKILL.md')), 'm2 续跑补齐');
+      eq(JSON.stringify(L.data.moved.map((x) => x.name).sort()), JSON.stringify(['gamma', 'm1', 'm2']), 'ledger 无重复');
+      // 回滚
+      await m.undo(f.roots, { ledger });
+      ok(fs.existsSync(path.join(f.userDsh, 'gamma', 'SKILL.md')) && fs.existsSync(path.join(f.userDsh, 'm2', 'SKILL.md')), '回滚复原');
+      ok(!fs.existsSync(path.join(f.library, 'gamma')), '库侧移除');
+      eq(JSON.stringify(L.data.moved), JSON.stringify([]), 'ledger 清空');
+    },
+  },
+  {
     id: '11', title: '诊断六类分组报出（§17#11）', status: 'pending-scope',
     note: 'P1a 转正：由 diagnose-fixture case 覆盖（五类异常逐项命中+环境三类+副本漂移）', run: async () => {},
   },
