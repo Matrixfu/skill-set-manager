@@ -377,6 +377,53 @@ const CASES = [
     },
   },
   {
+    id: 'github-install', title: 'GitHub 稀疏安装：解析/拉取/no-clobber/overwrite 先备份（P1a-T1）',
+    async run(f) {
+      await withRoots(f);
+      const repo = fs.mkdtempSync(path.join(f.base, 'ghrepo-'));
+      fs.mkdirSync(path.join(repo, 'skills/alpha/nested'), { recursive: true });
+      fs.mkdirSync(path.join(repo, 'skills/beta'), { recursive: true });
+      fs.writeFileSync(path.join(repo, 'skills/alpha/SKILL.md'), '---\nname: alpha\ndescription: a\n---\n');
+      fs.writeFileSync(path.join(repo, 'skills/alpha/nested/SKILL.md'), '---\nname: alpha-nested\ndescription: n\n---\n');
+      fs.writeFileSync(path.join(repo, 'skills/beta/SKILL.md'), '---\nname: beta\ndescription: b\n---\n');
+      fs.writeFileSync(path.join(repo, 'README.md'), '#r\n');
+      execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+      execFileSync('git', ['-c', 'user.name=v', '-c', 'user.email=v@v', '-C', repo, 'commit', '-qm', 'v1'], { stdio: 'ignore' });
+      const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const g = await core('github');
+      const s1 = g.parseRepoSpec('o/r');
+      eq(s1.owner, 'o', 'parse owner'); eq(s1.repo, 'r', 'parse repo'); eq(s1.ref, null, 'parse ref 缺省'); eq(s1.subpath, null, 'parse subpath 缺省');
+      const s2 = g.parseRepoSpec('o/r@v2/a/b');
+      eq(s2.ref, 'v2', 'parse ref'); eq(s2.subpath, 'a/b', 'parse subpath');
+      const s3 = g.parseRepoSpec('o/r/skills');
+      eq(s3.ref, null, '无@ 时 ref 空'); eq(s3.subpath, 'skills', '无@ 时 subpath');
+      let threw = false; try { g.parseRepoSpec('bad'); } catch { threw = true; } ok(threw, '非法 spec 应 throw');
+      const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+      const spec = g.parseRepoSpec('o/r/skills');
+      const tmp = fs.mkdtempSync(path.join(f.base, 'ghwt-'));
+      const got = await g.fetchRepo(spec, { tmpDir: tmp, git, url: pathToFileURL(repo).toString() });
+      eq(got.commit, head, 'fetch commit == HEAD');
+      ok(fs.existsSync(path.join(got.skillsDir, 'alpha', 'SKILL.md')), '稀疏检出 skills/alpha 可见');
+      const res = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'unused' });
+      eq(JSON.stringify(res.map((r) => r.name).sort()), JSON.stringify(['alpha', 'beta']), '装 alpha+beta');
+      ok(res.every((r) => r.ok), '全部 ok');
+      const m = JSON.parse(fs.readFileSync(path.join(f.library, 'alpha', '.manifest.json'), 'utf8'));
+      eq(m.source, 'github:o/r', 'manifest.source'); eq(m.commit, head, 'manifest.commit');
+      const again = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'unused' });
+      ok(again.length === 2 && again.every((r) => !r.ok && r.reason === 'exists'), '同名 no-clobber 跳过');
+      fs.writeFileSync(path.join(f.library, 'alpha', 'SKILL.md'), 'local-mod');
+      let backed = 0;
+      const ow = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, overwrite: true, backup: async () => { backed++; return 'b'; } });
+      ok(ow.find((r) => r.name === 'alpha')?.ok, 'overwrite 成功');
+      eq(backed, 2, 'overwrite 先备份（alpha+beta 均覆盖）');
+      ok(!fs.readFileSync(path.join(f.library, 'alpha', 'SKILL.md'), 'utf8').includes('local-mod'), 'overwrite 后为上游内容');
+      let gerr = null;
+      try { await g.fetchRepo(spec, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghx-')), git: () => { const e = new Error('spawn git ENOENT'); e.code = 'ENOENT'; throw e; }, url: 'file://nope' }); } catch (e) { gerr = e; }
+      ok(gerr && /git/i.test(gerr.message), 'git 缺失 → 业务错含 git（Review Focus #1）');
+    },
+  },
+  {
     id: '10', title: '卸载→回收站→恢复（§17#10）', status: 'pending-scope',
     note: '验收对象是 P1「备份与回收站」；范围裁定待用户确认后启用', run: async () => {},
   },
