@@ -92,6 +92,10 @@ function countFiles(dir, fsImpl) {
 export function restore(roots, name, backupDir, { fs: fsImpl = fs } = {}) {
   const dst = path.join(roots.libraryRoot, name);
   fsImpl.statSync(backupDir);
+  // 覆盖式恢复先对现存库体自动快照（Review Focus #2：overwrite 必先备份，恢复不得静默吞掉当前内容）
+  let had = false;
+  try { fsImpl.statSync(dst); had = true; } catch {}
+  if (had) snapshot(roots, name, { fs: fsImpl });
   fsImpl.rmSync(dst, { recursive: true, force: true });
   copyDirTree(backupDir, dst, fsImpl);
   // 校验基准优先 .snapshot.json（盘上内容口径）；旧快照无此文件时退回 manifest（内容≈manifest 时代）。

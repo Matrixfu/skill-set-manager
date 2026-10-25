@@ -399,6 +399,8 @@ const CASES = [
       const s3 = g.parseRepoSpec('o/r/skills');
       eq(s3.ref, null, '无@ 时 ref 空'); eq(s3.subpath, 'skills', '无@ 时 subpath');
       let threw = false; try { g.parseRepoSpec('bad'); } catch { threw = true; } ok(threw, '非法 spec 应 throw');
+      const s4 = g.parseRepoSpec('https://github.com/ox/ry@dev/pkg'); // 粘贴整 URL（review n1）
+      eq(s4.owner, 'ox', 'URL 前缀剥离 owner'); eq(s4.repo, 'ry', 'URL 前缀剥离 repo'); eq(s4.ref, 'dev', 'URL 形态 ref'); eq(s4.subpath, 'pkg', 'URL 形态 subpath');
       const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
       const spec = g.parseRepoSpec('o/r/skills');
       const tmp = fs.mkdtempSync(path.join(f.base, 'ghwt-'));
@@ -534,7 +536,18 @@ const CASES = [
       b.prune(f.roots, 'delta');
       ok(fs.readdirSync(droot).length === 10, 'prune 留最近 10 份');
       // Review Focus #3：半成品不入回收站
-      eq(b.listBackups(f.roots, 'alpha').length, list.length, 'listBackups 不认 .tmp 半成品');
+      // m1 真注入：拷贝中途抛 → 无已发布半成品、.tmp 已清（原空断言转正，review m1）
+      const boomFs = { ...fs, writeFileSync: (p, ...a) => { if (String(p).includes('.tmp')) throw new Error('boom'); return fs.writeFileSync(p, ...a); } };
+      let berr = null;
+      try { b.snapshot(f.roots, 'alpha', { fs: boomFs }); } catch (e) { berr = e; }
+      ok(berr, 'snapshot 中途失败上抛');
+      eq(b.listBackups(f.roots, 'alpha').length, list.length, '中断不产生已发布快照');
+      ok(!fs.readdirSync(path.join(f.library, '.backups', 'alpha')).some((n) => n.endsWith('.tmp')), '半成品 .tmp 已清');
+      // m2：覆盖式 restore 对现存库体先自动快照（Review Focus #2 口径）
+      const before2 = b.listBackups(f.roots, 'alpha').length;
+      const r2 = b.restore(f.roots, 'alpha', list[0].dir);
+      eq(r2.verified, true, '二次恢复仍哈希一致');
+      eq(b.listBackups(f.roots, 'alpha').length, before2 + 1, '覆盖恢复前自动快照');
     },
   },
   {
@@ -588,11 +601,15 @@ const CASES = [
       const { writeManaged } = await core('managed');
       await saveSet(f.roots, { slug: 's3', name: 'S3', skills: ['dup'] });
       writeBinding(f.projectB, 's3');
-      writeManaged(f.projectB, { setSlug: 's3', entries: { dup: { kind: 'copy', from: 'skill-library', copied: true } }, sessionOverride: { active: false, previous: null } });
+      writeManaged(f.projectB, { setSlug: 's3', entries: { dup: { kind: 'copy', from: 'skill-library', copied: true }, flatone: { kind: 'copy', from: 'skill-library', copied: true, flat: true }, gone1: { kind: 'junction', from: 'skill-library' } }, sessionOverride: { active: false, previous: null } });
       fs.mkdirSync(path.join(f.projectB, '.dsh', 'skills', 'dup'), { recursive: true });
       fs.writeFileSync(path.join(f.projectB, '.dsh', 'skills', 'dup', 'SKILL.md'), 'drifted\n');
+      writeSkill(f.library, 'flatone'); writeSkill(f.library, 'gone1'); // gone1：库体在、盘上条目没了 → 外删
+      fs.writeFileSync(path.join(f.projectB, '.dsh', 'skills', 'flatone.md'), '---\nname: flatone\ndescription: flat\n---\n');
       const d5 = dg.diagnose(f.roots, { projectRoot: f.projectB, cwd: f.projectB });
       ok(d5.groups.copies.some((r) => String(r.what).includes('漂移') || String(r.what).includes('drift') || r.level === 'warn'), '副本漂移检出');
+      ok(!d5.groups.env.some((r) => String(r.what).includes('flatone')), 'flat 托管条目不误报 foreign（review m7）');
+      ok(d5.groups.dangling.some((r) => String(r.what).includes('gone1')), '台账在盘上缺 → broken-entry 报出');
     },
   },
   {

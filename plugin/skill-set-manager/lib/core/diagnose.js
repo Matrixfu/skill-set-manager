@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { readBinding } from './binding.js';
 import { readManaged } from './managed.js';
 import { listSets, loadSet, loadResident } from './sets.js';
+import { entryKind } from './linkx.js';
 import { parseFrontmatter } from './resolver.js';
 import { SKILL_NAME_RE } from './paths.js';
 import { walkFiles } from './manifest.js';
@@ -65,8 +66,16 @@ export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), works
   }
   for (const n of loadResident(roots).skills || []) if (!known.has(n))
     groups.dangling.push(row('warn', 'dangling', `常驻名单引用不存在的技能 "${n}"`, path.join(roots.setsDir, '_resident.json'), `取消常驻 "${n}" 或补齐技能体`));
-  for (const n of Object.keys(managed.entries || {})) if (!known.has(n))
-    groups.dangling.push(row('warn', 'dangling', `托管清单条目 "${n}" 的源已不存在`, projectRoot, '点「回收失效链接」或重新生成'));
+  // 台账在、盘上条目没了（外删/死链）：broken-entry——可经「按当前集重建」修复（review M1 建议）
+  if (projectRoot) {
+    for (const [name, e] of Object.entries(managed.entries || {})) {
+      const pDir = path.join(skillsDirOf(projectRoot), name);
+      const pFile = path.join(skillsDirOf(projectRoot), `${name}.md`);
+      const onDisk = entryKind(e?.flat ? pFile : pDir, { fs: fsImpl }) !== 'missing'
+        || entryKind(e?.flat ? pDir : pFile, { fs: fsImpl }) !== 'missing';
+      if (!onDisk) groups.dangling.push(row('warn', 'broken-entry', `托管条目 "${name}" 已被外部删除（台账仍在）`, e?.flat ? pFile : pDir, '点「按当前集重建」重新生成'));
+    }
+  }
 
   // §9.4 失效链接（项目内 link 条目指向不存在的本体）。
   // 判定口径（§10.1.2）：readdir Dirent 把 junction 报成 isSymbolicLink——据此认「是链」，
@@ -115,8 +124,10 @@ export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), works
     for (let i = 0; i < 5 && up && up !== path.dirname(up); i++, up = path.dirname(up)) {
       try { fsImpl.statSync(path.join(up, '.dsh', 'skill-set-binding.json')); groups.env.push(row('warn', 'parent-binding', `上层目录 ${up} 另有技能集绑定（潜在双真相源）`, up, '只在一层绑定，移除其一')); break; } catch {}
     }
+    // flat 复制条目盘上是 `<name>.md`——按台账口径换算，不得裸名误报（review m7）
+    const mine = new Set(Object.entries(managed.entries || {}).map(([n, e]) => (e && e.flat ? `${n}.md` : n)));
     for (const n of oneLevel(skillsDirOf(projectRoot), fsImpl))
-      if (!(n in (managed.entries || {})))
+      if (!mine.has(n))
         groups.env.push(row('warn', 'foreign', `外来条目 "${n}"（不在托管清单：不接管、切换不覆盖）`, path.join(skillsDirOf(projectRoot), n), `需要接管：移走 "${n}" 后重新生成`));
   }
   for (const c of roots.customDirs)

@@ -11,7 +11,7 @@ import { writeSkillManifest } from './manifest.js';
 /** owner/repo[@ref][/subpath] → {owner, repo, ref|null, subpath|null}；非法 throw 业务错。 */
 export function parseRepoSpec(spec) {
   if (typeof spec !== 'string' || !spec.trim()) throw new Error('技能来源须为非空字符串');
-  const rest = spec.trim().replace(/^github\.com\//, '');
+  const rest = spec.trim().replace(/^(https?:\/\/(?:www\.)?github\.com\/|github\.com\/)/, '');
   const at = rest.indexOf('@');
   const repoPart = at >= 0 ? rest.slice(0, at) : rest;
   const refPart = at >= 0 ? rest.slice(at + 1) : null;
