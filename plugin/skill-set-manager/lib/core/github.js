@@ -73,6 +73,7 @@ export async function fetchRepo(spec, { tmpDir, git = defaultGit, url } = {}) {
  */
 export async function installSkills(roots, { source, commit, skillsDir, names = null, overwrite = false, backup, fs: fsImpl = fs } = {}) {
   const out = [];
+  const seen = new Set(); // names 里上游不存在的名字必须报 not-found，不得静默吞（review n2）
   let entries;
   try { entries = fsImpl.readdirSync(skillsDir, { withFileTypes: true }); }
   catch { throw new Error(`技能目录不存在: ${skillsDir}`); }
@@ -82,6 +83,7 @@ export async function installSkills(roots, { source, commit, skillsDir, names = 
     if (names && !names.includes(name)) continue;
     const src = path.join(skillsDir, name);
     try { fsImpl.statSync(path.join(src, 'SKILL.md')); } catch { continue; }
+    seen.add(name);
     const dst = path.join(roots.libraryRoot, name);
     let exists = false;
     try { fsImpl.statSync(dst); exists = true; } catch {}
@@ -94,5 +96,6 @@ export async function installSkills(roots, { source, commit, skillsDir, names = 
     writeSkillManifest(dst, { source, commit, fs: fsImpl });
     out.push({ name, ok: true });
   }
+  if (names) for (const n of names) if (!seen.has(n)) out.push({ name: n, ok: false, reason: 'not-found' });
   return out;
 }

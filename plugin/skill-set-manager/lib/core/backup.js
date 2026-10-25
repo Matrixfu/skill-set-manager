@@ -44,6 +44,11 @@ export function prune(roots, name, { fs: fsImpl = fs, now = Date.now() } = {}) {
   const root = path.join(backupsRoot(roots), name);
   let names;
   try { names = fsImpl.readdirSync(root); } catch { return; }
+  // 崩溃残留的 <ts>.tmp 半成品：顺带回收（进程活着时 catch 已清，这里补跨进程残留，review n6）
+  for (const n of names) {
+    if (!n.endsWith('.tmp')) continue;
+    try { fsImpl.rmSync(path.join(root, n), { recursive: true, force: true }); } catch {}
+  }
   const dirs = names
     .filter((n) => !n.endsWith('.tmp'))
     .map((n) => {

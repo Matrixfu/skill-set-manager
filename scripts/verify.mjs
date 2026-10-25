@@ -420,6 +420,8 @@ const CASES = [
       ok(ow.find((r) => r.name === 'alpha')?.ok, 'overwrite 成功');
       eq(backed, 2, 'overwrite 先备份（alpha+beta 均覆盖）');
       ok(!fs.readFileSync(path.join(f.library, 'alpha', 'SKILL.md'), 'utf8').includes('local-mod'), 'overwrite 后为上游内容');
+      const nf = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, names: ['alpha', 'nope'], backup: async () => 'unused' });
+      eq(JSON.stringify(nf.map((r) => `${r.name}:${r.ok ? 'ok' : r.reason}`).sort()), JSON.stringify(['alpha:exists', 'nope:not-found']), 'names 缺项报 not-found（review n2）');
       let gerr = null;
       try { await g.fetchRepo(spec, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghx-')), git: () => { const e = new Error('spawn git ENOENT'); e.code = 'ENOENT'; throw e; }, url: 'file://nope' }); } catch (e) { gerr = e; }
       ok(gerr && /git/i.test(gerr.message), 'git 缺失 → 业务错含 git（Review Focus #1）');
@@ -535,6 +537,9 @@ const CASES = [
       for (let i = 0; i < 12; i++) { const d = path.join(droot, `2026-10-0${i < 10 ? i : i - 10}T00-00-00-000Z`); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'SKILL.md'), 'x'); }
       b.prune(f.roots, 'delta');
       ok(fs.readdirSync(droot).length === 10, 'prune 留最近 10 份');
+      fs.mkdirSync(path.join(droot, '2026-01-01T00-00-00-000Z.tmp'), { recursive: true });
+      b.prune(f.roots, 'delta');
+      ok(!fs.readdirSync(droot).some((n) => n.endsWith('.tmp')), 'prune 顺带清崩溃残留 .tmp（review n6）');
       // Review Focus #3：半成品不入回收站
       // m1 真注入：拷贝中途抛 → 无已发布半成品、.tmp 已清（原空断言转正，review m1）
       const boomFs = { ...fs, writeFileSync: (p, ...a) => { if (String(p).includes('.tmp')) throw new Error('boom'); return fs.writeFileSync(p, ...a); } };
