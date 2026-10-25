@@ -486,8 +486,58 @@ const CASES = [
     },
   },
   {
+    id: 'uninstall-backup-restore', title: '卸载→回收站→跨集跨项目回收→恢复哈希一致（§17#10，P1a-T3）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'alpha'); writeSkill(f.library, 'beta');
+      const { registerLibrary } = await core('manifest');
+      await registerLibrary(f.roots);
+      const alphaHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(f.library, 'alpha', 'SKILL.md'))).digest('hex');
+      const { saveSet } = await core('sets');
+      await saveSet(f.roots, { slug: 's1', name: 'S1', skills: ['alpha', 'beta'] });
+      await saveSet(f.roots, { slug: 's2', name: 'S2', skills: ['alpha'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan } = await core('effective');
+      for (const [proj, slug] of [[f.projectA, 's1'], [f.projectB, 's2']]) {
+        writeBinding(proj, slug);
+        applyPlan(proj, await planEffective(f.roots, proj, slug));
+      }
+      eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['alpha', 'beta']), '前置：A=alpha+beta');
+      eq(JSON.stringify(skillDirNames(f.projectB)), JSON.stringify(['alpha']), '前置：B=alpha');
+      // B 的集先删 → B 进入冻结态，卸载时不得动 B
+      fs.rmSync(path.join(f.dshHome, 'skill-sets', 's2.json'));
+      const lc = await core('lifecycle');
+      const res = await lc.uninstallSkill(f.roots, { name: 'alpha', bindings: [f.projectA, f.projectB] }, {});
+      ok(res.backup && fs.existsSync(res.backup), '卸载前自动备份');
+      ok(!fs.existsSync(path.join(f.library, 'alpha')), '库体已删');
+      eq(JSON.stringify(res.frozenProjects), JSON.stringify([f.projectB]), '冻结项目识别');
+      ok(res.rewrittenProjects.includes(f.projectA), 'A 重写');
+      eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['beta']), 'A 精确回收 alpha 无孤儿');
+      const { readManaged } = await core('managed');
+      ok(!('alpha' in (await readManaged(f.projectA)).entries), 'A 托管清单同步');
+      eq(JSON.stringify(fs.readdirSync(path.join(f.projectB, '.dsh', 'skills')).filter((n) => n !== '.managed.json').sort()), JSON.stringify(['alpha']), '冻结项目条目原样保留（死链也不动，§7.8）');
+      const { loadSet } = await core('sets');
+      eq(JSON.stringify((await loadSet(f.roots, 's1')).skills), JSON.stringify(['beta']), 's1 移除 alpha');
+      const oplog = JSON.parse(fs.readFileSync(path.join(f.library, '.backups', 'oplog.json'), 'utf8'));
+      eq(oplog.at(-1).action, 'uninstall', '操作日志'); eq(oplog.at(-1).name, 'alpha', '日志 name');
+      const b = await core('backup');
+      const list = b.listBackups(f.roots, 'alpha');
+      ok(list.length >= 1, '回收站可见');
+      const r = b.restore(f.roots, 'alpha', list[0].dir);
+      eq(r.verified, true, '恢复后逐文件哈希一致（§17#10 判定）');
+      eq(crypto.createHash('sha256').update(fs.readFileSync(path.join(f.library, 'alpha', 'SKILL.md'))).digest('hex'), alphaHash, 'SKILL.md 内容复原');
+      // prune：12 份快照留 10（§8.8）
+      const droot = path.join(f.library, '.backups', 'delta');
+      for (let i = 0; i < 12; i++) { const d = path.join(droot, `2026-10-0${i < 10 ? i : i - 10}T00-00-00-000Z`); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'SKILL.md'), 'x'); }
+      b.prune(f.roots, 'delta');
+      ok(fs.readdirSync(droot).length === 10, 'prune 留最近 10 份');
+      // Review Focus #3：半成品不入回收站
+      eq(b.listBackups(f.roots, 'alpha').length, list.length, 'listBackups 不认 .tmp 半成品');
+    },
+  },
+  {
     id: '10', title: '卸载→回收站→恢复（§17#10）', status: 'pending-scope',
-    note: '验收对象是 P1「备份与回收站」；范围裁定待用户确认后启用', run: async () => {},
+    note: 'P1a 转正：由 uninstall-backup-restore case 覆盖（卸载备份→跨集跨项目回收→恢复逐文件哈希一致）', run: async () => {},
   },
   {
     id: '11', title: '诊断六类分组报出（§17#11）', status: 'pending-scope',

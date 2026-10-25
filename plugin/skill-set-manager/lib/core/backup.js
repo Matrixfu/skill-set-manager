@@ -1,0 +1,107 @@
+/**
+ * 备份与回收站（§8.8）：`~/.dsh/skill-library/.backups/<name>/<ts>/`（库目录点开头
+ * 天然不被 libraryList 列出）；快照先写 `.tmp` 再 rename 发布——半成品永不成为恢复
+ * 源（Review Focus #3）；保留 = 每技能最近 10 份或 30 天先到为准。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { copyDirTree } from './github.js';
+
+const DAYS = 30 * 24 * 3600 * 1000;
+const KEEP = 10;
+
+function backupsRoot(roots) {
+  return path.join(roots.libraryRoot, '.backups');
+}
+
+/** 整技能快照（含 .manifest.json）；返回已发布目录。 */
+export function snapshot(roots, name, { fs: fsImpl = fs } = {}) {
+  const src = path.join(roots.libraryRoot, name);
+  fsImpl.statSync(src); // 不存在 → 直接 throw（调用方归一）
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const pub = path.join(backupsRoot(roots), name, ts);
+  const tmp = `${pub}.tmp`;
+  fsImpl.mkdirSync(path.dirname(pub), { recursive: true });
+  try {
+    fsImpl.rmSync(tmp, { recursive: true, force: true });
+    copyDirTree(src, tmp, fsImpl);
+    fsImpl.renameSync(tmp, pub);
+  } catch (e) {
+    try { fsImpl.rmSync(tmp, { recursive: true, force: true }); } catch {}
+    throw e;
+  }
+  prune(roots, name, { fs: fsImpl });
+  return pub;
+}
+
+/** 保留策略：按 mtime 降序，超出 10 份或超 30 天者删除。 */
+export function prune(roots, name, { fs: fsImpl = fs, now = Date.now() } = {}) {
+  const root = path.join(backupsRoot(roots), name);
+  let names;
+  try { names = fsImpl.readdirSync(root); } catch { return; }
+  const dirs = names
+    .filter((n) => !n.endsWith('.tmp'))
+    .map((n) => {
+      const dir = path.join(root, n);
+      let mtime = now;
+      try { mtime = fsImpl.statSync(dir).mtimeMs; } catch {}
+      return { dir, n, mtime };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+  dirs.forEach((d, i) => {
+    if (i < KEEP && now - d.mtime <= DAYS) return;
+    try { fsImpl.rmSync(d.dir, { recursive: true, force: true }); } catch {}
+  });
+}
+
+/** 已发布快照列表（新→旧），ts=mtime。 */
+export function listBackups(roots, name, { fs: fsImpl = fs } = {}) {
+  const root = path.join(backupsRoot(roots), name);
+  let names;
+  try { names = fsImpl.readdirSync(root); } catch { return []; }
+  return names
+    .filter((n) => !n.endsWith('.tmp'))
+    .map((n) => {
+      const dir = path.join(root, n);
+      let fileCount = 0; let mtime = 0;
+      try {
+        mtime = fsImpl.statSync(dir).mtimeMs;
+        fileCount = countFiles(dir, fsImpl);
+      } catch { return null; }
+      return { dir, ts: new Date(mtime).toISOString(), fileCount };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.ts < b.ts ? 1 : -1));
+}
+
+function countFiles(dir, fsImpl) {
+  let n = 0;
+  for (const ent of fsImpl.readdirSync(dir, { withFileTypes: true })) {
+    if (ent.isDirectory()) n += countFiles(path.join(dir, ent.name), fsImpl);
+    else n += 1;
+  }
+  return n;
+}
+
+/** 恢复 = 快照整体替换库体 → 以快照 manifest 逐文件哈希复核（§17#10 判定）。 */
+export function restore(roots, name, backupDir, { fs: fsImpl = fs } = {}) {
+  const dst = path.join(roots.libraryRoot, name);
+  fsImpl.statSync(backupDir);
+  fsImpl.rmSync(dst, { recursive: true, force: true });
+  copyDirTree(backupDir, dst, fsImpl);
+  let manifest;
+  try { manifest = JSON.parse(fsImpl.readFileSync(path.join(dst, '.manifest.json'), 'utf8')); } catch { manifest = null; }
+  let verified = false;
+  if (manifest && manifest.files) {
+    verified = true;
+    for (const [p, h] of Object.entries(manifest.files)) {
+      try {
+        const buf = fsImpl.readFileSync(path.join(dst, p));
+        const hex = crypto.createHash('sha256').update(buf).digest('hex');
+        if (`sha256:${hex}` !== h) { verified = false; break; }
+      } catch { verified = false; break; }
+    }
+  }
+  return { verified };
+}
