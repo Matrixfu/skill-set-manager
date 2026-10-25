@@ -31,6 +31,16 @@ export function parseRepoSpec(spec) {
 
 const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 
+/**
+ * 来源归一（P2）：`github:` 前缀写法（manifest 规范形）、`github.com/…`、`https://github.com/…`
+ * 与裸 `owner/repo[/subpath]` 一律解析后写回规范形 `github:owner/repo[/subpath]`。
+ * parseRepoSpec 本身不剥 `github:` 前缀，认领来源与按 pin 安装都先过这里（单一口径）。
+ */
+export function normalizeRepoSource(source) {
+  const spec = parseRepoSpec(String(source ?? ''));
+  return `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`;
+}
+
 /** 目录树整拷（无 manifest 语义；T3 备份/恢复复用）。 */
 export function copyDirTree(src, dst, fsImpl = fs) {
   fsImpl.mkdirSync(dst, { recursive: true });

@@ -20,7 +20,7 @@ import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 import { syncResident } from './lib/core/resident.js';
 import os from 'node:os';
-import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
+import { parseRepoSpec, normalizeRepoSource, fetchRepo, installSkills } from './lib/core/github.js';
 import * as updates from './lib/core/updates.js';
 import * as bk from './lib/core/backup.js';
 import * as lifecycle from './lib/core/lifecycle.js';
@@ -50,7 +50,7 @@ export function apply(ctx, config) {
 
   // Remote 命名空间 = 操作唯一实现（§14）；fetch 兜底通道共用同一清单。
   const REMOTE_METHODS = [
-    'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
+    'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
     'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'unbind',
@@ -166,6 +166,51 @@ export function apply(ctx, config) {
 
     async importSets(req) {
       return sets.importSets(roots, req.payload);
+    }
+
+    /** 导入预览（只读）：缺哪些技能、有没有 pin 可装、显示名会不会撞车（§5.6 两步导入第一步）。 */
+    async importPreview(req) {
+      return sets.importPreview(roots, req.payload);
+    }
+
+    /**
+     * 导入落盘（§5.6）：三选一由 client 传 choices；「按 pin 安装」在这里走与
+     * installApply **完全同一条**稀疏拉取 + installSkills 路径（§14 单一实现），
+     * 插件自己不擅自联网——只有 choices 选了 install 才拉。
+     */
+    async importApply(req) {
+      const tmps = [];
+      const notes = [];
+      try {
+        const res = await sets.importApply(roots, req.payload, {
+          choices: req.choices ?? {},
+          install: async (name, pin) => {
+            const canonical = normalizeRepoSource(pin.source); // 归一 → 规范形（manifest 与解析同一口径）
+            const spec = parseRepoSpec(canonical);
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-pin-'));
+            tmps.push(tmpDir);
+            const got = await fetchRepo(spec, { tmpDir, ...(req.url ? { url: req.url } : {}) });
+            const rows = await installSkills(roots, {
+              source: canonical,
+              commit: got.commit,
+              skillsDir: got.skillsDir,
+              names: [name],
+              overwrite: false,
+              backup: async (n) => bk.snapshot(roots, n),
+            });
+            const row = rows.find((r) => r.name === name);
+            if (!row?.ok) throw new Error(`按 pin 安装失败：${row?.reason ?? '上游未返回该技能'}`);
+            if (pin.commit && pin.commit !== got.commit)
+              notes.push(`${name}: pin 记的是 ${String(pin.commit).slice(0, 7)}，上游 HEAD 是 ${got.commit.slice(0, 7)}——已按 HEAD 装入（稀疏拉取不保证能取任意 SHA）`);
+            registerLibrary(roots);
+            return { commit: got.commit };
+          },
+        });
+        if (notes.length) res.warnings.push(...notes);
+        return res;
+      } finally {
+        for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
+      }
     }
 
     /** 绑定 + 直接写 + 幂等补 .gitignore 署名行（§7.6）。 */

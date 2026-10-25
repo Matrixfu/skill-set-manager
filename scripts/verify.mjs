@@ -1053,6 +1053,70 @@ const CASES = [
       eq(fs.readFileSync(file, 'utf8'), before, '无覆盖不动盘');
     },
   },
+  {
+    id: 'import-pin', title: '导入导出 pin：预览只读、三选一（按 pin 安装/占位/忽略）、显示名冲突不覆盖、非法 payload 不半写（§5.6，P2-T3）',
+    async run(f) {
+      await withRoots(f);
+      const s = await core('sets');
+      // 源库：一个带 github manifest（可 pin），一个无 manifest（无 pin）
+      writeSkill(f.library, 'pinned');
+      fs.writeFileSync(path.join(f.library, 'pinned', '.manifest.json'), JSON.stringify({ name: 'pinned', source: 'github:foo/bar/skills', commit: 'abc1234', managed: true, files: {}, dirDigest: 'sha256:x' }));
+      writeSkill(f.library, 'bare');
+      await s.saveSet(f.roots, { slug: 'pkg', name: '文档流', description: '导出描述', skills: ['pinned', 'bare'] });
+      const ex = s.exportSet(f.roots, 'pkg');
+      eq(ex.sets[0].description, '导出描述', '导出带描述（可完整读回）');
+      eq(ex.sets[0].pins, { pinned: { source: 'github:foo/bar/skills', commit: 'abc1234' } }, '只有有来源的技能带 pin');
+
+      // 换一套空库 roots（同 base 下新建，避免嵌套夹具泄漏）
+      const home2 = path.join(f.base, 'home2');
+      const agents2 = path.join(f.base, 'agents2');
+      for (const d of [home2, path.join(home2, 'skill-sets'), path.join(home2, 'skill-library'), agents2, path.join(agents2, 'skills')]) mkdirp(d);
+      const roots2 = (await core('paths')).buildRoots({ dshHome: home2, agentsHome: agents2 });
+
+      const pv = s.importPreview(roots2, ex);
+      eq(pv.items.length, 1, '预览一个集');
+      eq(pv.items[0].name, '文档流', '显示名照搬');
+      eq(pv.items[0].conflict, false, '空库无显示名冲突');
+      setEq(pv.items[0].missing.map((m) => m.name), ['bare', 'pinned'], '两个技能在本机都缺');
+      eq(pv.items[0].missing.find((m) => m.name === 'pinned').pin, { source: 'github:foo/bar/skills', commit: 'abc1234' }, '缺失项带 pin');
+      eq(pv.items[0].missing.find((m) => m.name === 'bare').pin, null, '无来源技能无 pin');
+      eq(fs.readdirSync(path.join(home2, 'skill-sets')).length, 0, '预览只读：不写盘');
+
+      // 三选一：pinned→install（注入桩，插件自己不自动联网）、bare→placeholder
+      const got = [];
+      const res = await s.importApply(roots2, ex, {
+        choices: { pinned: 'install', bare: 'placeholder' },
+        install: async (name, pin) => { got.push({ name, pin }); writeSkill(roots2.libraryRoot, name); return { ok: true }; },
+      });
+      eq(got, [{ name: 'pinned', pin: { source: 'github:foo/bar/skills', commit: 'abc1234' } }], 'install 收到 pin 并交注入实现执行');
+      setEq(res.installed, ['pinned'], 'installed 计数');
+      setEq(res.placeholders, ['bare'], 'placeholders 计数');
+      const ph = path.join(roots2.libraryRoot, 'bare');
+      ok(fs.existsSync(path.join(ph, 'SKILL.md')), '占位技能体就位');
+      eq(JSON.parse(fs.readFileSync(path.join(ph, '.manifest.json'), 'utf8')).source, 'placeholder', '占位 manifest source=placeholder');
+      eq((await core('resolver')).parseFrontmatter(fs.readFileSync(path.join(ph, 'SKILL.md'), 'utf8')).name, 'bare', '占位 SKILL.md frontmatter name 合法');
+      eq(res.created, [{ slug: 'pkg', name: '文档流' }], '集已创建');
+      eq(s.loadSet(roots2, 'pkg').skills, ['pinned', 'bare'], '导入后的集保留完整技能名单');
+      eq(res.ignored, [], '本次无忽略项');
+
+      // 缺省 = ignore：不写库、不联网，集仍引用该名（悬空由诊断兜）
+      const res2 = await s.importApply(roots2, { sets: [{ slug: 'other', name: '忽略集', skills: ['nope'] }] }, {});
+      setEq(res2.ignored, ['nope'], '缺省不自动联网安装 → ignore');
+      eq(fs.existsSync(path.join(roots2.libraryRoot, 'nope')), false, 'ignore 不写库');
+
+      // 显示名冲突：不覆盖、不创建（上面已导入过「文档流」）
+      const res3 = await s.importApply(roots2, { sets: [{ slug: 'pkg2', name: '文档流', skills: [] }] }, {});
+      setEq(res3.nameConflicts.map((c) => c.name), ['文档流'], '显示名冲突报出');
+      eq(res3.created.length, 0, '冲突项不覆盖不新建');
+
+      // 非法 payload：报 errors 且不半写
+      const bad = await s.importApply(roots2, { sets: [{ name: '坏集', skills: ['Bad_Name'] }] }, {});
+      ok(bad.errors.length > 0, '非法技能名报 error');
+      eq(bad.created.length, 0, '非法 payload 不半写');
+      eq(s.importPreview(roots2, { sets: [{ name: '坏集', skills: ['Bad_Name'] }] }).errors.length, 1, '预览同样报非法');
+      ok(s.importPreview(roots2, null).errors.length >= 1, 'payload 非对象 → errors');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------

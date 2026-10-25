@@ -43,6 +43,10 @@ window.__ModuleLoader__.load({
         rpFrozen: '技能集已删除（冻结：清单原样保留）', rpClick: '点击查看 SKILL.md', rpNoSession: '（右栏 tab 未绑定会话）',
         rpForeign: '外来', rpMissing: '缺失', rpDead: '失效',
         rpEmpty: '（无生效技能）', rpDiagFail: '诊断加载失败',
+        importPreviewBtn: '预览导入', importApply: '应用导入', importConflict: '显示名已存在（该项跳过）',
+        importAllPresent: '技能齐备', importMissing: '本机缺失', importNoPin: '无来源 pin，装不了',
+        importChoiceInstall: '按 pin 安装', importChoicePlaceholder: '先占位', importChoiceIgnore: '忽略',
+        importDefaultHint: '每个缺失技能选一项；不选 = 忽略（插件不自动联网安装）',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -76,6 +80,10 @@ window.__ModuleLoader__.load({
         rpFrozen: 'Set deleted (frozen: list kept as-is)', rpClick: 'Click to open SKILL.md', rpNoSession: '(right tab has no bound session)',
         rpForeign: 'foreign', rpMissing: 'missing', rpDead: 'dead',
         rpEmpty: '(no effective skills)', rpDiagFail: 'diagnose failed',
+        importPreviewBtn: 'Preview import', importApply: 'Apply import', importConflict: 'name exists (this item is skipped)',
+        importAllPresent: 'all skills present', importMissing: 'missing locally', importNoPin: 'no source pin — cannot install',
+        importChoiceInstall: 'Install by pin', importChoicePlaceholder: 'Placeholder', importChoiceIgnore: 'Ignore',
+        importDefaultHint: 'Pick one per missing skill; unpicked = ignore (no automatic network install)',
       },
     };
 
@@ -214,9 +222,38 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'ssm-io' },
               h('textarea', {
                 className: 'ssm-textarea', rows: 8, spellCheck: false,
-                readOnly: io.mode === 'export', value: io.text, disabled: busy,
-                onChange: (e) => setIo({ ...io, text: e.target.value, copied: false }),
+                readOnly: io.mode === 'export' || !!io.preview, value: io.text, disabled: busy,
+                onChange: (e) => setIo({ ...io, text: e.target.value, copied: false, preview: null }),
               }),
+              // 导入第二步（§5.6）：预览只读结果 → 每个缺失技能三选一「按 pin 安装 / 先占位 / 忽略」
+              io.mode === 'import' && io.preview
+                ? h('div', { className: 'ssm-io' },
+                    ...(io.preview.errors ?? []).map((er, i) => h('div', { key: 'e' + i, className: 'ssm-warn' }, `⚠ ${er}`)),
+                    ...(io.preview.items ?? []).map((it) => h('div', { key: it.name, className: 'ssm-row' },
+                      h('span', null, it.name, h('span', { className: 'ssm-n' }, ` ${(it.skills ?? []).length} ${t('skillsCount')}`)),
+                      it.conflict ? h('span', { className: 'ssm-warn-inline' }, ' ' + t('importConflict')) : null,
+                      (it.missing ?? []).length
+                        ? h('span', { className: 'ssm-n' }, ` ${t('importMissing')}：${(it.missing ?? []).map((m) => m.name).join('、')}`)
+                        : h('span', { className: 'ssm-ok' }, ' ' + t('importAllPresent')))),
+                    (io.preview.items ?? []).some((it) => (it.missing ?? []).length)
+                      ? h('div', { className: 'ssm-hint' }, t('importDefaultHint')) : null,
+                    ...(io.preview.items ?? []).flatMap((it) => (it.missing ?? []).map((m) => h('div', { key: `${it.slug}/${m.name}`, className: 'ssm-row' },
+                      h('span', null, m.name, m.pin ? h('span', { className: 'ssm-n' }, ` ${String(m.pin.source).replace('github:', '')}${m.pin.commit ? ` @${String(m.pin.commit).slice(0, 7)}` : ''}`) : null),
+                      h('span', { className: 'ssm-grow' }, null),
+                      h('button', {
+                        disabled: busy || !m.pin || io.choices[m.name] === 'install',
+                        title: m.pin ? '' : t('importNoPin'),
+                        onClick: () => setIo({ ...io, choices: { ...io.choices, [m.name]: 'install' } }),
+                      }, (io.choices[m.name] === 'install' ? '✓ ' : '') + t('importChoiceInstall')),
+                      h('button', {
+                        disabled: busy || io.choices[m.name] === 'placeholder',
+                        onClick: () => setIo({ ...io, choices: { ...io.choices, [m.name]: 'placeholder' } }),
+                      }, (io.choices[m.name] === 'placeholder' ? '✓ ' : '') + t('importChoicePlaceholder')),
+                      h('button', {
+                        disabled: busy || io.choices[m.name] === 'ignore',
+                        onClick: () => setIo({ ...io, choices: { ...io.choices, [m.name]: 'ignore' } }),
+                      }, (io.choices[m.name] === 'ignore' ? '✓ ' : '') + t('importChoiceIgnore'))))))
+                : null,
               h('div', { className: 'ssm-row' },
                 io.mode === 'export'
                   ? h('button', {
@@ -226,14 +263,27 @@ window.__ModuleLoader__.load({
                         catch (e) { setError(`${t('copyFail')}: ${e?.message ?? e}`); }
                       },
                     }, t('copyClip'))
-                  : h('button', {
-                      disabled: busy || !io.text.trim(),
-                      onClick: () => {
-                        let payload;
-                        try { payload = JSON.parse(io.text); } catch (e) { setError(`${t('importJson')}: JSON ${e?.message ?? e}`); return; }
-                        run(() => call(ctx, 'importSets', { payload })).then(() => setIo(null));
-                      },
-                    }, t('importJson')),
+                  : io.preview
+                    ? h('button', {
+                        disabled: busy,
+                        onClick: async () => {
+                          setBusy(true); setError(null);
+                          try { await call(ctx, 'importApply', { payload: io.payload, choices: io.choices }); setIo(null); }
+                          catch (e) { setError(`${t('importApply')}: ${e?.message ?? e}`); }
+                          finally { setBusy(false); await reload(); }
+                        },
+                      }, t('importApply'))
+                    : h('button', {
+                        disabled: busy || !io.text.trim(),
+                        onClick: async () => {
+                          let payload;
+                          try { payload = JSON.parse(io.text); } catch (e) { setError(`${t('importJson')}: JSON ${e?.message ?? e}`); return; }
+                          setBusy(true); setError(null);
+                          try { setIo({ ...io, payload, preview: await call(ctx, 'importPreview', { payload }), choices: {} }); }
+                          catch (e) { setError(`${t('importPreviewBtn')}: ${e?.message ?? e}`); }
+                          finally { setBusy(false); } // 预览只读，无需 reload
+                        },
+                      }, t('importPreviewBtn')),
                 io.mode === 'export' && io.copied ? h('span', { className: 'ssm-ok' }, t('copied')) : null,
                 h('span', { className: 'ssm-grow' }, null),
                 h('button', { disabled: busy, onClick: () => setIo(null) }, '×')))

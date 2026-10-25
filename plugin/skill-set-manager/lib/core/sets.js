@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SKILL_NAME_RE } from './paths.js';
 import { writeTextAtomic } from './atomic.js';
+import { writeSkillManifest } from './manifest.js';
 
 export const RESIDENT_SLUG = '_resident';
 
@@ -131,7 +132,95 @@ export function exportSet(roots, slug) {
     const mf = readJson(path.join(roots.libraryRoot, n, '.manifest.json'));
     if (mf && mf.source && mf.source !== 'unknown') pins[n] = { source: mf.source, commit: mf.commit };
   }
-  return { sets: [{ slug: set.slug, name: set.name, skills: set.skills, ...(Object.keys(pins).length ? { pins } : {}) }] };
+  return { sets: [{ slug: set.slug, name: set.name, description: set.description ?? '', skills: set.skills, ...(Object.keys(pins).length ? { pins } : {}) }] };
+}
+
+// ---------- 导入（§5.6：预览 → 三选一「按 pin 安装 / 忽略 / 先占位」，插件不自动联网） ----------
+
+/** pin 归一：无 source 或 source=unknown 一律视为无 pin（按 pin 安装按钮随之禁用）。 */
+function pinOf(pins, name) {
+  const p = pins && typeof pins === 'object' ? pins[name] : null;
+  const source = typeof p?.source === 'string' ? p.source.trim() : '';
+  if (!source || source === 'unknown') return null;
+  return { source, commit: typeof p.commit === 'string' ? p.commit : null };
+}
+
+/** payload 校验（用户粘的 JSON 不可信）：一个坏集只报一条错、整集不参与写入，绝不半写。 */
+function validatePayload(payload) {
+  if (!payload || !Array.isArray(payload.sets) || !payload.sets.length)
+    return { errors: ['payload 须为 { sets: [{ name, skills, pins? }] }'], items: [] };
+  const errors = [];
+  const items = [];
+  for (const item of payload.sets) {
+    const label = item?.name ?? item?.slug ?? '(无名)';
+    if (!item || typeof item !== 'object' || !String(item.name ?? '').trim()) { errors.push(`技能集缺少显示名：${JSON.stringify(label)}`); continue; }
+    if (!Array.isArray(item.skills)) { errors.push(`技能集「${label}」的 skills 须为数组`); continue; }
+    const bad = item.skills.filter((n) => typeof n !== 'string' || !SKILL_NAME_RE.test(n));
+    if (bad.length) { errors.push(`技能集「${label}」含非法技能名：${bad.join('、')}`); continue; }
+    items.push(item);
+  }
+  return { errors, items };
+}
+
+/** 只读预览：本机上哪些技能缺、有没有 pin 可装、显示名会不会撞车。 */
+export function importPreview(roots, payload) {
+  const { errors, items } = validatePayload(payload);
+  const known = listSets(roots);
+  const out = items.map((item) => {
+    const skills = [...new Set(item.skills)];
+    return {
+      name: String(item.name).trim(),
+      slug: uniqueSlug(roots, slugify(item.slug || item.name) || 'set'),
+      skills,
+      conflict: known.some((s) => s.name === String(item.name).trim()),
+      missing: skills.filter((n) => !skillExists(roots, n)).map((n) => ({ name: n, pin: pinOf(item.pins, n) })),
+    };
+  });
+  return { items: out, errors };
+}
+
+/** 占位技能体（§5.6「先占位」）：让名字先存在、集不悬空，manifest 标 source=placeholder。 */
+function makePlaceholder(roots, name) {
+  const dir = path.join(roots.libraryRoot, name);
+  if (fs.existsSync(dir)) return false; // 本体已在就不覆盖
+  fs.mkdirSync(dir, { recursive: true });
+  writeTextAtomic(path.join(dir, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: 占位：导入时选「先占位」，技能体尚未安装\n---\n\n# ${name}\n\n占位技能：技能体尚未安装。装上真身后请删除本目录（或从 GitHub 安装覆盖）。\n`);
+  writeSkillManifest(dir, { source: 'placeholder' });
+  return true;
+}
+
+/**
+ * 落盘导入：`choices[技能名] = 'install' | 'placeholder' | 'ignore'`，缺省 ignore
+ * （插件不自动联网安装——§5.6 硬约束）；install 由调用方注入（host 走同一条稀疏拉取路径）。
+ */
+export async function importApply(roots, payload, { choices = {}, install = null } = {}) {
+  const { errors, items } = validatePayload(payload);
+  const created = [], nameConflicts = [], installed = [], placeholders = [], ignored = [], warnings = [];
+  for (const item of items) {
+    const name = String(item.name).trim();
+    const exists = listSets(roots).find((s) => s.name === name);
+    if (exists) { nameConflicts.push({ name, slug: exists.slug }); continue; } // 显示名冲突不覆盖（§5.10）
+    const slug = uniqueSlug(roots, slugify(item.slug || name) || 'set');
+    const skills = [...new Set(item.skills)];
+    saveSet(roots, { slug, name, description: typeof item.description === 'string' ? item.description : '', skills });
+    created.push({ slug, name });
+    for (const n of skills) {
+      if (skillExists(roots, n)) continue;
+      const choice = choices[n] ?? 'ignore';
+      if (choice === 'install') {
+        const pin = pinOf(item.pins, n);
+        if (!pin) { warnings.push(`${n}: 无来源 pin，无法按 pin 安装（改判忽略）`); ignored.push(n); continue; }
+        if (!install) { warnings.push(`${n}: 本环境无安装通道（改判忽略）`); ignored.push(n); continue; }
+        try { await install(n, pin); installed.push(n); }
+        catch (e) { warnings.push(`${n}: 按 pin 安装失败（${e?.message ?? e}）`); ignored.push(n); }
+      } else if (choice === 'placeholder') {
+        try { makePlaceholder(roots, n); placeholders.push(n); }
+        catch (e) { warnings.push(`${n}: 占位失败（${e?.message ?? e}）`); }
+      } else ignored.push(n);
+    }
+  }
+  return { created, nameConflicts, installed, placeholders, ignored, warnings, errors };
 }
 
 /** 导入：显示名冲突不覆盖；缺失技能只列清单，插件不自动联网安装（§5.6）。 */
