@@ -6,6 +6,7 @@ import z from '@deepseek-ai/schemastery';
 import fs from 'node:fs';
 import path from 'node:path';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
+import { parseSkillSetLine } from './lib/core/commandLine.js';
 import { buildRoots } from './lib/core/paths.js';
 import { registerLibrary, readManifest, walkFiles } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
@@ -413,6 +414,107 @@ export function apply(ctx, config) {
   });
 
   const remote = new SkillSetManagerRemote(ctx);
+
+  // ---- P2：人机入口（§12 P2）：slash 命令与模型工具只是同一批 remote.* 方法的
+  // 薄包装（§14「一个操作、两个调用方」）——这里只允许出现解析与文本渲染。 ----
+  const NO_SESSION = '无法定位项目：请在对话页打开会话后再调用（插件不拿 host 进程 cwd 冒充项目根）';
+  const HELP = '用法：/skill-set list | show | use <集名或显示名> [--yes] | undo';
+  const detailText = (d) => (Array.isArray(d) ? d.join('；') : String(d ?? ''));
+  const fmtList = (r, currentSlug) => {
+    const lines = [`技能集（${r.sets.length}）｜全局常驻 ${r.resident.skills.length} 项`];
+    for (const s of r.sets) lines.push(`  ${s.slug === currentSlug ? '→' : ' '} ${s.slug}  ${s.name}（${(s.skills || []).length}）`);
+    if (!r.sets.length) lines.push('  （还没有技能集：面板「从当前生效清单另存为」是第一个集的主路径）');
+    lines.push(currentSlug ? `当前项目绑定：${currentSlug}` : '当前项目：未绑定技能集');
+    return lines.join('\n');
+  };
+  const fmtShow = (st) => {
+    const sc = st.selfCheck;
+    const lines = [
+      `项目根：${st.projectRoot}${st.rootDrift ? `（≠ 会话目录 ${st.cwd}：改动影响该仓库全部会话）` : ''}`,
+      `当前技能集：${st.set ? `${st.set.name}（${st.set.slug}）` : '未绑定'}`,
+      `生效清单（${st.effective.names.length}）：${st.effective.names.join('、') || '（空）'}`,
+      `全局常驻（${st.resident.length}）：${st.resident.join('、') || '（无）'}`,
+      sc.ok ? '自检：✓ 与盘上一致' : `自检：⚠ ${detailText(sc.detail) || '自算清单与盘上不一致'}`,
+    ];
+    if (st.sessionOverrideActive) lines.push('临时覆盖：本次会话进行中（会话结束即还原）');
+    if (sc.frozen) lines.push('冻结绑定：技能集已被删除，清单原样保留、插件不再驱动——改绑或重建。');
+    if (st.presetWarn) lines.push(`注意：${st.presetWarn}`);
+    lines.push('提示：`/` 命令列表在新会话前不会同步，以本命令与面板为准。');
+    return lines.join('\n');
+  };
+  const fmtSwitch = (set, res) => {
+    const a = res.applied ?? { added: 0, removed: 0, kept: 0 };
+    const w = res.warnings?.length ? `\n警告：${res.warnings.join('；')}` : '';
+    return `已切换：${set.name}（${set.slug}）\n新增 ${a.added} / 移除 ${a.removed}（保留 ${a.kept}），下一轮请求即生效。${w}\n/skill-set undo 可撤销本次切换。`;
+  };
+  const DOCTOR_GROUPS = [['partition', '分区构成'], ['copies', '副本漂移'], ['dangling', '悬空引用'], ['deadLinks', '失效链接'], ['structure', '结构与 frontmatter'], ['env', '环境']];
+  const fmtDoctor = (d) => {
+    const lines = [];
+    for (const [key, label] of DOCTOR_GROUPS) {
+      const rows = d.groups?.[key] ?? [];
+      lines.push(`【${label}】${rows.length} 条`);
+      for (const r of rows.slice(0, 5)) lines.push(`  ${r.level === 'info' ? '·' : '⚠'} ${r.what}${r.fix ? `｜修复：${r.fix}` : ''}`);
+      if (rows.length > 5) lines.push(`  …另 ${rows.length - 5} 条见设置页「诊断」页签`);
+    }
+    lines.push(`可自动修复：回收失效链接（${d.fixable?.reclaimDeadLinks?.count ?? 0} 条）与「按当前技能集重建」——两者都在面板或设置页诊断页签执行。`);
+    return lines.join('\n');
+  };
+
+  /** `/skill-set` 处理器：解析 → remote → 文本（无业务逻辑）。 */
+  async function runSkillSet(inv) {
+    const { action, arg, yes } = parseSkillSetLine(inv?.rawInput);
+    const sessionId = inv?.agent?.id ?? null;
+    if (action === 'list') {
+      const r = await remote.listSets();
+      const current = sessionId ? (await remote.state({ sessionId })).binding?.setSlug ?? null : null;
+      return { kind: 'success', text: fmtList(r, current) };
+    }
+    if (action === 'show') {
+      if (!sessionId) return { kind: 'error', text: NO_SESSION };
+      return { kind: 'success', text: fmtShow(await remote.state({ sessionId })) };
+    }
+    if (action === 'use') {
+      if (!sessionId) return { kind: 'error', text: NO_SESSION };
+      if (!arg) return { kind: 'error', text: `缺少技能集。\n${HELP}` };
+      const all = (await remote.listSets()).sets;
+      const hit = all.filter((s) => s.slug === arg || s.name === arg);
+      if (!hit.length) return { kind: 'error', text: `找不到技能集「${arg}」。/skill-set list 查看全部。` };
+      if (hit.length > 1) return { kind: 'error', text: `「${arg}」匹配多个集：${hit.map((s) => `${s.slug}（${s.name}）`).join('、')}——请用 slug。` };
+      const st = await remote.state({ sessionId });
+      if (st.rootDrift && !yes)
+        return { kind: 'error', text: `项目根 ≠ 会话目录：本次会改 ${st.projectRoot}，影响该仓库全部会话。\n确认无误后加 --yes 重试：/skill-set use ${hit[0].slug} --yes` };
+      const res = await remote.switchSet({ sessionId, slug: hit[0].slug });
+      return { kind: 'success', text: fmtSwitch(hit[0], res) };
+    }
+    if (action === 'undo') {
+      if (!sessionId) return { kind: 'error', text: NO_SESSION };
+      const r = await remote.undoSwitch({ sessionId });
+      return { kind: 'success', text: r.restored ? '已撤销上一次切换，生效清单回到切换前。' : '没有可撤销的切换记录（撤销入口用过一次即消失）。' };
+    }
+    return { kind: 'error', text: `未知子命令「${action}」。\n${HELP}` };
+  }
+
+  /** `/skill-doctor` 处理器：全局只读诊断（无会话时项目面如实置空，review M2 口径）。 */
+  async function runDoctor(inv) {
+    return { kind: 'success', text: fmtDoctor(await remote.diagnoseRun({ sessionId: inv?.agent?.id ?? null })) };
+  }
+
+  // 注册即挂 disposer（P1 血泪规则）；服务缺位 → 一次性警告 + 该入口退化。
+  const commands = ctx.get('commands');
+  if (!commands) ctx.logger.warn('skill-set-manager：无 commands 服务，/skill-set 与 /skill-doctor 不可用（面板与设置页不受影响）');
+  else
+    ctx.effect(() => {
+      const defs = [
+        { name: 'skill-set', description: '查看与切换本项目的技能集（list / show / use <集> / undo）', input: { hint: '<list|show|use <集>|undo [--yes]>' }, handler: runSkillSet },
+        { name: 'skill-doctor', description: '技能诊断：六类状态分组 + 修复指引', handler: runDoctor },
+      ];
+      const offs = [];
+      for (const def of defs) {
+        try { offs.push(commands.register(def)); }
+        catch (e) { ctx.logger.warn(`skill-set-manager：命令 /${def.name} 注册失败（同名被占用或上一代际残留）: ${e?.message ?? e}`); }
+      }
+      return () => { for (const off of offs) { try { off(); } catch {} } };
+    }, 'skill-set-manager.commands');
 
   // 启动无条件还原（崩溃残留即设计前提）；失败不阻塞激活，只警告。
   storeOf().then(async (store) => {

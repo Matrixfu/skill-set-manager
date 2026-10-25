@@ -991,6 +991,21 @@ const CASES = [
       eq(fs.readFileSync(g, 'utf8'), before, '开关关闭二次调用仍不动');
     },
   },
+  {
+    id: 'cmd-line', title: '/skill-set 子命令解析：空参=show、--yes 任意位置剥离、未知 token 原样带回（P2-T0）',
+    async run(f) {
+      const { parseSkillSetLine } = await core('commandLine');
+      eq(parseSkillSetLine(''), { action: 'show', arg: null, yes: false }, '空参 → show');
+      eq(parseSkillSetLine(null), { action: 'show', arg: null, yes: false }, 'null → show');
+      eq(parseSkillSetLine('   '), { action: 'show', arg: null, yes: false }, '纯空白 → show');
+      eq(parseSkillSetLine('list'), { action: 'list', arg: null, yes: false }, 'list');
+      eq(parseSkillSetLine('use doc-processing'), { action: 'use', arg: 'doc-processing', yes: false }, 'use <slug>');
+      eq(parseSkillSetLine('use 文档处理'), { action: 'use', arg: '文档处理', yes: false }, '显示名可作参数（多字节不拆）');
+      eq(parseSkillSetLine('use x --yes'), { action: 'use', arg: 'x', yes: true }, '--yes 在尾');
+      eq(parseSkillSetLine('--yes use x'), { action: 'use', arg: 'x', yes: true }, '--yes 在首');
+      eq(parseSkillSetLine('bogus'), { action: 'bogus', arg: null, yes: false }, '未知子命令原样带回（处理器出帮助）');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------
