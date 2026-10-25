@@ -57,21 +57,26 @@ function upstreamDirOf(skillsDir, name, fsImpl) {
 }
 
 /** 检查更新：fetch 注入 = async (manifestSourceInfo) => {commit, skillsDir}。 */
-export async function checkUpdate(roots, name, { fetch, fs: fsImpl = fs } = {}) {
-  const dir = path.join(roots.libraryRoot, name);
+function loadUpdatable(dir, name, fsImpl) { // check/apply 共用前置校验（§8.1）
   const manifest = readManifest(dir, { fs: fsImpl });
   if (!manifest) throw new Error(`技能 "${name}" 无 manifest（本地技能不参与升级检查，§8.1）`);
   if (manifest.source === 'unknown') throw new Error(`技能 "${name}" 为本地技能，不参与升级检查（§8.1）`);
-  const { commit, skillsDir } = await fetch(manifest.source);
+  return manifest;
+}
+function buildChk(name, manifest, commit, skillsDir, dir, fsImpl) {
   const upToDate = commit === manifest.commit;
   const baseline = manifest.files || {};
   const local = walkFiles(dir, { fs: fsImpl });
-  let files;
   // 即便 commit 追平也要照出「上轮跳过的本地分歧」（否则 skip-modified 伪装成 same，
   // 直到上游再次移动才现形——活体冒烟实测教训）。
   const upstream = walkFiles(upstreamDirOf(skillsDir, name, fsImpl), { fs: fsImpl });
-  files = diffThreeWay(baseline, local, upstream);
-  return { name, source: manifest.source, current: manifest.commit, remote: commit, upToDate, files };
+  return { name, source: manifest.source, current: manifest.commit, remote: commit, upToDate, files: diffThreeWay(baseline, local, upstream) };
+}
+export async function checkUpdate(roots, name, { fetch, fs: fsImpl = fs } = {}) {
+  const dir = path.join(roots.libraryRoot, name);
+  const manifest = loadUpdatable(dir, name, fsImpl);
+  const { commit, skillsDir } = await fetch(manifest.source);
+  return buildChk(name, manifest, commit, skillsDir, dir, fsImpl);
 }
 
 /**
@@ -80,12 +85,13 @@ export async function checkUpdate(roots, name, { fetch, fs: fsImpl = fs } = {}) 
  * 本地偏差——§8.6「跳过并保留」的可追溯口径）。
  */
 export async function applyUpdate(roots, name, { fetch, backup, fs: fsImpl = fs } = {}) {
-  const chk = await checkUpdate(roots, name, { fetch, fs: fsImpl });
-  if (chk.upToDate) return { ...chk, updated: [], skipped: [], backup: null };
   const dir = path.join(roots.libraryRoot, name);
-  const { skillsDir } = await fetch(chk.source);
+  const manifest = loadUpdatable(dir, name, fsImpl);
+  const { commit, skillsDir } = await fetch(manifest.source); // 全程只拉一次上游（review n7）
+  const chk = buildChk(name, manifest, commit, skillsDir, dir, fsImpl);
+  if (chk.upToDate) return { ...chk, updated: [], skipped: [], backup: null };
   const upDir = upstreamDirOf(skillsDir, name, fsImpl);
-  const oldBaseline = readManifest(dir, { fs: fsImpl }).files || {};
+  const oldBaseline = manifest.files || {};
   const backupPath = backup ? await backup(name) : null;
   const updated = [];
   const skipped = [];
@@ -99,8 +105,8 @@ export async function applyUpdate(roots, name, { fetch, backup, fs: fsImpl = fs 
     fsImpl.writeFileSync(dst, fsImpl.readFileSync(src));
     updated.push(p);
   }
-  const manifest = writeSkillManifest(dir, { source: chk.source, commit: chk.remote, fs: fsImpl });
-  for (const p of skipped) if (p in oldBaseline) manifest.files[p] = oldBaseline[p];
-  writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
+  const mfNew = writeSkillManifest(dir, { source: chk.source, commit: chk.remote, fs: fsImpl });
+  for (const p of skipped) if (p in oldBaseline) mfNew.files[p] = oldBaseline[p];
+  writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(mfNew, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
   return { ...chk, updated, skipped, backup: backupPath };
 }

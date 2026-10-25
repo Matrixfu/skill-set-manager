@@ -473,7 +473,10 @@ const CASES = [
       eq(act['stable.md'], 'same', '未变 → same');
       ok(!chk.files.some((x) => x.path === 'notes.md'), '本地独有文件不入 action 列表');
       let bk = 0;
-      const ap = await u.applyUpdate(f.roots, 'alpha', { fetch, backup: async () => { bk++; return 'bk'; } });
+      let fetchCount = 0;
+      const fetch1 = async () => { fetchCount++; return fetch(); };
+      const ap = await u.applyUpdate(f.roots, 'alpha', { fetch: fetch1, backup: async () => { bk++; return 'bk'; } });
+      eq(fetchCount, 1, 'apply 只拉一次上游（review n7）');
       eq(bk, 1, '升级前自动备份（§17#9/#10 前置）');
       eq(JSON.stringify(ap.skipped), JSON.stringify(['SKILL.md']), 'skipped 报告含本地改动文件');
       ok(fs.readFileSync(path.join(libAlpha, 'SKILL.md'), 'utf8').includes('local body'), '本地改动未被覆盖');
