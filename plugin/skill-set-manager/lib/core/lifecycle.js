@@ -35,7 +35,7 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
     if (!binding?.setSlug) continue;
     const set = loadSet(roots, binding.setSlug);
     if (!set) { frozenProjects.push(projectRoot); continue; } // 冻结绑定：原样保留（§7.8）
-    const managed = readManaged(projectRoot, { fs: fsImpl });
+    const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { entries: {} };
     if (managed.entries?.[name]) {
       const entryPath = path.join(projectRoot, '.dsh', 'skills', name);
       try { removeEntry(entryPath, entryKind(entryPath, { fs: fsImpl })); } catch (e) { warnings.push(`${projectRoot}: ${e?.message ?? e}`); }

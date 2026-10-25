@@ -540,8 +540,62 @@ const CASES = [
     note: 'P1a 转正：由 uninstall-backup-restore case 覆盖（卸载备份→跨集跨项目回收→恢复逐文件哈希一致）', run: async () => {},
   },
   {
+    id: 'diagnose-fixture', title: '诊断六类：悬空/失效链接/重复/非kebab/嵌套/环境逐项命中且不抛（§17#11，P1a-T4）',
+    async run(f) {
+      await withRoots(f);
+      const dg = await core('diagnose');
+      // 干净夹具：除分区(info)外全空
+      const clean = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA });
+      for (const k of ['copies', 'dangling', 'deadLinks', 'structure', 'env'])
+        eq(JSON.stringify(clean.groups[k]), JSON.stringify([]), `干净夹具 ${k} 应为空`);
+      ok(Array.isArray(clean.groups.partition), 'partition 分区存在');
+      ok(clean.fixable && clean.fixable.reclaimDeadLinks && clean.fixable.rebuild, 'fixable 两动作暴露');
+      // 注入五类异常（§17#11 清单）
+      const { saveSet } = await core('sets');
+      await saveSet(f.roots, { slug: 's1', name: 'S1', skills: ['ghost'] }); // 悬空引用
+      writeSkill(f.userDsh, 'dup'); writeSkill(f.library, 'dup'); // 重复技能名
+      writeSkill(f.library, 'Bad_Name'); // 非 kebab-case
+      writeSkill(f.library, 'alpha');
+      fs.mkdirSync(path.join(f.library, 'alpha', 'nested'), { recursive: true });
+      fs.writeFileSync(path.join(f.library, 'alpha', 'nested', 'SKILL.md'), '---\nname: n\ndescription: n\n---\n'); // 嵌套
+      // 失效链接：项目内 junction 指向不存在库体
+      const { makeEntry } = await core('linkx');
+      writeSkill(f.library, 'ghostbody');
+      const deadLink = path.join(f.projectA, '.dsh', 'skills', 'dead');
+      fs.mkdirSync(path.dirname(deadLink), { recursive: true });
+      makeEntry(path.join(f.library, 'ghostbody'), deadLink);
+      fs.rmSync(path.join(f.library, 'ghostbody'), { recursive: true, force: true }); // 本体消失 → 死链
+      const d = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA });
+      ok(d.groups.dangling.some((r) => String(r.what).includes('ghost')), '悬空引用报出');
+      ok(d.groups.deadLinks.some((r) => String(r.what).includes('dead')), '失效链接报出');
+      ok(d.groups.structure.some((r) => r.kind === 'duplicate' && String(r.what).includes('dup')), '重复名报出');
+      ok(d.groups.structure.some((r) => r.kind === 'kebab' && String(r.what).includes('Bad_Name')), '非 kebab 报出');
+      ok(d.groups.structure.some((r) => r.kind === 'nested' && String(r.what).includes('alpha')), '嵌套 SKILL.md 报出且不追');
+      for (const g of ['dangling', 'deadLinks', 'structure'])
+        ok(d.groups[g].every((r) => r.level && r.fix), '每条附级别与可复制修复动作');
+      // 环境类：custom 目录覆盖库路径 / workspace-scope 双真相源 / 根漂移
+      const r2 = await withRoots(f, { customSkillDirs: [f.library] });
+      const d2 = dg.diagnose(r2, { projectRoot: f.projectA, cwd: f.projectA });
+      ok(d2.groups.env.some((r) => String(r.what).includes('custom')), 'custom 覆盖库路径报出');
+      const d3 = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA, workspaceScopeInstalled: true });
+      ok(d3.groups.env.some((r) => String(r.what).includes('workspace-scope')), '双真相源提示');
+      const d4 = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: path.join(f.projectA, 'sub') });
+      ok(d4.groups.env.some((r) => String(r.what).includes('根漂移') || String(r.what).toLowerCase().includes('drift')), '根漂移报出');
+      // 副本漂移：copied 条目盘上内容与库不一致
+      const { writeBinding } = await core('binding');
+      const { writeManaged } = await core('managed');
+      await saveSet(f.roots, { slug: 's3', name: 'S3', skills: ['dup'] });
+      writeBinding(f.projectB, 's3');
+      writeManaged(f.projectB, { setSlug: 's3', entries: { dup: { kind: 'copy', from: 'skill-library', copied: true } }, sessionOverride: { active: false, previous: null } });
+      fs.mkdirSync(path.join(f.projectB, '.dsh', 'skills', 'dup'), { recursive: true });
+      fs.writeFileSync(path.join(f.projectB, '.dsh', 'skills', 'dup', 'SKILL.md'), 'drifted\n');
+      const d5 = dg.diagnose(f.roots, { projectRoot: f.projectB, cwd: f.projectB });
+      ok(d5.groups.copies.some((r) => String(r.what).includes('漂移') || String(r.what).includes('drift') || r.level === 'warn'), '副本漂移检出');
+    },
+  },
+  {
     id: '11', title: '诊断六类分组报出（§17#11）', status: 'pending-scope',
-    note: '验收对象是 P1 诊断页；检测原语由 #7/#dangling/#foreign/#kebab/#nested 在 core 层覆盖', run: async () => {},
+    note: 'P1a 转正：由 diagnose-fixture case 覆盖（五类异常逐项命中+环境三类+副本漂移）', run: async () => {},
   },
   {
     id: '12', title: '项目根解析与平台一致（§17#12 数据侧；确认流程人工）',
