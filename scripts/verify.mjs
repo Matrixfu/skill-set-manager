@@ -551,8 +551,7 @@ const CASES = [
     },
   },
   {
-    id: '10', title: '卸载→回收站→恢复（§17#10）', status: 'pending-scope',
-    note: 'P1a 转正：由 uninstall-backup-restore case 覆盖（卸载备份→跨集跨项目回收→恢复逐文件哈希一致）', run: async () => {},
+    id: '10', title: '卸载→回收站→恢复（§17#10 → uninstall-backup-restore/rebuild-dead-entry）', run: async () => {},
   },
   {
     id: 'diagnose-fixture', title: '诊断六类：悬空/失效链接/重复/非kebab/嵌套/环境逐项命中且不抛（§17#11，P1a-T4）',
@@ -750,8 +749,7 @@ const CASES = [
     },
   },
   {
-    id: '11', title: '诊断六类分组报出（§17#11）', status: 'pending-scope',
-    note: 'P1a 转正：由 diagnose-fixture case 覆盖（五类异常逐项命中+环境三类+副本漂移）', run: async () => {},
+    id: '11', title: '诊断六类分组报出（§17#11 → diagnose-fixture）', run: async () => {},
   },
   {
     id: '12', title: '项目根解析与平台一致（§17#12 数据侧；确认流程人工）',
