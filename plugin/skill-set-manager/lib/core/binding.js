@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeTextAtomic } from './atomic.js';
 
-const bindingFile = (projectRoot) => path.join(projectRoot, '.dsh', 'skill-set-binding.json');
+export const bindingFile = (projectRoot) => path.join(projectRoot, '.dsh', 'skill-set-binding.json');
 
 export function readBinding(projectRoot, { fs: fsImpl = fs } = {}) {
   let raw;

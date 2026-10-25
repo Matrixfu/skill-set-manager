@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { buildRoots } from './lib/core/paths.js';
-import { registerLibrary } from './lib/core/manifest.js';
+import { registerLibrary, readManifest, walkFiles } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
 import { findProjectRoot } from './lib/core/projectRoot.js';
 import { readBinding, writeBinding } from './lib/core/binding.js';
@@ -17,6 +17,13 @@ import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 import { syncResident } from './lib/core/resident.js';
+import os from 'node:os';
+import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
+import * as updates from './lib/core/updates.js';
+import * as bk from './lib/core/backup.js';
+import * as lifecycle from './lib/core/lifecycle.js';
+import { diagnose } from './lib/core/diagnose.js';
+import * as migrate from './lib/core/migrate.js';
 
 /** 行级配置（cordis.patch.yml 的 config 块；用户 patch 层升级存活）。 */
 export const Config = z.object({
@@ -38,6 +45,14 @@ export function apply(ctx, config) {
   });
   let storePromise;
   const storeOf = () => (storePromise ??= openDomain(ctx, { fallbackDir: roots.dshHome }));
+
+  // Remote 命名空间 = 操作唯一实现（§14）；fetch 兜底通道共用同一清单。
+  const REMOTE_METHODS = [
+    'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
+    // P1a：技能生命周期 + 诊断 + 解绑
+    'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
+    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'unbind',
+  ];
 
   class SkillSetManagerRemote extends TypertRemoteService {
     constructor(ctx) {
@@ -107,15 +122,17 @@ export function apply(ctx, config) {
     async deleteSet(req) {
       const store = await storeOf();
       const affected = [];
+      const push = (pr) => { if (pr && readBinding(pr)?.setSlug === req.slug && !affected.includes(pr)) affected.push(pr); };
+      // P1a：bindings 索引全量推导（§7.8 冻结红标仍由 selfCheck 兜底）
+      for (const pr of lifecycle.findBoundProjects(await this._candidateProjects(), req.slug)) push(pr);
       for (const table of ['pending', 'undo']) {
         for (const key of await store.keys(table)) {
           const rec = await store.get(table, key);
-          const pr = rec?.projectRoot ?? rec?.projectRoot;
-          if (pr && readBinding(pr)?.setSlug === req.slug && !affected.includes(pr)) affected.push(pr);
+          push(rec?.projectRoot);
         }
       }
       const deleted = sets.deleteSet(roots, req.slug);
-      return { deleted, affectedProjects: affected }; // 冻结绑定由 selfCheck 红标兜底（§5.8）
+      return { deleted, affectedProjects: affected };
     }
 
     async renameSet(req) {
@@ -154,6 +171,7 @@ export function apply(ctx, config) {
       const plan = await planEffective(roots, loc.projectRoot, req.slug);
       const result = applyPlan(loc.projectRoot, plan);
       ensureGitignoreLine(loc.projectRoot, { enabled: config.gitignoreLine });
+      await (await storeOf()).put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); // P1a 索引：deleteSet/uninstall 全量推导
       return { ...result, plan, projectRoot: loc.projectRoot };
     }
 
@@ -185,27 +203,195 @@ export function apply(ctx, config) {
       return { ended: await endOverride(store, roots, loc.projectRoot) };
     }
 
-    /** 库登记 + 候选清单（建集勾选数据源）。 */
+    /** 库登记 + 候选清单（建集勾选数据源）+ P1a manifest 摘要字段。 */
     async libraryList() {
       registerLibrary(roots);
-      const fs = await import('node:fs');
-      const path = await import('node:path');
       const library = [];
       let names;
       try { names = fs.readdirSync(roots.libraryRoot); } catch { names = []; }
       for (const n of names) {
         if (n.startsWith('.')) continue;
-        let mf = null;
-        try { mf = JSON.parse(fs.readFileSync(path.join(roots.libraryRoot, n, '.manifest.json'), 'utf8')); } catch {}
-        library.push({ name: n, source: mf?.source ?? 'unknown', commit: mf?.commit ?? null, hasSkillMd: fs.existsSync(path.join(roots.libraryRoot, n, 'SKILL.md')) });
+        const dir = path.join(roots.libraryRoot, n);
+        const mf = readManifest(dir);
+        let localModified = false;
+        if (mf?.files) {
+          const now = walkFiles(dir);
+          localModified = Object.keys(mf.files).some((p) => mf.files[p] !== now[p]) || Object.keys(now).some((p) => now[p] !== mf.files[p]);
+        }
+        library.push({
+          name: n,
+          source: mf?.source ?? 'unknown',
+          commit: mf?.commit ?? null,
+          hasSkillMd: fs.existsSync(path.join(dir, 'SKILL.md')),
+          managed: !!mf,
+          localModified,
+          backupCount: bk.listBackups(roots, n).length,
+        });
       }
       return { library };
+    }
+
+    // ---- P1a：GitHub 安装 / 升级 / 卸载 / 回收站（全部薄包装 core，同一实现） ----
+
+    /** manifest.source = github:owner/repo[/subpath] → 稀疏拉取（tmp 目录批量回收）。 */
+    _fetchFor(tmpDirs) {
+      return async (source) => {
+        const segs = String(source).replace(/^github:/, '').split('/').filter(Boolean);
+        if (segs.length < 2) throw new Error(`无法解析来源: ${source}`);
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-up-'));
+        tmpDirs.push(tmpDir);
+        return fetchRepo({ owner: segs[0], repo: segs[1], ref: null, subpath: segs.length > 2 ? segs.slice(2).join('/') : null }, { tmpDir });
+      };
+    }
+
+    async installApply(req) {
+      const spec = parseRepoSpec(req.spec);
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-install-'));
+      try {
+        const got = await fetchRepo(spec, { tmpDir });
+        const results = await installSkills(roots, {
+          source: `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`,
+          commit: got.commit,
+          skillsDir: got.skillsDir,
+          names: req.names ?? null,
+          overwrite: !!req.overwrite,
+          backup: async (name) => bk.snapshot(roots, name),
+        });
+        registerLibrary(roots);
+        return { commit: got.commit, results };
+      } finally {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      }
+    }
+
+    async updateCheck(req) {
+      const tmps = [];
+      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps) }); }
+      finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+    }
+
+    async updateApply(req) {
+      const tmps = [];
+      try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps), backup: async (n) => bk.snapshot(roots, n) }); }
+      finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+    }
+
+    /** 候选项目集 = bindings 索引 ∪ pending/undo 记录（旧版遗留兜底）。 */
+    async _candidateProjects() {
+      const store = await storeOf();
+      const out = new Set();
+      for (const key of await store.keys('bindings')) {
+        const rec = await store.get('bindings', key);
+        if (rec?.projectRoot) out.add(rec.projectRoot);
+      }
+      for (const table of ['pending', 'undo']) {
+        for (const key of await store.keys(table)) {
+          const rec = await store.get(table, key);
+          if (rec?.projectRoot) out.add(rec.projectRoot);
+        }
+      }
+      return [...out];
+    }
+
+    async uninstallSkill(req) {
+      const res = await lifecycle.uninstallSkill(roots, { name: req.name, bindings: await this._candidateProjects() });
+      return res;
+    }
+
+    async backupsList(req) {
+      return { backups: bk.listBackups(roots, req.name) };
+    }
+
+    async backupRestore(req) {
+      return bk.restore(roots, req.name, req.dir);
+    }
+
+    // ---- P1a：诊断（§9 只读 + 两类可修复） ----
+
+    _workspaceScopeInstalled() {
+      // profile 目录逐个 package.json 查依赖（profile 名对插件不可见——不猜 desktop）。
+      try {
+        for (const p of fs.readdirSync(path.join(roots.dshHome, 'profiles'))) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(path.join(roots.dshHome, 'profiles', p, 'package.json'), 'utf8'));
+            if (Object.keys(pkg.dependencies ?? {}).some((d) => d.includes('dsh-workspace-scope'))) return true;
+          } catch {}
+        }
+      } catch {}
+      return false;
+    }
+
+    async diagnoseRun(req) {
+      const loc = await this.locate(req);
+      return diagnose(roots, { projectRoot: loc.projectRoot, cwd: loc.cwd, workspaceScopeInstalled: this._workspaceScopeInstalled() });
+    }
+
+    /** 自动修复①（§9）：按托管清单回收失效链接后按当前集重建。 */
+    async reclaimDeadLinks(req) {
+      const loc = await this.locate(req);
+      const managed = readManaged(loc.projectRoot) ?? { entries: {} };
+      const reclaimed = [];
+      for (const name of Object.keys(managed.entries)) {
+        const p = path.join(loc.projectRoot, '.dsh', 'skills', name);
+        try { fs.statSync(p); } catch {
+          try { fs.rmSync(p, { recursive: true, force: true }); } catch {} // 死链本体已不存在，直接摘挂角
+          delete managed.entries[name];
+          reclaimed.push(name);
+        }
+      }
+      if (reclaimed.length) writeManaged(loc.projectRoot, managed);
+      let rebuilt = null;
+      if (managed.setSlug || readBinding(loc.projectRoot)?.setSlug) {
+        const slug = readBinding(loc.projectRoot)?.setSlug;
+        if (slug) rebuilt = applyPlan(loc.projectRoot, await planEffective(roots, loc.projectRoot, slug));
+      }
+      return { reclaimed, rebuilt };
+    }
+
+    /** 自动修复②（§9 / review minor#2 转正）：托管条目外删后按当前集重建。 */
+    async rebuildManaged(req) {
+      const loc = await this.locate(req);
+      const slug = readBinding(loc.projectRoot)?.setSlug;
+      if (!slug) throw new Error('未绑定技能集，无从重建');
+      const plan = await planEffective(roots, loc.projectRoot, slug);
+      return { ...applyPlan(loc.projectRoot, plan), plan };
+    }
+
+    // ---- P1a：迁移向导（§8.2，ledger 落 storageDomain） ----
+
+    _migrateLedger() {
+      return {
+        load: async () => (await storeOf()).get('migration', 'ledger'),
+        save: async (data) => { await (await storeOf()).put('migration', 'ledger', data); },
+      };
+    }
+
+    async migratePreview() {
+      return migrate.preview(roots);
+    }
+
+    async migrateApply() {
+      const pv = migrate.preview(roots);
+      return migrate.apply(roots, { moves: pv.moves, ledger: this._migrateLedger() });
+    }
+
+    async migrateUndo() {
+      return migrate.undo(roots, { ledger: this._migrateLedger() });
+    }
+
+    /** 解绑（面板缺口）：回收托管条目 + 删 binding/managed；gitignore 行保留。 */
+    async unbind(req) {
+      const loc = await this.locate(req);
+      const res = lifecycle.unbindProject(loc.projectRoot);
+      const store = await storeOf();
+      await store.delete('bindings', projectKey(loc.projectRoot));
+      return { ...res, projectRoot: loc.projectRoot };
     }
   }
 
   // @Remote 的显式等价：网关 source-mode 读取的 prototype marker（形状照抄 dsh-typert-protocol 源码
   // addMarker/remoteMethods；加载器解析器不保证支持装饰符语法——ledger 裁定）。
-  const REMOTE_METHODS = ['state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList'];
+  // 方法清单 = 文件头 REMOTE_METHODS 单一来源（fetch 兜底通道共用）。
   Object.defineProperty(SkillSetManagerRemote.prototype, '@deepseek-ai/dsh-typert-protocol/remote-methods', {
     configurable: true,
     value: Object.freeze({ version: 1, methods: Object.freeze(REMOTE_METHODS.map((name) => Object.freeze({ kind: 'direct', exportName: name }))) }),
@@ -269,7 +455,7 @@ export function apply(ctx, config) {
           try {
             const { method, args } = JSON.parse(body || '{}');
             const fn = remote[method];
-            if (typeof fn !== 'function' || !['state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList'].includes(method)) {
+            if (typeof fn !== 'function' || !REMOTE_METHODS.includes(method)) {
               res.writeHead(400, { 'content-type': 'application/json' });
               res.end(JSON.stringify({ error: `unknown method: ${method}` }));
               return;

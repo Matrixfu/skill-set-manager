@@ -630,6 +630,60 @@ const CASES = [
     },
   },
   {
+    id: 'unbind', title: '解绑：托管条目精确回收、用户条目不动、幂等（P1a-T6 面板缺口）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'alpha'); writeSkill(f.library, 'beta');
+      const { saveSet } = await core('sets');
+      await saveSet(f.roots, { slug: 's1', name: 'S1', skills: ['alpha', 'beta'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan } = await core('effective');
+      writeBinding(f.projectA, 's1');
+      applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 's1'));
+      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'userown'); // 外来条目必须存活
+      const lc = await core('lifecycle');
+      const r = lc.unbindProject(f.projectA);
+      eq(r.wasBound, true, 'wasBound');
+      eq(JSON.stringify(r.removed.sort()), JSON.stringify(['alpha', 'beta']), '托管条目全回收');
+      eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['userown']), '用户条目不动');
+      const { readBinding, bindingFile } = await core('binding');
+      const { readManaged, managedFile } = await core('managed');
+      eq(readBinding(f.projectA), null, 'binding 已删');
+      ok(!fs.existsSync(bindingFile(f.projectA)), 'binding 文件消失');
+      eq(readManaged(f.projectA), null, 'managed 已删');
+      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'userown', 'SKILL.md')), 'userown 内容完整');
+      const r2 = lc.unbindProject(f.projectA);
+      eq(r2.wasBound, false, '幂等：再解绑不抛');
+    },
+  },
+  {
+    id: 'delete-set-multi', title: 'deleteSet 全量受影响项目推导 + 双项目冻结语义（P1a-T6）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'alpha');
+      const { saveSet, deleteSet, loadSet } = await core('sets');
+      await saveSet(f.roots, { slug: 's1', name: 'S1', skills: ['alpha'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
+      for (const p of [f.projectA, f.projectB]) {
+        writeBinding(p, 's1');
+        applyPlan(p, await planEffective(f.roots, p, 's1'));
+      }
+      writeBinding(f.projectB, 's1'); // B 也绑 s1
+      const lc = await core('lifecycle');
+      eq(JSON.stringify(lc.findBoundProjects([f.projectA, f.projectB], 's1').sort()),
+        JSON.stringify([f.projectA, f.projectB].sort()), 'findBoundProjects 全量');
+      eq(JSON.stringify(lc.findBoundProjects([f.projectA, f.projectB], 'nope')), JSON.stringify([]), '不误报');
+      deleteSet(f.roots, 's1');
+      eq(loadSet(f.roots, 's1'), null, '集已删');
+      for (const p of [f.projectA, f.projectB]) {
+        const sc = selfCheck(f.roots, p);
+        eq(sc.frozen, true, `${path.basename(p)} 冻结红标`);
+        eq(JSON.stringify(skillDirNames(p)), JSON.stringify(['alpha']), '冻结：生效清单原样（§7.8）');
+      }
+    },
+  },
+  {
     id: '11', title: '诊断六类分组报出（§17#11）', status: 'pending-scope',
     note: 'P1a 转正：由 diagnose-fixture case 覆盖（五类异常逐项命中+环境三类+副本漂移）', run: async () => {},
   },

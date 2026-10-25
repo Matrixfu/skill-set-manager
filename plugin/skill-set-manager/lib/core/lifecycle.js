@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { snapshot } from './backup.js';
 import { listSets, loadSet, saveSet } from './sets.js';
-import { readBinding } from './binding.js';
-import { readManaged, writeManaged } from './managed.js';
+import { readBinding, bindingFile } from './binding.js';
+import { readManaged, writeManaged, managedFile } from './managed.js';
 import { planEffective, applyPlan } from './effective.js';
 import { entryKind, removeEntry } from './linkx.js';
 
@@ -57,4 +57,28 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
   fsImpl.writeFileSync(logFile, JSON.stringify(log, null, 2) + '\n');
 
   return { backup, removedFromSets, rewrittenProjects, frozenProjects, warnings };
+}
+
+/** 候选项目里绑定到 slug 的全量列表（deleteSet affectedProjects 数据源）。 */
+export function findBoundProjects(projectRoots, slug, { fs: fsImpl = fs } = {}) {
+  return projectRoots.filter((pr) => {
+    try { return readBinding(pr, { fs: fsImpl })?.setSlug === slug; } catch { return false; }
+  });
+}
+
+/**
+ * 解绑（P1a 面板缺口）：删 binding + 按托管清单精确回收全部托管条目 + 删
+ * .managed.json。用户自有条目与 .gitignore 行一律不动（ADR-0003）。幂等。
+ */
+export function unbindProject(projectRoot, { fs: fsImpl = fs } = {}) {
+  const binding = readBinding(projectRoot, { fs: fsImpl });
+  const managed = readManaged(projectRoot, { fs: fsImpl });
+  const removed = [];
+  for (const name of Object.keys(managed?.entries ?? {})) {
+    const p = path.join(projectRoot, '.dsh', 'skills', name);
+    try { removeEntry(p, entryKind(p, { fs: fsImpl })); removed.push(name); } catch {}
+  }
+  try { fsImpl.rmSync(managedFile(projectRoot), { force: true }); } catch {}
+  if (binding) { try { fsImpl.rmSync(bindingFile(projectRoot), { force: true }); } catch {} }
+  return { wasBound: !!binding, removed };
 }

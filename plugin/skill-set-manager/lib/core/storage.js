@@ -63,6 +63,8 @@ export async function openDomain(ctx, { fallbackDir } = {}) {
         pending: { valueSchema: z.object({ projectRoot: z.string(), setSlug: z.string().nullable(), previousManaged: z.unknown(), added: z.array(z.string()), removed: z.array(z.string()) }) },
         undo: { valueSchema: z.object({ projectRoot: z.string(), setSlug: z.string().nullable(), managed: z.unknown(), pushedAt: z.string() }) },
         oplog: { valueSchema: z.object({ at: z.string(), kind: z.string(), detail: z.unknown() }) },
+        bindings: { valueSchema: z.object({ projectRoot: z.string() }) },
+        migration: { valueSchema: z.object({ moved: z.array(z.object({ name: z.string(), from: z.string(), to: z.string() })) }) },
       },
     });
     return {
