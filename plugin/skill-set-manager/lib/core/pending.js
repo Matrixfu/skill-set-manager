@@ -57,6 +57,10 @@ export async function endOverride(store, roots, projectRoot) {
 async function restoreProject(roots, projectRoot) {
   const binding = readBinding(projectRoot);
   if (!binding?.setSlug) return false; // 未绑定/已解绑：无目标态可还原
+  // 还原=放弃会话覆盖回到绑定态：先清 sessionOverride 标记再收敛盘，否则
+  // planEffective 按覆盖口径收敛、覆盖标记与盘面互相矛盾（活体口径教训）。
+  const managed = readManaged(projectRoot);
+  if (managed && managed.sessionOverride) writeManaged(projectRoot, { ...managed, sessionOverride: null });
   applyPlan(projectRoot, await planEffective(roots, projectRoot, binding.setSlug));
   return true;
 }
@@ -107,6 +111,10 @@ export async function applyUndo(store, roots, projectRoot) {
   if (!snap) return false;
   if (snap.setSlug) {
     writeBinding(projectRoot, snap.setSlug);
+    // 先回写快照台账（含其 sessionOverride），再按快照口径收敛盘——顺序颠倒
+    // 会让 planEffective 读到撤销前的覆盖标记、还原不出快照里的条目。
+    const mg = snap.managed ? { setSlug: snap.setSlug, entries: snap.managed.entries ?? {}, sessionOverride: snap.managed.sessionOverride ?? null } : null;
+    if (mg) writeManaged(projectRoot, mg);
     applyPlan(projectRoot, await planEffective(roots, projectRoot, snap.setSlug));
   }
   return true;

@@ -13,10 +13,17 @@ import { makeEntry, removeEntry, entryKind } from './linkx.js';
 
 export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = fs } = {}) {
   // 项目目录只放集条目；常驻经全局生效区可见（§5.3），display 口径的并集在 sets.effectiveNames。
-  const set = setSlug && setSlug !== RESIDENT_SLUG ? loadSet(roots, setSlug) : null;
-  const names = [...new Set(set?.skills ?? [])];
-  const { targets, missing: unresolved } = await resolveSkillTargets(roots, projectRoot, names, { fs: fsImpl });
+  // 期望口径必须与 readbackCheck/selfCheck 一致：集 ∪ 覆盖增 ∖ 覆盖减——否则重建/切换会
+  // 摘掉活动覆盖条目而覆盖标记仍在，自检反报「缺失」（活体回归两轮教训）。
   const managed = readManaged(projectRoot, { fs: fsImpl });
+  const set = setSlug && setSlug !== RESIDENT_SLUG ? loadSet(roots, setSlug) : null;
+  let names = [...new Set(set?.skills ?? [])];
+  const ov = managed?.sessionOverride;
+  if (ov) {
+    const removed = new Set(ov.removed ?? []);
+    names = [...new Set([...names.filter((n) => !removed.has(n)), ...(ov.added ?? [])])];
+  }
+  const { targets, missing: unresolved } = await resolveSkillTargets(roots, projectRoot, names, { fs: fsImpl });
   const current = managed?.entries ?? {};
   const targetSet = new Set(names);
   const add = [];

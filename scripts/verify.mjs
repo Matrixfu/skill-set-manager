@@ -350,6 +350,11 @@ const CASES = [
       ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'lib-b')), '覆盖条目已进生效区');
       const sc = await selfCheck(f.roots, f.projectA);
       ok(sc.ok, `selfCheck 不得把覆盖条目报成多出（活体误报 constitution）: ${sc.detail}`);
+      // 活体回归②：切换/重建走 planEffective——它必须认识活动覆盖，否则覆盖条目被摘掉
+      // 而覆盖标记还在 → 自检反报「缺失」（活体：重建后 missing: speckit-constitution）
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'set-a'));
+      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'lib-b')), '重建不得摘掉活动覆盖条目');
+      ok((await selfCheck(f.roots, f.projectA)).ok, '重建后自检仍一致');
       // 常驻 = 全局生效区 junction（§5.3）：诊断不得把自家链报成重复名
       s.saveResident(f.roots, ['lib-b']);
       const { syncResident } = await core('resident');
