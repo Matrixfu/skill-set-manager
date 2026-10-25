@@ -6,7 +6,7 @@ import z from '@deepseek-ai/schemastery';
 import fs from 'node:fs';
 import path from 'node:path';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import { parseSkillSetLine } from './lib/core/commandLine.js';
+import { parseSkillSetLine, parseToolArgs, TOOL_ACTIONS } from './lib/core/commandLine.js';
 import { buildRoots } from './lib/core/paths.js';
 import { registerLibrary, readManifest, walkFiles } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
@@ -515,6 +515,70 @@ export function apply(ctx, config) {
       }
       return () => { for (const off of offs) { try { off(); } catch {} } };
     }, 'skill-set-manager.commands');
+
+  // ---- P2：模型侧入口（§12 P2 行 211）：slash 命令是人机专属，不提供 tool 模型就管不了技能集。
+  // 工具与命令、UI 复用同一批 remote 方法（§14），差别只在文本渲染与 rootDrift 的处理。 ----
+  const renderToolValue = (value) => {
+    if (value && typeof value.text === 'string') return value.text;
+    return JSON.stringify(value ?? null, null, 2);
+  };
+  const tools = ctx.get('tools');
+  if (!tools) ctx.logger.warn('skill-set-manager：无 tools 服务，skill_set 工具不可用（模型侧无法管理技能集，其余不受影响）');
+  else
+    ctx.effect(() => {
+      let off;
+      try {
+        off = tools.register({
+          name: 'skill_set',
+          description: '查看或切换当前项目的技能集。list=列出全部技能集与当前绑定；show=当前项目根、生效清单与自检；use=切换到指定技能集（下一轮请求即生效，无需重启会话；技能体在下一轮开始前就位）。',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: [...TOOL_ACTIONS], description: 'list / show / use 三选一' },
+              slug: { type: 'string', description: 'action=use 时必填：技能集 slug 或显示名（可先 action=list 查询）' },
+            },
+            required: ['action'],
+            additionalProperties: false,
+          },
+          output: {
+            schema: { type: 'object', properties: { ok: { type: 'boolean' }, text: { type: 'string' } } },
+            render: (_args, value) => [{ type: 'text', text: renderToolValue(value) }],
+          },
+          isConcurrencySafe: (args) => { try { return parseToolArgs(args).action !== 'use'; } catch { return false; } }, // 写操作排他
+          execute: async (args, exec) => {
+            const { action, slug } = parseToolArgs(args);
+            const sessionId = exec?.agent?.id ?? null;
+            if (!sessionId) throw new Error('无会话上下文：skill_set 只能在会话内调用（需要会话定位项目根）');
+            if (action === 'list') {
+              const r = await remote.listSets();
+              const current = (await remote.state({ sessionId })).binding?.setSlug ?? null;
+              return { ok: true, current, resident: r.resident.skills, sets: r.sets.map((s) => ({ slug: s.slug, name: s.name, count: (s.skills || []).length })), text: fmtList(r, current) };
+            }
+            if (action === 'show') {
+              const st = await remote.state({ sessionId });
+              return {
+                ok: st.selfCheck.ok, projectRoot: st.projectRoot, rootDrift: st.rootDrift,
+                set: st.set?.slug ?? null, effective: st.effective.names, missing: st.effective.missing,
+                text: fmtShow(st),
+              };
+            }
+            const all = (await remote.listSets()).sets;
+            const hit = all.filter((s) => s.slug === slug || s.name === slug);
+            if (!hit.length) throw new Error(`找不到技能集「${slug}」：先 action=list 查看全部`);
+            if (hit.length > 1) throw new Error(`「${slug}」匹配多个集：${hit.map((s) => `${s.slug}（${s.name}）`).join('、')}——改用 slug`);
+            const st = await remote.state({ sessionId });
+            // 模型侧没有 --yes 通道：项目根漂移时改的是整仓库全部会话，明确拒绝比静默误伤好（P2 裁定）。
+            if (st.rootDrift)
+              throw new Error(`项目根 ${st.projectRoot} ≠ 会话目录 ${st.cwd}：会影响该仓库全部会话，需人工确认——请在面板切换，或人侧执行 /skill-set use ${hit[0].slug} --yes`);
+            const res = await remote.switchSet({ sessionId, slug: hit[0].slug });
+            return { ok: true, set: hit[0].slug, applied: res.applied, warnings: res.warnings ?? [], text: fmtSwitch(hit[0], res) };
+          },
+        });
+      } catch (e) {
+        ctx.logger.warn(`skill-set-manager：skill_set 工具注册失败（同名被占用或上一代际残留）: ${e?.message ?? e}`);
+      }
+      return () => { try { off?.(); } catch {} };
+    }, 'skill-set-manager.tool');
 
   // 启动无条件还原（崩溃残留即设计前提）；失败不阻塞激活，只警告。
   storeOf().then(async (store) => {

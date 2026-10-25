@@ -1006,6 +1006,21 @@ const CASES = [
       eq(parseSkillSetLine('bogus'), { action: 'bogus', arg: null, yes: false }, '未知子命令原样带回（处理器出帮助）');
     },
   },
+  {
+    id: 'tool-args', title: 'skill_set 工具入参解析：action 白名单、use 必须带 slug、slug 去空白（P2-T1）',
+    async run(f) {
+      const { parseToolArgs } = await core('commandLine');
+      eq(parseToolArgs({ action: 'list' }), { action: 'list', slug: null }, 'list 无需 slug');
+      eq(parseToolArgs({ action: 'use', slug: 'doc-processing' }), { action: 'use', slug: 'doc-processing' }, 'use + slug');
+      eq(parseToolArgs({ action: 'use', slug: '  文档处理  ' }), { action: 'use', slug: '文档处理' }, 'slug 去空白');
+      eq(parseToolArgs({ action: 'show', slug: 'ignored' }), { action: 'show', slug: 'ignored' }, 'show 带 slug 不报错');
+      const bad = (args, msg) => { try { parseToolArgs(args); throw new Error('应当抛错却没抛'); } catch (e) { ok(/action|slug/.test(e.message), `${msg}（实际：${e.message}）`); } };
+      bad({}, '缺 action');
+      bad({ action: 'bogus' }, '未知 action');
+      bad({ action: 'use' }, 'use 缺 slug');
+      bad({ action: 'use', slug: '   ' }, 'use slug 全空白');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------

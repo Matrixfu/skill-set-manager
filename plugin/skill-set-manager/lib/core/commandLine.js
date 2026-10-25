@@ -14,3 +14,17 @@ export function parseSkillSetLine(raw) {
   }
   return { action: rest[0] ?? 'show', arg: rest[1] ?? null, yes };
 }
+
+/**
+ * `skill_set` 工具入参解析与校验（§12 P2：模型侧只有 list / show / use 三个动作）。
+ * 校验在解析层做（模型给的 args 不可信），业务判断仍在 remote 方法里（§14）。
+ */
+export const TOOL_ACTIONS = ['list', 'show', 'use'];
+export function parseToolArgs(args) {
+  const action = String(args?.action ?? '').trim();
+  if (!TOOL_ACTIONS.includes(action))
+    throw new Error(`action 必须是 ${TOOL_ACTIONS.join(' / ')}，收到 "${args?.action ?? ''}"`);
+  const slug = args?.slug == null ? null : (String(args.slug).trim() || null);
+  if (action === 'use' && !slug) throw new Error('action=use 需要 slug（技能集 slug 或显示名）');
+  return { action, slug };
+}
