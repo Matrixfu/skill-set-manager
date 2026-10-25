@@ -480,9 +480,11 @@ const CASES = [
       eq(m2.commit, head2, 'manifest commit 前进');
       const H = (t) => 'sha256:' + crypto.createHash('sha256').update(t).digest('hex');
       eq(m2.files['SKILL.md'], H('v1 body\n'), '跳过文件 baseline 保持旧上游哈希（下轮仍可识别本地偏差）');
-      const chk2 = await u.checkUpdate(f.roots, 'alpha', { fetch: async () => ({ commit: m2.commit, skillsDir: path.join(f.base, 'nowhere') }) });
+      const chk2 = await u.checkUpdate(f.roots, 'alpha', { fetch });
       eq(chk2.upToDate, true, '已到 HEAD → upToDate');
-      ok(chk2.files.every((x) => x.action === 'same'), 'upToDate 时全 same');
+      const act2 = Object.fromEntries(chk2.files.map((x) => [x.path, x.action]));
+      eq(act2['SKILL.md'], 'skip-modified', 'upToDate 仍照出上轮跳过的本地分歧（活体冒烟教训）');
+      eq(act2['stable.md'], 'same', '其余 same');
     },
   },
   {

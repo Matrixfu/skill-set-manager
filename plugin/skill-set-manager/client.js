@@ -360,7 +360,10 @@ window.__ModuleLoader__.load({
               h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
             upRes[x.name]
               ? h('div', { className: 'ssm-hint' }, upRes[x.name].upToDate
-                ? `${t('upToDate')} @${String(upRes[x.name].current ?? '').slice(0, 7)}`
+                ? (() => {
+                    const sk = counts(upRes[x.name].files)['skip-modified'];
+                    return `${t('upToDate')} @${String(upRes[x.name].current ?? '').slice(0, 7)}${sk ? ` ⚠ ${sk} ${t('skipNote')}` : ''}`;
+                  })()
                 : (() => {
                     const c = counts(upRes[x.name].files);
                     return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(upRes[x.name].remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;

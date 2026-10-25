@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { copyDirTree } from './github.js';
+import { walkFiles } from './manifest.js';
 
 const DAYS = 30 * 24 * 3600 * 1000;
 const KEEP = 10;
@@ -26,6 +27,9 @@ export function snapshot(roots, name, { fs: fsImpl = fs } = {}) {
   try {
     fsImpl.rmSync(tmp, { recursive: true, force: true });
     copyDirTree(src, tmp, fsImpl);
+    // 快照自记「盘上内容摘要」：manifest.files 对 skip 文件是上游基线哈希而非盘上值，
+    // 不能用作恢复校验基准（活体冒烟教训）——.snapshot.json 才是内容口径。
+    fsImpl.writeFileSync(path.join(tmp, '.snapshot.json'), JSON.stringify({ ts, files: walkFiles(src, { fs: fsImpl }) }, null, 2) + '\n');
     fsImpl.renameSync(tmp, pub);
   } catch (e) {
     try { fsImpl.rmSync(tmp, { recursive: true, force: true }); } catch {}
@@ -90,12 +94,15 @@ export function restore(roots, name, backupDir, { fs: fsImpl = fs } = {}) {
   fsImpl.statSync(backupDir);
   fsImpl.rmSync(dst, { recursive: true, force: true });
   copyDirTree(backupDir, dst, fsImpl);
-  let manifest;
-  try { manifest = JSON.parse(fsImpl.readFileSync(path.join(dst, '.manifest.json'), 'utf8')); } catch { manifest = null; }
+  // 校验基准优先 .snapshot.json（盘上内容口径）；旧快照无此文件时退回 manifest（内容≈manifest 时代）。
+  let basis = null;
+  for (const f of ['.snapshot.json', '.manifest.json']) {
+    try { basis = JSON.parse(fsImpl.readFileSync(path.join(dst, f), 'utf8')); break; } catch {}
+  }
   let verified = false;
-  if (manifest && manifest.files) {
+  if (basis && basis.files) {
     verified = true;
-    for (const [p, h] of Object.entries(manifest.files)) {
+    for (const [p, h] of Object.entries(basis.files)) {
       try {
         const buf = fsImpl.readFileSync(path.join(dst, p));
         const hex = crypto.createHash('sha256').update(buf).digest('hex');

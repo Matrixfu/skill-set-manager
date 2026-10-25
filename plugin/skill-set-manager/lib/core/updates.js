@@ -66,12 +66,10 @@ export async function checkUpdate(roots, name, { fetch, fs: fsImpl = fs } = {}) 
   const baseline = manifest.files || {};
   const local = walkFiles(dir, { fs: fsImpl });
   let files;
-  if (upToDate) {
-    files = Object.keys(baseline).map((p) => ({ path: p, action: 'same' }));
-  } else {
-    const upstream = walkFiles(upstreamDirOf(skillsDir, name, fsImpl), { fs: fsImpl });
-    files = diffThreeWay(baseline, local, upstream);
-  }
+  // 即便 commit 追平也要照出「上轮跳过的本地分歧」（否则 skip-modified 伪装成 same，
+  // 直到上游再次移动才现形——活体冒烟实测教训）。
+  const upstream = walkFiles(upstreamDirOf(skillsDir, name, fsImpl), { fs: fsImpl });
+  files = diffThreeWay(baseline, local, upstream);
   return { name, source: manifest.source, current: manifest.commit, remote: commit, upToDate, files };
 }
 
