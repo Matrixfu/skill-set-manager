@@ -233,14 +233,14 @@ export function apply(ctx, config) {
 
     // ---- P1a：GitHub 安装 / 升级 / 卸载 / 回收站（全部薄包装 core，同一实现） ----
 
-    /** manifest.source = github:owner/repo[/subpath] → 稀疏拉取（tmp 目录批量回收）。 */
-    _fetchFor(tmpDirs) {
+    /** manifest.source = github:owner/repo[/subpath] → 稀疏拉取（tmp 目录批量回收；url 覆盖同 installApply）。 */
+    _fetchFor(tmpDirs, urlOverride = null) {
       return async (source) => {
         const segs = String(source).replace(/^github:/, '').split('/').filter(Boolean);
         if (segs.length < 2) throw new Error(`无法解析来源: ${source}`);
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-up-'));
         tmpDirs.push(tmpDir);
-        return fetchRepo({ owner: segs[0], repo: segs[1], ref: null, subpath: segs.length > 2 ? segs.slice(2).join('/') : null }, { tmpDir });
+        return fetchRepo({ owner: segs[0], repo: segs[1], ref: null, subpath: segs.length > 2 ? segs.slice(2).join('/') : null }, { tmpDir, ...(urlOverride ? { url: urlOverride } : {}) });
       };
     }
 
@@ -248,7 +248,8 @@ export function apply(ctx, config) {
       const spec = parseRepoSpec(req.spec);
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-install-'));
       try {
-        const got = await fetchRepo(spec, { tmpDir });
+        // req.url：file:// 或私仓镜像覆盖（活体验证夹具也走这里）
+        const got = await fetchRepo(spec, { tmpDir, ...(req.url ? { url: req.url } : {}) });
         const results = await installSkills(roots, {
           source: `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`,
           commit: got.commit,
@@ -266,13 +267,13 @@ export function apply(ctx, config) {
 
     async updateCheck(req) {
       const tmps = [];
-      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps) }); }
+      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null) }); }
       finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
     }
 
     async updateApply(req) {
       const tmps = [];
-      try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps), backup: async (n) => bk.snapshot(roots, n) }); }
+      try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null), backup: async (n) => bk.snapshot(roots, n) }); }
       finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
     }
 
