@@ -38,6 +38,10 @@ window.__ModuleLoader__.load({
         unbindGo: '解绑', confirmUnbind: '确认解绑？托管条目将被回收，用户自有条目不动',
         foreignLine: '外来条目（不接管、切换不覆盖）',
         settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
+        tabTitle: '技能集详情', tabDesc: '完整生效清单、状态分区与诊断摘要', openRight: '在右栏打开技能集详情',
+        rpEffective: '生效清单', rpSelf: '状态自检', rpDiag: '诊断摘要',
+        rpFrozen: '技能集已删除（冻结：清单原样保留）', rpClick: '点击查看 SKILL.md', rpNoSession: '（右栏 tab 未绑定会话）',
+        rpForeign: '外来', rpMissing: '缺失', rpDead: '失效',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -66,6 +70,10 @@ window.__ModuleLoader__.load({
         unbindGo: 'Unbind', confirmUnbind: 'Unbind? Managed entries are reclaimed; your own entries stay.',
         foreignLine: 'Foreign entries (untouched by switching)',
         settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
+        tabTitle: 'Skill set detail', tabDesc: 'Full effective list, status partition and diagnose summary', openRight: 'Open skill set detail in right sidebar',
+        rpEffective: 'Effective list', rpSelf: 'Self-check', rpDiag: 'Diagnose summary',
+        rpFrozen: 'Set deleted (frozen: list kept as-is)', rpClick: 'Click to open SKILL.md', rpNoSession: '(right tab has no bound session)',
+        rpForeign: 'foreign', rpMissing: 'missing', rpDead: 'dead',
       },
     };
 
@@ -117,7 +125,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function Panel({ ctx, t, sessionId, onClose }) {
+    function Panel({ ctx, t, sessionId, onClose, bs }) {
       const [state, setState] = React.useState(null);
       const [error, setError] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
@@ -160,6 +168,7 @@ window.__ModuleLoader__.load({
           h('b', null, t('panel')),
           st.binding?.setSlug ? h('span', { className: 'ssm-cur' }, st.set?.name ?? st.binding.setSlug) : h('span', { className: 'ssm-cur' }, t('noBinding')),
           h('span', { className: 'ssm-grow' }, null),
+          bs ? h('button', { className: 'ssm-x', title: t('openRight'), onClick: () => bs.openTab({ type: 'skill-set-manager', title: t('tabTitle') }, { sessionId }) }, '⇥') : null,
           h('button', { className: 'ssm-x', onClick: onClose, 'aria-label': t('close') }, '×')),
         st.projectRoot ? h('div', { className: 'ssm-root' }, t('projectRoot'), '：', st.projectRoot, st.rootDrift ? h('span', { className: 'ssm-warn-inline' }, t('rootDrift')) : null) : null,
         st.presetWarn ? h('div', { className: 'ssm-warn' }, st.presetWarn) : null,
@@ -287,12 +296,69 @@ window.__ModuleLoader__.load({
         wide === false ? (badge ? h('span', { className: 'ssm-badge' }, '!') : null) : h(React.Fragment, null, t('chip'), h(Name, { st: b.state }), badge ? h('span', { className: 'ssm-badge' }, '!') : null));
     }
 
-    function OverlayHost({ ctx, t }) {
+    /**
+     * 右栏详情 tab（§12.209，betterSidebar 服务契约源码取证：TabDescriptor.component(props)
+     * 收 { ctx, store, scope, tab, visible, onOpenFile }）。数据只走既有 Remote 面（#15）。
+     */
+    function RightPanel({ ctx, t, scope, onOpenFile }) {
+      const [st, setSt] = React.useState(null);
+      const [dg, setDg] = React.useState(null);
+      const [err, setErr] = React.useState(null);
+      const sessionId = scope?.sessionId ?? null;
+      const load = React.useCallback(async () => {
+        if (!sessionId) return;
+        try {
+          const v = await call(ctx, 'state', { sessionId });
+          setSt(v); bus.setState(v);
+          try { setDg(await call(ctx, 'diagnoseRun', { sessionId })); } catch {}
+          setErr(null);
+        } catch (e) { setErr(`${t('loadFailed')}: ${e?.message ?? e}`); }
+      }, [ctx, sessionId]);
+      React.useEffect(() => { load(); }, [load]);
+      if (!sessionId) return h('div', { className: 'ssm-rp' }, t('rpNoSession'));
+      const sc = st?.selfCheck ?? {};
+      const resident = new Set(st?.resident ?? []);
+      const managed = st?.managed ?? {};
+      const foreign = new Set(sc.foreign ?? []);
+      const broken = new Set(sc.brokenLinks ?? []);
+      const missing = new Set(st?.effective?.missing ?? []);
+      const libMap = new Map((st?.library ?? []).map((l) => [l.name, l]));
+      const names = [...new Set([...(st?.effective?.names ?? []), ...Object.keys(managed), ...foreign])].sort();
+      const row = (n) => {
+        const l = libMap.get(n);
+        const open = l?.skillMd && onOpenFile ? () => onOpenFile(l.skillMd) : null;
+        return h('div', { key: n, className: 'ssm-row' + (open ? ' ssm-click' : ''), title: open ? t('rpClick') : '', onClick: open ?? undefined },
+          h('span', null, n), ' ',
+          n in managed ? h(Tag, { text: t('managedTag') }) : null, ' ',
+          resident.has(n) ? h(Tag, { text: t('resident') }) : null, ' ',
+          foreign.has(n) ? h(Tag, { text: t('rpForeign'), warn: true }) : null, ' ',
+          broken.has(n) ? h(Tag, { text: t('rpDead'), warn: true }) : null, ' ',
+          missing.has(n) ? h(Tag, { text: t('rpMissing'), warn: true }) : null);
+      };
+      const dgRows = dg ? Object.entries({ dangling: t('diagDangling'), deadLinks: t('diagDeadLinks'), copies: t('diagCopies'), structure: t('diagStructure'), env: t('diagEnv') })
+        .flatMap(([g, label]) => (dg.groups?.[g] ?? []).slice(0, 3).map((r, i) => h('div', { key: `${g}${i}`, className: 'ssm-diag-row' },
+          h('span', { className: `ssm-lvl ssm-lvl-${r.level}` }, null), h('span', null, `${label}: ${r.what}`)))) : [];
+      const dgCount = dg ? Object.entries(dg.groups).filter(([k]) => k !== 'partition').reduce((a, [, v]) => a + v.length, 0) : 0;
+      return h('div', { className: 'ssm-rp' },
+        h('div', { className: 'ssm-head' },
+          h('b', null, t('rpEffective')), ' ', st?.set?.name ?? st?.binding?.setSlug ?? t('noBinding'),
+          sc.frozen ? h('span', { className: 'ssm-warn-inline' }, t('rpFrozen')) : null,
+          h('span', { className: 'ssm-grow' }, null),
+          h('button', { className: 'ssm-x', onClick: load, title: t('regen') }, '⟳')),
+        h('div', { className: 'ssm-root' }, st?.projectRoot ?? ''),
+        err ? h('div', { className: 'ssm-err' }, err) : null,
+        names.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : h('div', null, ...names.map(row)),
+        h('div', { className: 'ssm-sec' }, t('rpSelf'), ' ', sc.ok === false ? h('span', { className: sc.frozen ? 'ssm-warn-inline' : 'ssm-err' }, sc.detail) : h('span', { className: 'ssm-ok' }, '✓')),
+        h('div', { className: 'ssm-sec' }, t('rpDiag'), ' ', h('span', { className: 'ssm-n' }, dg ? `${dgCount}` : '—')),
+        ...dgRows);
+    }
+
+    function OverlayHost({ ctx, t, bs }) {
       const b = useBus();
       if (!b.open) return null;
       return h('div', { className: 'ssm-overlay', onClick: () => bus.setOpen(false) },
         b.sessionId
-          ? h(Panel, { ctx, t, sessionId: b.sessionId, onClose: () => bus.setOpen(false) })
+          ? h(Panel, { ctx, t, sessionId: b.sessionId, onClose: () => bus.setOpen(false), bs })
           : h('div', { className: 'ssm-panel' }, t('noSession')));
     }
 
@@ -490,6 +556,9 @@ window.__ModuleLoader__.load({
 .ssm-lvl-warn{background:var(--dsw-alias-status-warning,#f5a623)}
 .ssm-lvl-error{background:var(--dsw-alias-status-error,#e5484d)}
 .ssm-lvl-info{background:var(--dsw-alias-brand-primary)}
+.ssm-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
+.ssm-click{cursor:pointer}
+.ssm-click:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));border-radius:6px}
 .ssm-settings .ssm-row button{background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
 .ssm-settings .ssm-row button:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
@@ -512,6 +581,21 @@ window.__ModuleLoader__.load({
           document.head.append(style);
           return () => style.remove();
         });
+        // 右栏详情 tab（§12.209）：betterSidebar 是第三方服务——缺席/晚启动则整体静默退化（P1b-T0）。
+        // 注册必须挂 ctx.effect disposer：重复 id 会抛「already registered」，切换泄漏即永久失去该 tab。
+        const bs = ctx.get('betterSidebar');
+        if (bs) ctx.effect(() => {
+          const off = bs.registerTab({
+            id: 'skill-set-manager',
+            title: () => t('tabTitle'),
+            description: () => t('tabDesc'),
+            order: 40,
+            single: true,
+            badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && bus.state.selfCheck && !bus.state.selfCheck.ok && !bus.state.selfCheck.unbound) ? '!' : null,
+            component: (props) => h(RightPanel, { ctx, t, scope: props.scope, onOpenFile: props.onOpenFile }),
+          });
+          return () => off();
+        }, 'skill-set-manager.rightTab');
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
           name: 'conversation.input.left', id: PKG, order: 30, label: () => t('chip'),
         }, (props) => h(ComposerChip, { ctx, t, sessionId: props?.sessionId })));
@@ -520,7 +604,7 @@ window.__ModuleLoader__.load({
         }, (props) => h(SidebarChip, { ctx, t, wide: props?.wide })));
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay', id: PKG, order: 30,
-        }, () => h(OverlayHost, { ctx, t })));
+        }, () => h(OverlayHost, { ctx, t, bs })));
         // 设置页（§10.1.4 探针事实：注册面仅 id/order/label；label thunk 随 locale 自动跟随）
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: PKG, order: 90, label: () => t('settingsLabel'),

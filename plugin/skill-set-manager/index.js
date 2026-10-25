@@ -222,11 +222,13 @@ export function apply(ctx, config) {
           const now = walkFiles(dir);
           localModified = Object.keys(mf.files).some((p) => mf.files[p] !== now[p]) || Object.keys(now).some((p) => now[p] !== mf.files[p]);
         }
+        const hasSkillMd = fs.existsSync(path.join(dir, 'SKILL.md'));
         library.push({
           name: n,
           source: mf?.source ?? 'unknown',
           commit: mf?.commit ?? null,
-          hasSkillMd: fs.existsSync(path.join(dir, 'SKILL.md')),
+          hasSkillMd,
+          skillMd: hasSkillMd ? path.join(dir, 'SKILL.md') : null, // 右栏点击打开的绝对路径（P1b-T0）
           managed: !!mf,
           localModified,
           backupCount: bk.listBackups(roots, n).length,
