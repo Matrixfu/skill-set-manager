@@ -17,7 +17,7 @@ import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
 import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
-import { startOverride, endOverride, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
+import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 import { syncResident } from './lib/core/resident.js';
 import os from 'node:os';
 import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
@@ -613,6 +613,29 @@ export function apply(ctx, config) {
       }
     });
   }
+
+  // 事件级还原（§6.6 P2）：会话结束（session/disposed）或归档（workspace/session-stop，
+  // 探针取证：parallel 派发、payload 只有 sessionId）即尽力还原该项目临时覆盖，不再等重启。
+  // 定位不到会话 cwd 就绝不动盘——不拿 host 进程 cwd 冒充项目根（review M2 同族）。
+  const cwdOfSession = (sessionId) => {
+    if (!sessionId) return null;
+    try { const s = ctx.sessions.get(sessionId); if (s) { const c = ctx.workingDirectory.get(s); if (c) return c; } } catch {}
+    try { const h = ctx.sessionQuery.stat?.(sessionId) ?? ctx.sessions.info?.(sessionId); if (h?.cwd) return h.cwd; } catch {}
+    return null;
+  };
+  const restoreOnSessionEnd = async (sessionId, label) => {
+    try {
+      const cwd = cwdOfSession(sessionId);
+      if (!cwd) return; // 无 cwd = 无法定位项目：启动无条件还原仍是兜底（§6.6 设计前提不变）
+      const projectRoot = findProjectRoot(cwd);
+      const r = await endOverrideIfActive(await storeOf(), roots, projectRoot);
+      if (r.ended) ctx.logger.info(`skill-set-manager：会话${label}已还原 ${projectRoot} 的临时覆盖`);
+    } catch (e) {
+      ctx.logger.warn(`skill-set-manager 会话${label}还原失败: ${e?.message ?? e}`);
+    }
+  };
+  ctx.on('session/disposed', (session) => { void restoreOnSessionEnd(session?.id, '结束'); });
+  ctx.on('workspace/session-stop', (request) => { void restoreOnSessionEnd(request?.sessionId, '归档'); });
 
   // 技能目录变化 = 缓存失效点（本实现无缓存：roots 为纯路径装配，扫描即时——裁定记录在 ledger）。
   ctx.on('skills/change', () => {});

@@ -54,6 +54,18 @@ export async function endOverride(store, roots, projectRoot) {
   return true;
 }
 
+/**
+ * 事件级还原（§6.6 P2）：会话结束/归档时**有 pending 标记才动手**——
+ * 真相源是 pending 记录（startOverride 先落标记后动目录），因此对未覆盖项目零副作用。
+ * 无标记时不动目录也不写文件，事件可以每个会话都挂而不用担心误伤。
+ */
+export async function endOverrideIfActive(store, roots, projectRoot) {
+  const rec = await store.get('pending', projectKey(projectRoot));
+  if (!rec) return { ended: false };
+  const ended = await endOverride(store, roots, projectRoot);
+  return { ended: !!ended, projectRoot };
+}
+
 async function restoreProject(roots, projectRoot) {
   const binding = readBinding(projectRoot);
   if (!binding?.setSlug) return false; // 未绑定/已解绑：无目标态可还原

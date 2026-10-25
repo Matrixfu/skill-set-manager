@@ -1021,6 +1021,38 @@ const CASES = [
       bad({ action: 'use', slug: '   ' }, 'use slug 全空白');
     },
   },
+  {
+    id: 'override-event', title: '会话结束/归档即还原临时覆盖：有 pending 标记即复原、无标记不动盘（P2-T2）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'ev-a'); writeSkill(f.library, 'ev-b');
+      const s = await core('sets');
+      await s.saveSet(f.roots, { slug: 'ev-set', name: '事件还原集', skills: ['ev-a'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan } = await core('effective');
+      const { readManaged } = await core('managed');
+      const { projectKey } = await core('storage');
+      await writeBinding(f.projectA, 'ev-set');
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'ev-set'));
+      const store = (await core('storage')).makeFallbackStore(path.join(f.base, 'store'));
+      const p = await core('pending');
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ev-b'] });
+      has(skillDirNames(f.projectA), 'ev-b', '覆盖期：临时加的技能在盘');
+      const r = await p.endOverrideIfActive(store, f.roots, f.projectA);
+      eq(r.ended, true, '会话结束：有覆盖即还原');
+      lacks(skillDirNames(f.projectA), 'ev-b', '还原：覆盖条目已摘');
+      has(skillDirNames(f.projectA), 'ev-a', '还原：回到绑定态清单');
+      eq(await store.get('pending', projectKey(f.projectA)), null, 'pending 标记已清');
+      const mg = await readManaged(f.projectA);
+      ok(!mg.sessionOverride || (!(mg.sessionOverride.added?.length) && !(mg.sessionOverride.removed?.length)), 'sessionOverride 标记已清');
+      // 无覆盖：ended:false 且托管清单一字不动（事件对未覆盖项目必须零副作用）
+      const file = path.join(f.projectA, '.dsh', 'skills', '.managed.json');
+      const before = fs.readFileSync(file, 'utf8');
+      const r2 = await p.endOverrideIfActive(store, f.roots, f.projectA);
+      eq(r2.ended, false, '无覆盖 → ended:false');
+      eq(fs.readFileSync(file, 'utf8'), before, '无覆盖不动盘');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------
