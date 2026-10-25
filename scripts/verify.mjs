@@ -327,6 +327,39 @@ const CASES = [
     },
   },
   {
+    id: 'override-consistency', title: '会话临时覆盖/常驻链：自检与诊断不得把自己的机制报成异常（活体误报复盘）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'lib-a'); writeSkill(f.library, 'lib-b');
+      const s = await core('sets');
+      await s.saveSet(f.roots, { slug: 'set-a', name: 'A', skills: ['lib-a'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
+      await writeBinding(f.projectA, 'set-a');
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'set-a'));
+      // 模拟面板「临时覆盖」：pending.startOverride 直接动目录 + 台账记 sessionOverride（§12.97）
+      const pending = await core('pending');
+      const T = {};
+      const store = {
+        get: async (t, k) => T[t + ':' + k],
+        put: async (t, k, v) => { T[t + ':' + k] = structuredClone(v); },
+        delete: async (t, k) => { delete T[t + ':' + k]; },
+        keys: async (t) => Object.keys(T).filter((k) => k.startsWith(t + ':')).map((k) => k.slice(t.length + 1)),
+      };
+      await pending.startOverride(store, f.roots, f.projectA, { add: ['lib-b'] });
+      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'lib-b')), '覆盖条目已进生效区');
+      const sc = await selfCheck(f.roots, f.projectA);
+      ok(sc.ok, `selfCheck 不得把覆盖条目报成多出（活体误报 constitution）: ${sc.detail}`);
+      // 常驻 = 全局生效区 junction（§5.3）：诊断不得把自家链报成重复名
+      s.saveResident(f.roots, ['lib-b']);
+      const { syncResident } = await core('resident');
+      await syncResident(f.roots);
+      const dg = await (await core('diagnose')).diagnose(f.roots, { projectRoot: f.projectA, cwd: f.base });
+      ok(!dg.groups.structure.some((r) => r.kind === 'duplicate'), `常驻链不是重复技能名（活体误报 clarify/plan）: ${JSON.stringify(dg.groups.structure.map((r) => r.what))}`);
+      ok(dg.groups.deadLinks.length === 0, '常驻链不是失效链接');
+    },
+  },
+  {
     id: 'frozen', title: '冻结绑定：集被删 → 清单原样保留、不再驱动、红标改绑（Review-Focus 1）',
     async run(f) {
       await withRoots(f);

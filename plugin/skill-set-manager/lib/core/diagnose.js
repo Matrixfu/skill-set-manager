@@ -90,11 +90,18 @@ export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), works
     }
   }
 
-  // §9.5 结构：只扫一层
+  // §9.5 结构：只扫一层。自家常驻链（links 台账记账的全局生效区条目）不是独立副本，
+  // 跳过防「重复技能名」误报（活体误报：常驻 clarify/plan 与库本体同名）。
+  const ownLinks = new Set();
+  {
+    const links = loadResident(roots).links ?? {};
+    for (const dir of Object.keys(links)) for (const n of Object.keys(links[dir] ?? {})) ownLinks.add(path.resolve(dir, n));
+  }
   const seen = new Map();
   for (const z of zones) {
     for (const n of oneLevel(z, fsImpl)) {
       const d = path.join(z, n);
+      if (ownLinks.has(path.resolve(d))) continue;
       if (!dirExists(d, fsImpl)) continue;
       let skillMd = null;
       try { skillMd = fsImpl.readFileSync(path.join(d, 'SKILL.md'), 'utf8'); } catch {}

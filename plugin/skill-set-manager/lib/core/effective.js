@@ -66,9 +66,16 @@ export function applyPlan(projectRoot, plan, { fs: fsImpl = fs } = {}) {
 }
 
 /** 读回自检原（§7.5；T5 的 selfCheck 在其上补外来条目/冻结绑定判定）。 */
-export function readbackCheck(roots, projectRoot, setSlug, { fs: fsImpl = fs } = {}) {
+export function readbackCheck(roots, projectRoot, setSlug, { override = null, fs: fsImpl = fs } = {}) {
   const set = setSlug && setSlug !== RESIDENT_SLUG ? loadSet(roots, setSlug) : null;
-  const expected = [...new Set(set?.skills ?? [])].sort();
+  // 期望态 = 集 ∪ 覆盖增 ∖ 覆盖减（§12.97 临时覆盖直接动目录）——漏算覆盖会把自家条目
+  // 报成「多出」（活体误报：session override 的 speckit-constitution）。
+  let expected = [...new Set(set?.skills ?? [])];
+  if (override) {
+    const removed = new Set(override.removed ?? []);
+    expected = [...new Set([...expected.filter((n) => !removed.has(n)), ...(override.added ?? [])])];
+  }
+  expected = expected.sort();
   const actual = [];
   let names2;
   try { names2 = fsImpl.readdirSync(path.join(projectRoot, '.dsh', 'skills')); } catch { names2 = []; }
@@ -102,7 +109,7 @@ export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
   if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
     return { ...base, ok: false, frozen: true, detail: `冻结绑定：技能集「${binding.setSlug}」已删除，生效清单原样保留，请改绑` };
   }
-  const rc = readbackCheck(roots, projectRoot, binding.setSlug, { fs: fsImpl });
+  const rc = readbackCheck(roots, projectRoot, binding.setSlug, { override: managed?.sessionOverride ?? null, fs: fsImpl });
   const skillsDir = path.join(projectRoot, '.dsh', 'skills');
   const entries = managed?.entries ?? {};
   const brokenLinks = Object.keys(entries).filter((name) => {
