@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
         diagRun: '运行诊断', fixReclaim: '回收失效链接', fixRebuild: '按当前集重建',
         diagPartition: '分区说明', diagCopies: '副本漂移', diagDangling: '悬空引用',
         diagDeadLinks: '失效链接', diagStructure: '结构问题', diagEnv: '环境',
-        none: '（无）', opDone: '完成',
+        none: '（无）', opDone: '完成', backupAt: '备份位置', moreFiles: '…（其余略）',
         unbindGo: '解绑', confirmUnbind: '确认解绑？托管条目将被回收，用户自有条目不动',
         foreignLine: '外来条目（不接管、切换不覆盖）',
         settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
         diagRun: 'Run diagnose', fixReclaim: 'Reclaim dead links', fixRebuild: 'Rebuild from set',
         diagPartition: 'Partition', diagCopies: 'Copy drift', diagDangling: 'Dangling refs',
         diagDeadLinks: 'Dead links', diagStructure: 'Structure', diagEnv: 'Environment',
-        none: '(none)', opDone: 'Done',
+        none: '(none)', opDone: 'Done', backupAt: 'Backup at', moreFiles: '… (rest omitted)',
         unbindGo: 'Unbind', confirmUnbind: 'Unbind? Managed entries are reclaimed; your own entries stay.',
         foreignLine: 'Foreign entries (untouched by switching)',
         settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
@@ -151,6 +151,10 @@ window.__ModuleLoader__.load({
         run(() => call(ctx, 'switchSet', { sessionId, slug }));
       };
       const sc = st.selfCheck ?? {};
+      // 库行徽标（T8 Step2 / review m6）：来源与本地改动提示
+      const LibBadges = ({ lib }) => h(React.Fragment, null,
+        lib.source && lib.source !== 'unknown' ? h('span', { className: 'ssm-n' }, ` ${String(lib.source).replace('github:', '').slice(0, 20)}`) : null,
+        lib.localModified ? h('span', { className: 'ssm-warn-inline' }, ` ${t('modifiedTag')}`) : null);
       return h('div', { className: 'ssm-panel', role: 'dialog', 'aria-label': t('panel'), onClick: (e) => e.stopPropagation() },
         h('div', { className: 'ssm-head' },
           h('b', null, t('panel')),
@@ -241,11 +245,11 @@ window.__ModuleLoader__.load({
           h('input', { type: 'checkbox', checked: resident.has(lib.name), disabled: busy, onChange: (e) => {
             const next = e.target.checked ? [...(st.resident ?? []), lib.name] : (st.resident ?? []).filter((n) => n !== lib.name);
             run(() => call(ctx, 'setResident', { names: next }));
-          } }), ' ', lib.name))),
+          } }), ' ', lib.name, h(LibBadges, { lib })))),
         h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
         h('div', { className: 'ssm-chips' },
           ...(st.binding?.setSlug ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip' },
-            h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name))
+            h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
             : []),
           st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
         h('div', { className: 'ssm-hint' }, t('hintP2')),
@@ -319,10 +323,15 @@ window.__ModuleLoader__.load({
       React.useEffect(() => { load(); }, [load]);
       const run = async (key, fn) => {
         setBusy(key); setMsg(null);
-        try { const r = await fn(); setMsg({ kind: 'ok', text: t('opDone') }); return r; }
-        catch (e) { setMsg({ kind: 'err', text: `${t('opFailed')}: ${e?.message ?? e}` }); }
+        try {
+          const r = await fn();
+          const w = r && Array.isArray(r.warnings) && r.warnings.length ? r.warnings.join('; ') : null;
+          setMsg(w ? { kind: 'err', text: `${t('opDone')} ⚠ ${w}` } : { kind: 'ok', text: (r && r.noteText) || t('opDone') }); // 警告可见（review m4）
+          return r;
+        } catch (e) { setMsg({ kind: 'err', text: `${t('opFailed')}: ${e?.message ?? e}` }); }
         finally { setBusy(null); }
       };
+      const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
       const q = filter.trim().toLowerCase();
       const rows = lib.filter((x) => !q || x.name.toLowerCase().includes(q) || String(x.source).toLowerCase().includes(q));
       const counts = (files) => {
@@ -348,7 +357,7 @@ window.__ModuleLoader__.load({
                 ? h('button', { disabled: !!busy, onClick: () => run(`chk:${x.name}`, async () => { const v = await call(ctx, 'updateCheck', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: v })); }) }, t('checkUp'))
                 : null,
               upRes[x.name] && !upRes[x.name].upToDate
-                ? h('button', { disabled: !!busy, onClick: () => run(`ap:${x.name}`, async () => { await call(ctx, 'updateApply', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); }) }, t('applyUp'))
+                ? h('button', { disabled: !!busy, onClick: () => run(`ap:${x.name}`, async () => { const r = await call(ctx, 'updateApply', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); return r?.backup ? { noteText: `${t('opDone')} · ${t('backupAt')} ${r.backup}` } : null; }) }, t('applyUp'))
                 : null,
               x.backupCount
                 ? h('button', { disabled: !!busy, onClick: () => {
@@ -359,15 +368,20 @@ window.__ModuleLoader__.load({
                 : null,
               h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
             upRes[x.name]
-              ? h('div', { className: 'ssm-hint' }, upRes[x.name].upToDate
-                ? (() => {
-                    const sk = counts(upRes[x.name].files)['skip-modified'];
-                    return `${t('upToDate')} @${String(upRes[x.name].current ?? '').slice(0, 7)}${sk ? ` ⚠ ${sk} ${t('skipNote')}` : ''}`;
-                  })()
-                : (() => {
-                    const c = counts(upRes[x.name].files);
-                    return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(upRes[x.name].remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;
-                  })())
+              ? h(React.Fragment, null,
+                h('div', { className: 'ssm-hint' }, upRes[x.name].upToDate
+                  ? (() => {
+                      const sk = counts(upRes[x.name].files)['skip-modified'];
+                      return `${t('upToDate')} @${String(upRes[x.name].current ?? '').slice(0, 7)}${sk ? ` ⚠ ${sk} ${t('skipNote')}` : ''}`;
+                    })()
+                  : (() => {
+                      const c = counts(upRes[x.name].files);
+                      return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(upRes[x.name].remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;
+                    })()),
+                // 文件级 diff + 跳过项名单（§13.6 / review m5）：非 same 的条目逐行列出
+                ...(upRes[x.name].files ?? []).filter((f) => f.action !== 'same').slice(0, 15)
+                  .map((f) => h('div', { key: f.path, className: 'ssm-hint' }, f.action === 'skip-modified' ? '⚠ ' : `${f.action === 'update' ? '↑' : f.action === 'add' ? '+' : '−'} `, f.path)),
+                (upRes[x.name].files ?? []).filter((f) => f.action !== 'same').length > 15 ? h('div', { className: 'ssm-hint' }, t('moreFiles')) : null)
               : null,
             confirmUn === x.name
               ? h('div', { className: 'ssm-confirm' }, t('confirmUn'), ' ', x.name, ' ',
@@ -395,7 +409,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-sec' }, t('migrateTitle')),
           h('div', { className: 'ssm-row' },
             h('button', { disabled: !!busy, onClick: () => run('migP', async () => setMig({ preview: await call(ctx, 'migratePreview', {}), applied: false })) }, t('migratePreview')),
-            mig ? h('button', { disabled: !!busy, onClick: () => run('migA', async () => { await call(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', {}); setMig(null); await load(); }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
+            mig ? h('button', { disabled: !!busy, onClick: () => run('migA', async () => { const r = await call(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', {}); setMig(null); await load(); return r; }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
           mig?.preview
             ? h('div', { className: 'ssm-hint' },
                 `${t('migrateMoves')}: ${(mig.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(mig.preview.keep ?? []).map((k) => k.name).join(', ') || t('none')}`,
@@ -404,11 +418,12 @@ window.__ModuleLoader__.load({
         ) : null,
         tab === 'diag' ? h(React.Fragment, null,
           h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', {}))) }, t('diagRun')),
+            h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', sess()))) }, t('diagRun')),
             diag?.fixable?.reclaimDeadLinks?.count
-              ? h('button', { disabled: !!busy, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', {}); setDiag(await call(ctx, 'diagnoseRun', {})); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
+              ? h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
               : null,
-            h('button', { disabled: !!busy, onClick: () => run('rebuild', async () => { await call(ctx, 'rebuildManaged', {}); setDiag(await call(ctx, 'diagnoseRun', {})); }) }, t('fixRebuild'))),
+            h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('rebuild', async () => { await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, t('fixRebuild')),
+            !bus.sessionId ? h('div', { className: 'ssm-hint' }, t('noSession')) : null),
           diag
             ? h('div', null, ...Object.entries({
               partition: t('diagPartition'), copies: t('diagCopies'), dangling: t('diagDangling'),
