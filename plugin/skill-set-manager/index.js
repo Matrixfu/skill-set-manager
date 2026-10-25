@@ -97,8 +97,8 @@ export function apply(ctx, config) {
       const managed = readManaged(loc.projectRoot);
       const store = await storeOf();
       // 索引自愈（review m3）：面板每打开一次该项目即入索引——MVP 期历史绑定项目最迟一次点面板补齐，
-      // uninstall/deleteSet 的候选推导自此不再漏项目。幂等一次 put，成本可忽略。
-      if (loc.projectRoot) { try { await store.put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); } catch {} }
+      // uninstall/deleteSet 的候选推导自此不再漏项目。仅带会话的定位才入索引，host cwd 兜底行是垃圾（review n5）。
+      if (req?.sessionId && loc.projectRoot) { try { await store.put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); } catch {} }
       return {
         ...loc,
         sessionId: req?.sessionId ?? null,

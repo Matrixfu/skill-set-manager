@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
         rpEffective: '生效清单', rpSelf: '状态自检', rpDiag: '诊断摘要',
         rpFrozen: '技能集已删除（冻结：清单原样保留）', rpClick: '点击查看 SKILL.md', rpNoSession: '（右栏 tab 未绑定会话）',
         rpForeign: '外来', rpMissing: '缺失', rpDead: '失效',
+        rpEmpty: '（无生效技能）', rpDiagFail: '诊断加载失败',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -74,6 +75,7 @@ window.__ModuleLoader__.load({
         rpEffective: 'Effective list', rpSelf: 'Self-check', rpDiag: 'Diagnose summary',
         rpFrozen: 'Set deleted (frozen: list kept as-is)', rpClick: 'Click to open SKILL.md', rpNoSession: '(right tab has no bound session)',
         rpForeign: 'foreign', rpMissing: 'missing', rpDead: 'dead',
+        rpEmpty: '(no effective skills)', rpDiagFail: 'diagnose failed',
       },
     };
 
@@ -168,7 +170,7 @@ window.__ModuleLoader__.load({
           h('b', null, t('panel')),
           st.binding?.setSlug ? h('span', { className: 'ssm-cur' }, st.set?.name ?? st.binding.setSlug) : h('span', { className: 'ssm-cur' }, t('noBinding')),
           h('span', { className: 'ssm-grow' }, null),
-          bs || ctx.get('betterSidebar') ? h('button', { className: 'ssm-x', title: t('openRight'), onClick: () => (bs ?? ctx.get('betterSidebar'))?.openTab({ type: 'skill-set-manager', title: t('tabTitle') }, { sessionId }) }, '⇥') : null,
+          bs || ctx.get('betterSidebar') ? h('button', { className: 'ssm-x', title: t('openRight'), onClick: () => (bs ?? ctx.get('betterSidebar'))?.openTab({ type: 'skill-set-manager:detail', title: t('tabTitle') }, { sessionId }) }, '⇥') : null,
           h('button', { className: 'ssm-x', onClick: onClose, 'aria-label': t('close') }, '×')),
         st.projectRoot ? h('div', { className: 'ssm-root' }, t('projectRoot'), '：', st.projectRoot, st.rootDrift ? h('span', { className: 'ssm-warn-inline' }, t('rootDrift')) : null) : null,
         st.presetWarn ? h('div', { className: 'ssm-warn' }, st.presetWarn) : null,
@@ -300,21 +302,25 @@ window.__ModuleLoader__.load({
      * 右栏详情 tab（§12.209，betterSidebar 服务契约源码取证：TabDescriptor.component(props)
      * 收 { ctx, store, scope, tab, visible, onOpenFile }）。数据只走既有 Remote 面（#15）。
      */
-    function RightPanel({ ctx, t, scope, onOpenFile }) {
+    function RightPanel({ ctx, t, scope, visible, onOpenFile }) {
       const [st, setSt] = React.useState(null);
       const [dg, setDg] = React.useState(null);
+      const [dgErr, setDgErr] = React.useState(null);
       const [err, setErr] = React.useState(null);
       const sessionId = scope?.sessionId ?? null;
+      React.useEffect(() => { setSt(null); setDg(null); setDgErr(null); }, [sessionId]); // scope 切换先清旧数据，防瞬态串会话
       const load = React.useCallback(async () => {
         if (!sessionId) return;
         try {
           const v = await call(ctx, 'state', { sessionId });
-          setSt(v); bus.setState(v);
-          try { setDg(await call(ctx, 'diagnoseRun', { sessionId })); } catch {}
+          setSt(v);
+          if (bus.sessionId === sessionId) bus.setState(v); // 迟到响应不得覆盖他会话的 bus 单例（review M1，对齐 :282 口径）
+          try { setDg(await call(ctx, 'diagnoseRun', { sessionId })); setDgErr(null); }
+          catch (e) { setDgErr(`${e?.message ?? e}`); } // 挂了什么得看得见，不得与「无问题」同形（review n6）
           setErr(null);
         } catch (e) { setErr(`${t('loadFailed')}: ${e?.message ?? e}`); }
       }, [ctx, sessionId]);
-      React.useEffect(() => { load(); }, [load]);
+      React.useEffect(() => { if (visible !== false) load(); }, [load, visible]); // parked 时暂停拉取（计划 T0 口径，review m3）
       if (!sessionId) return h('div', { className: 'ssm-rp' }, t('rpNoSession'));
       const sc = st?.selfCheck ?? {};
       const resident = new Set(st?.resident ?? []);
@@ -347,9 +353,12 @@ window.__ModuleLoader__.load({
           h('button', { className: 'ssm-x', onClick: load, title: t('regen') }, '⟳')),
         h('div', { className: 'ssm-root' }, st?.projectRoot ?? ''),
         err ? h('div', { className: 'ssm-err' }, err) : null,
-        names.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : h('div', null, ...names.map(row)),
-        h('div', { className: 'ssm-sec' }, t('rpSelf'), ' ', sc.ok === false ? h('span', { className: sc.frozen ? 'ssm-warn-inline' : 'ssm-err' }, sc.detail) : h('span', { className: 'ssm-ok' }, '✓')),
-        h('div', { className: 'ssm-sec' }, t('rpDiag'), ' ', h('span', { className: 'ssm-n' }, dg ? `${dgCount}` : '—')),
+        !st && !err ? h('div', { className: 'ssm-empty' }, '…') : null, // 未到位≠空：不得先渲染空态（review m4）
+        st && names.length === 0 ? h('div', { className: 'ssm-empty' }, t('rpEmpty')) : null,
+        st ? h('div', null, ...names.map(row)) : null,
+        h('div', { className: 'ssm-sec' }, t('rpSelf'), ' ', !st ? '—' : sc.ok === false ? h('span', { className: sc.frozen ? 'ssm-warn-inline' : 'ssm-err' }, sc.detail) : h('span', { className: 'ssm-ok' }, '✓')),
+        h('div', { className: 'ssm-sec' }, t('rpDiag'), ' ', h('span', { className: 'ssm-n' }, dg ? `${dgCount}` : dgErr ? `⚠ ${t('rpDiagFail')}` : '—')),
+        dgErr ? h('div', { className: 'ssm-hint' }, dgErr) : null,
         ...dgRows);
     }
 
@@ -584,23 +593,37 @@ window.__ModuleLoader__.load({
         // 右栏详情 tab（§12.209）：betterSidebar 是第三方服务，启动顺序不保证——
         // apply 时取不到则每秒重试直到成功；注册 disposer 恒挂 ctx.effect（重复 id 抛错，泄漏即永久失去 tab）。
         ctx.effect(() => {
+          const TAB_ID = 'skill-set-manager:detail'; // 命名空间 id：第三方 tab 类型惯例（review n1）
           let off = null;
+          let warned = false;
           const tryReg = () => {
             const svc = ctx.get('betterSidebar');
             if (!svc) return false;
             try { off = svc.registerTab({
-              id: 'skill-set-manager',
+              id: TAB_ID,
               title: () => t('tabTitle'),
               description: () => t('tabDesc'),
               order: 40,
               single: true,
               badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && bus.state.selfCheck && !bus.state.selfCheck.ok && !bus.state.selfCheck.unbound) ? '!' : null,
-              component: (props) => h(RightPanel, { ctx, t, scope: props.scope, onOpenFile: props.onOpenFile }),
-            }); } catch { off = null; return false; } // 已注册（热替换竞态）：视为成功，不再重试
+              component: (props) => h(RightPanel, { ctx, t, scope: props.scope, visible: props.visible, onOpenFile: props.onOpenFile }),
+            }); } catch (e) {
+              if (!warned) { warned = true; console.warn('[skill-set-manager] rightTab 注册失败，看门狗持续重试:', e?.message ?? e); }
+              off = null; return false;
+            }
             return true;
           };
-          if (tryReg()) return () => off?.();
-          const id = setInterval(() => { if (tryReg()) clearInterval(id); }, 1000);
+          tryReg();
+          // 3s 看门狗：服务缺席、热替换竞态、以及 betterSidebar 自身热重载后新注册表
+          // 丢我方注册（review m2）——getTab 探活失败即重挂，openTab 不再静默 no-op。
+          const id = setInterval(() => {
+            const svc = ctx.get('betterSidebar');
+            if (!svc) return;
+            let alive = false;
+            try { alive = !!off && !!svc.getTab?.(TAB_ID); } catch { alive = false; }
+            if (alive) return;
+            off = null; tryReg();
+          }, 3000);
           return () => { clearInterval(id); off?.(); };
         }, 'skill-set-manager.rightTab');
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({

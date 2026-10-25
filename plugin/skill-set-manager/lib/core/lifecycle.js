@@ -51,10 +51,11 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
 
   // 可回滚操作日志（回收站根下，与快照同区）
   const logFile = path.join(roots.libraryRoot, '.backups', 'oplog.json');
+  const OPLOG_CAP = 200; // 审计流水封顶（review n3/n8）
   let log = [];
   try { log = JSON.parse(fsImpl.readFileSync(logFile, 'utf8')); } catch {}
   log.push({ ts: new Date().toISOString(), action: 'uninstall', name, backup, removedFromSets, rewrittenProjects, frozenProjects });
-  if (log.length > 200) log = log.slice(-200); // 封顶保最新（review n8，审计流水无界增长防线）
+  if (log.length > OPLOG_CAP) log = log.slice(-OPLOG_CAP); // 封顶保最新（review n8/n3）
   fsImpl.mkdirSync(path.dirname(logFile), { recursive: true });
   writeTextAtomic(logFile, JSON.stringify(log, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
 
