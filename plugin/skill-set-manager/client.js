@@ -23,6 +23,21 @@ window.__ModuleLoader__.load({
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         residentPick: '勾选常驻', noSession: '先在对话页打开一个会话',
+        settingsLabel: '技能集管理器', tabLibrary: '库', tabOps: '安装与更新', tabDiag: '诊断',
+        filterPh: '按名称/来源过滤', managedTag: '受管', unmanagedTag: '未登记', modifiedTag: '本地改动',
+        backupsTitle: '回收站', restoreGo: '恢复', checkUp: '检查更新', applyUp: '应用更新',
+        upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过',
+        uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
+        installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
+        migrateTitle: '通用生效区迁移（一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
+        migrateMoves: '将移动', migrateKeep: '同名保留',
+        diagRun: '运行诊断', fixReclaim: '回收失效链接', fixRebuild: '按当前集重建',
+        diagPartition: '分区说明', diagCopies: '副本漂移', diagDangling: '悬空引用',
+        diagDeadLinks: '失效链接', diagStructure: '结构问题', diagEnv: '环境',
+        none: '（无）', opDone: '完成',
+        unbindGo: '解绑', confirmUnbind: '确认解绑？托管条目将被回收，用户自有条目不动',
+        foreignLine: '外来条目（不接管、切换不覆盖）',
+        settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -36,6 +51,21 @@ window.__ModuleLoader__.load({
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         residentPick: 'Toggle resident', noSession: 'Open a conversation session first',
+        settingsLabel: 'Skill Sets', tabLibrary: 'Library', tabOps: 'Install & update', tabDiag: 'Diagnose',
+        filterPh: 'Filter by name/source', managedTag: 'managed', unmanagedTag: 'untracked', modifiedTag: 'locally modified',
+        backupsTitle: 'Trash', restoreGo: 'Restore', checkUp: 'Check update', applyUp: 'Apply update',
+        upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped',
+        uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
+        installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
+        migrateTitle: 'Migrate common skills (one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
+        migrateMoves: 'Will move', migrateKeep: 'Kept (name clash)',
+        diagRun: 'Run diagnose', fixReclaim: 'Reclaim dead links', fixRebuild: 'Rebuild from set',
+        diagPartition: 'Partition', diagCopies: 'Copy drift', diagDangling: 'Dangling refs',
+        diagDeadLinks: 'Dead links', diagStructure: 'Structure', diagEnv: 'Environment',
+        none: '(none)', opDone: 'Done',
+        unbindGo: 'Unbind', confirmUnbind: 'Unbind? Managed entries are reclaimed; your own entries stay.',
+        foreignLine: 'Foreign entries (untouched by switching)',
+        settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
       },
     };
 
@@ -96,6 +126,7 @@ window.__ModuleLoader__.load({
       const [renaming, setRenaming] = React.useState(null); // slug | null（面板内改名，Electron 无 window.prompt）
       const [renameDraft, setRenameDraft] = React.useState('');
       const [io, setIo] = React.useState(null); // {mode:'export'|'import', text, copied?}
+      const [confirmUnbind, setConfirmUnbind] = React.useState(false);
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -192,6 +223,13 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'ssm-grow' }, null),
                 h('button', { disabled: busy, onClick: () => setIo(null) }, '×')))
           : null,
+        st.binding?.setSlug ? (confirmUnbind
+          ? h('div', { className: 'ssm-confirm' }, t('confirmUnbind'), ' ',
+              h('button', { autoFocus: true, disabled: busy, onClick: () => run(() => call(ctx, 'unbind', { sessionId })) }, t('unbindGo')),
+              h('button', { onClick: () => setConfirmUnbind(false) }, '×'))
+          : h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => setConfirmUnbind(true) }, t('unbindGo'))))
+          : null,
+        (sc.foreign?.length ? h('div', { className: 'ssm-hint' }, t('foreignLine'), '：', (sc.foreign ?? []).join(', ')) : null),
         st.undoAvailable ? h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, t('undo'))) : null,
         h('div', { className: 'ssm-sec' }, t('managedSec')),
         h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
@@ -210,7 +248,8 @@ window.__ModuleLoader__.load({
             h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name))
             : []),
           st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
-        h('div', { className: 'ssm-hint' }, t('hintP2')));
+        h('div', { className: 'ssm-hint' }, t('hintP2')),
+        h('div', { className: 'ssm-hint' }, t('settingsHint')));
     }
 
     function Dot({ st }) {
@@ -253,6 +292,137 @@ window.__ModuleLoader__.load({
           : h('div', { className: 'ssm-panel' }, t('noSession')));
     }
 
+    function Tag({ text, warn }) { return h('span', { className: 'ssm-tag' + (warn ? ' ssm-tag-warn' : '') }, text); }
+
+    /**
+     * 设置页（§10.1.4 settings.section：注册仅 id/order/label，ownerProps 只给 close；
+     * 三页签自绘）。数据全部走同一 host Remote 面（call 兜底 fetch）——无第二实现（#15）。
+     */
+    function SettingsSection({ ctx, t }) {
+      const [tab, setTab] = React.useState('library');
+      const [lib, setLib] = React.useState([]);
+      const [filter, setFilter] = React.useState('');
+      const [busy, setBusy] = React.useState(null);
+      const [msg, setMsg] = React.useState(null); // {kind:'err'|'ok', text}
+      const [confirmUn, setConfirmUn] = React.useState(null); // name
+      const [backupsOf, setBackupsOf] = React.useState(null); // {name, list}
+      const [upRes, setUpRes] = React.useState({}); // name -> checkUpdate result
+      const [spec, setSpec] = React.useState('');
+      const [overwrite, setOverwrite] = React.useState(false);
+      const [instRes, setInstRes] = React.useState(null);
+      const [mig, setMig] = React.useState(null); // {preview, applied}
+      const [diag, setDiag] = React.useState(null);
+      const load = React.useCallback(async () => {
+        try { const v = await call(ctx, 'libraryList', {}); setLib(v.library ?? []); }
+        catch (e) { setMsg({ kind: 'err', text: `${t('loadFailed')}: ${e?.message ?? e}` }); }
+      }, [ctx]);
+      React.useEffect(() => { load(); }, [load]);
+      const run = async (key, fn) => {
+        setBusy(key); setMsg(null);
+        try { const r = await fn(); setMsg({ kind: 'ok', text: t('opDone') }); return r; }
+        catch (e) { setMsg({ kind: 'err', text: `${t('opFailed')}: ${e?.message ?? e}` }); }
+        finally { setBusy(null); }
+      };
+      const q = filter.trim().toLowerCase();
+      const rows = lib.filter((x) => !q || x.name.toLowerCase().includes(q) || String(x.source).toLowerCase().includes(q));
+      const counts = (files) => {
+        const c = { update: 0, add: 0, remove: 0, 'skip-modified': 0 };
+        for (const f of files ?? []) if (c[f.action] !== undefined) c[f.action] += 1;
+        return c;
+      };
+      const tabBtn = (id, label) => h('button', { className: 'ssm-tab' + (tab === id ? ' ssm-tab-on' : ''), disabled: !!busy, onClick: () => setTab(id) }, label);
+      return h('div', { className: 'ssm-settings' },
+        h('div', { className: 'ssm-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
+        msg ? h('div', { className: msg.kind === 'err' ? 'ssm-err' : 'ssm-ok' }, msg.text) : null,
+        tab === 'library' ? h(React.Fragment, null,
+          h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('filterPh'), value: filter, onChange: (e) => setFilter(e.target.value) }),
+          rows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
+          ...rows.map((x) => h('div', { key: x.name, className: 'ssm-srow' },
+            h('div', { className: 'ssm-row' },
+              h('span', { className: 'ssm-cur' }, x.name),
+              h(Tag, { text: x.managed ? t('managedTag') : t('unmanagedTag'), warn: !x.managed }),
+              x.localModified ? h(Tag, { text: t('modifiedTag'), warn: true }) : null,
+              h('span', { className: 'ssm-n' }, `${String(x.source).replace('github:', '')}${x.commit ? ` @${String(x.commit).slice(0, 7)}` : ''}`),
+              h('span', { className: 'ssm-grow' }, null),
+              String(x.source).startsWith('github:')
+                ? h('button', { disabled: !!busy, onClick: () => run(`chk:${x.name}`, async () => { const v = await call(ctx, 'updateCheck', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: v })); }) }, t('checkUp'))
+                : null,
+              upRes[x.name] && !upRes[x.name].upToDate
+                ? h('button', { disabled: !!busy, onClick: () => run(`ap:${x.name}`, async () => { await call(ctx, 'updateApply', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); }) }, t('applyUp'))
+                : null,
+              x.backupCount
+                ? h('button', { disabled: !!busy, onClick: () => {
+                    if (backupsOf?.name === x.name) { setBackupsOf(null); return; }
+                    run(`bk:${x.name}`, async () => setBackupsOf({ name: x.name, list: (await call(ctx, 'backupsList', { name: x.name })).backups ?? [] }));
+                  } }
+                , `${t('backupsTitle')}(${x.backupCount})`)
+                : null,
+              h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
+            upRes[x.name]
+              ? h('div', { className: 'ssm-hint' }, upRes[x.name].upToDate
+                ? `${t('upToDate')} @${String(upRes[x.name].current ?? '').slice(0, 7)}`
+                : (() => {
+                    const c = counts(upRes[x.name].files);
+                    return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(upRes[x.name].remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;
+                  })())
+              : null,
+            confirmUn === x.name
+              ? h('div', { className: 'ssm-confirm' }, t('confirmUn'), ' ', x.name, ' ',
+                  h('button', { autoFocus: true, disabled: !!busy, onClick: () => run(`un:${x.name}`, async () => { await call(ctx, 'uninstallSkill', { name: x.name }); setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); }) }, t('uninstallGo')),
+                  h('button', { onClick: () => setConfirmUn(null) }, '×'))
+              : null,
+            backupsOf?.name === x.name
+              ? h('div', { className: 'ssm-row' }, backupsOf.list.length === 0
+                ? h('span', { className: 'ssm-empty' }, t('none'))
+                : backupsOf.list.map((b) => h('label', { key: b.dir, className: 'ssm-chip' },
+                    h('span', null, `${b.ts} (${b.fileCount})`), ' ',
+                    h('button', { disabled: !!busy, onClick: () => run(`rs:${b.dir}`, async () => { await call(ctx, 'backupRestore', { name: x.name, dir: b.dir }); setBackupsOf(null); await load(); }) }, t('restoreGo')))))
+              : null))
+        ) : null,
+        tab === 'ops' ? h(React.Fragment, null,
+          h('div', { className: 'ssm-sec' }, t('installTitle')),
+          h('div', { className: 'ssm-row' },
+            h('input', { className: 'ssm-input', placeholder: t('installSpecPh'), value: spec, disabled: !!busy, onChange: (e) => setSpec(e.target.value) }),
+            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: overwrite, disabled: !!busy, onChange: (e) => setOverwrite(e.target.checked) }), ' ', t('overwriteChk')),
+            h('button', { disabled: !!busy || !spec.trim(), onClick: () => run('install', async () => { setInstRes(await call(ctx, 'installApply', { spec: spec.trim(), overwrite })); setSpec(''); await load(); }) }, t('installGo'))),
+          instRes
+            ? h('div', { className: 'ssm-hint' }, `@${String(instRes.commit ?? '').slice(0, 7)} `,
+                ...(instRes.results ?? []).map((r) => h('span', { key: r.name, className: 'ssm-chip' }, `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}`)))
+            : null,
+          h('div', { className: 'ssm-sec' }, t('migrateTitle')),
+          h('div', { className: 'ssm-row' },
+            h('button', { disabled: !!busy, onClick: () => run('migP', async () => setMig({ preview: await call(ctx, 'migratePreview', {}), applied: false })) }, t('migratePreview')),
+            mig ? h('button', { disabled: !!busy, onClick: () => run('migA', async () => { await call(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', {}); setMig(null); await load(); }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
+          mig?.preview
+            ? h('div', { className: 'ssm-hint' },
+                `${t('migrateMoves')}: ${(mig.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(mig.preview.keep ?? []).map((k) => k.name).join(', ') || t('none')}`,
+                ...(mig.preview.warnings ?? []).map((w, i) => h('div', { key: i, className: 'ssm-warn-inline' }, w)))
+            : null
+        ) : null,
+        tab === 'diag' ? h(React.Fragment, null,
+          h('div', { className: 'ssm-row' },
+            h('button', { disabled: !!busy, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', {}))) }, t('diagRun')),
+            diag?.fixable?.reclaimDeadLinks?.count
+              ? h('button', { disabled: !!busy, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', {}); setDiag(await call(ctx, 'diagnoseRun', {})); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
+              : null,
+            h('button', { disabled: !!busy, onClick: () => run('rebuild', async () => { await call(ctx, 'rebuildManaged', {}); setDiag(await call(ctx, 'diagnoseRun', {})); }) }, t('fixRebuild'))),
+          diag
+            ? h('div', null, ...Object.entries({
+              partition: t('diagPartition'), copies: t('diagCopies'), dangling: t('diagDangling'),
+              deadLinks: t('diagDeadLinks'), structure: t('diagStructure'), env: t('diagEnv'),
+            }).map(([g, label]) => h('div', { key: g },
+              h('div', { className: 'ssm-sec' }, label, ' ', h('span', { className: 'ssm-n' }, `${(diag.groups?.[g] ?? []).length}`)),
+              (diag.groups?.[g] ?? []).length === 0 ? h('div', { className: 'ssm-empty' }, t('none')) : null,
+              ...(diag.groups?.[g] ?? []).map((r, i) => h('div', { key: i, className: 'ssm-diag-row' },
+                h('span', { className: `ssm-lvl ssm-lvl-${r.level}` }, null),
+                h('span', null, r.what), ' ',
+                h('span', { className: 'ssm-n' }, r.where ?? ''),
+                h('span', { className: 'ssm-grow' }, null),
+                h('span', { className: 'ssm-hint' }, r.fix ?? ''))))))
+            : null
+        ) : null);
+    }
+
     const CSS = `
 .ssm-chip-btn{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;padding:3px 7px;border-radius:6px;cursor:pointer}
 .ssm-chip-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
@@ -289,6 +459,22 @@ window.__ModuleLoader__.load({
 .ssm-chips .ssm-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;cursor:pointer}
 .ssm-chips .ssm-on{border-color:var(--dsw-alias-brand-primary)}
 .ssm-empty{font-size:11px;color:var(--dsw-alias-label-secondary)}
+.ssm-settings{display:flex;flex-direction:column;gap:8px;padding:4px 2px;max-width:920px}
+.ssm-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.ssm-tab{font:inherit;font-size:12px;border:0;background:0;color:var(--dsw-alias-label-secondary);padding:6px 10px;cursor:pointer;border-radius:6px 6px 0 0}
+.ssm-tab:hover{color:var(--dsw-alias-label-primary)}
+.ssm-tab-on{color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}
+.ssm-srow{display:flex;flex-direction:column;gap:3px;padding:5px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
+.ssm-tag{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);flex:none}
+.ssm-tag-warn{color:var(--dsw-alias-status-warning,#f5a623);border-color:currentColor}
+.ssm-diag-row{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;flex-wrap:wrap}
+.ssm-lvl{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-label-secondary)}
+.ssm-lvl-warn{background:var(--dsw-alias-status-warning,#f5a623)}
+.ssm-lvl-error{background:var(--dsw-alias-status-error,#e5484d)}
+.ssm-lvl-info{background:var(--dsw-alias-brand-primary)}
+.ssm-settings .ssm-row button{background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
+.ssm-settings .ssm-row button:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 `;
 
     return {
@@ -317,6 +503,10 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay', id: PKG, order: 30,
         }, () => h(OverlayHost, { ctx, t })));
+        // 设置页（§10.1.4 探针事实：注册面仅 id/order/label；label thunk 随 locale 自动跟随）
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section', id: PKG, order: 90, label: () => t('settingsLabel'),
+        }, () => h(SettingsSection, { ctx, t })));
       },
     };
   },
