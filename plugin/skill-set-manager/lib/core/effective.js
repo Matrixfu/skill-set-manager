@@ -22,21 +22,25 @@ export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = 
   const add = [];
   const warnMissing = [];
   const warnForeign = [];
+  const rebuilding = new Set();
   const skillsDir = path.join(projectRoot, '.dsh', 'skills');
   for (const name of names) {
     const t = targets.get(name);
     if (!t) { warnMissing.push(name); continue; } // 悬空引用：警告，不写入
-    if (name in current) continue;
     const kDir = entryKind(path.join(skillsDir, name), { fs: fsImpl });
     const kFile = entryKind(path.join(skillsDir, `${name}.md`), { fs: fsImpl });
-    if (kDir !== 'missing' || kFile !== 'missing') {
+    const onDisk = kDir !== 'missing' || kFile !== 'missing';
+    if (name in current) {
+      if (onDisk) continue; // 正常 keep
+      rebuilding.add(name); // 台账在、盘上没了（外删/死链）→ 重新进 add 重建（review M1）
+    } else if (onDisk) {
       warnForeign.push({ name, kind: kDir === 'missing' ? kFile : kDir }); // 同名外来条目：不抢占不删除（§7.3/ADR-0003）
       continue;
     }
     add.push({ name, target: t.path, targetKind: t.kind, origin: t.origin });
   }
   const remove = Object.keys(current).filter((name) => !targetSet.has(name)).map((name) => ({ name, kind: current[name].kind }));
-  const keep = names.filter((name) => name in current && targets.has(name));
+  const keep = names.filter((name) => name in current && targets.has(name) && !rebuilding.has(name));
   return { setSlug, add, remove, keep, warnMissing, warnForeign, missing: [...new Set([...unresolved, ...warnMissing])] };
 }
 

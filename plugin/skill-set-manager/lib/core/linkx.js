@@ -23,7 +23,7 @@ export function entryKind(linkPath, { fs: fsImpl = fs } = {}) {
 export function makeEntry(target, linkPath, { fs: fsImpl = fs } = {}) {
   let targetStat;
   try { targetStat = fsImpl.statSync(target); } catch (e) { throw new Error(`链接本体不存在: ${target}`); } // 失效引用在 plan 阶段已挡
-  if (entryKind(linkPath, { fs: fsImpl }) !== 'missing') removeEntry(linkPath, undefined, { fs: fsImpl }); // EEXIST 先清
+  removeEntry(linkPath, undefined, { fs: fsImpl }); // EEXIST 或死 stub 都先清（死 stub stat 失败，removeEntry 走 Dirent 支路）
   fsImpl.mkdirSync(path.dirname(linkPath), { recursive: true });
   if (targetStat.isFile()) {
     // flat <name>.md 本体：文件复制（junction 只用于目录）
@@ -41,10 +41,22 @@ export function makeEntry(target, linkPath, { fs: fsImpl = fs } = {}) {
   }
 }
 
-/** 只删条目自身，永不跟随删本体。kind 缺省时按 entryKind 自判。 */
+/**
+ * 只删条目自身，永不跟随删本体。kind 缺省时按 entryKind 自判；
+ * stat 失败但父目录 Dirent 显示仍在（死 junction/死 symlink 挂角）→ 按链摘除，
+ * 否则外删条目永远删不掉、重建永远 EEXIST（review M1）。
+ */
 export function removeEntry(linkPath, kind, { fs: fsImpl = fs } = {}) {
-  const k = kind ?? entryKind(linkPath, { fs: fsImpl });
-  if (k === 'missing') return false;
+  let k = kind ?? entryKind(linkPath, { fs: fsImpl });
+  if (k === 'missing') {
+    let ent;
+    try {
+      ent = fsImpl.readdirSync(path.dirname(linkPath), { withFileTypes: true })
+        .find((e) => e.name === path.basename(linkPath));
+    } catch { return false; }
+    if (!ent) return false; // 盘上真没有：视作已摘
+    k = ent.isSymbolicLink() ? 'symlink' : ent.isDirectory() ? 'dir' : 'file';
+  }
   try {
     if (k === 'junction' || k === 'symlink') fsImpl.rmdirSync(linkPath); // 摘链接点，不碰本体
     else fsImpl.rmSync(linkPath, { recursive: true, force: true });

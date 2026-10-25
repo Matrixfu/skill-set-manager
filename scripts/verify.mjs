@@ -686,6 +686,49 @@ const CASES = [
     },
   },
   {
+    id: 'rebuild-dead-entry', title: '托管条目外删/死链 → 重建（review M1：重新生成不得空转）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'alpha'); writeSkill(f.library, 'beta');
+      const { saveSet } = await core('sets');
+      await saveSet(f.roots, { slug: 's1', name: 'S1', skills: ['alpha', 'beta'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan } = await core('effective');
+      const { entryKind, removeEntry, makeEntry } = await core('linkx');
+      writeBinding(f.projectA, 's1');
+      applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 's1'));
+      eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['alpha', 'beta']), '前置：两条目齐');
+      // 场景①：外删托管目录（台账仍记）→ plan 必须重新进 add
+      fs.rmSync(path.join(f.projectA, '.dsh', 'skills', 'alpha'), { recursive: true, force: true });
+      const p1 = await planEffective(f.roots, f.projectA, 's1');
+      ok(p1.add.some((a) => a.name === 'alpha'), '外删条目回到 add（不再 keep 空转）');
+      ok(p1.keep.includes('beta') && !p1.keep.includes('alpha'), 'keep 只留真存在项');
+      const r1 = applyPlan(f.projectA, p1);
+      eq(r1.applied.added, 1, 'added=1');
+      eq(entryKind(path.join(f.projectA, '.dsh', 'skills', 'alpha')), 'junction', '重建为 junction');
+      // 场景②：死 junction（本体没了）→ removeEntry 自判可摘 stub；makeEntry 重建
+      const betaStub = path.join(f.projectA, '.dsh', 'skills', 'beta');
+      eq(entryKind(betaStub), 'junction', '前置：beta 是活 junction');
+      fs.rmSync(path.join(f.library, 'beta'), { recursive: true, force: true }); // 库体消失 → 死链
+      eq(entryKind(betaStub), 'missing', '死链 entryKind=missing');
+      eq(removeEntry(betaStub), true, 'removeEntry 自判摘死 stub（Dirent 支路）');
+      ok(!fs.existsSync(betaStub), 'stub 已消失');
+      writeSkill(f.library, 'beta'); // 库体回来
+      const p2 = await planEffective(f.roots, f.projectA, 's1');
+      ok(p2.add.some((a) => a.name === 'beta'), '死链重建回 add');
+      applyPlan(f.projectA, p2);
+      eq(entryKind(betaStub), 'junction', 'beta 重建为 junction');
+      ok(fs.readFileSync(path.join(betaStub, 'SKILL.md'), 'utf8').includes('beta'), '内容可读');
+      // 场景③：makeEntry 对已存在死 stub 先清再建（不清会 EEXIST）
+      fs.rmSync(path.join(f.library, 'beta'), { recursive: true, force: true });
+      makeEntry(path.join(f.library, 'alpha'), betaStub); // 对死 stub 直接建
+      eq(entryKind(betaStub), 'junction', 'makeEntry 先清死 stub 再建');
+      const r3 = applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 's1'));
+      ok(r3.applied.added >= 0, '幂等：再 apply 不抛');
+      eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['alpha', 'beta']), '终态两条目齐');
+    },
+  },
+  {
     id: '11', title: '诊断六类分组报出（§17#11）', status: 'pending-scope',
     note: 'P1a 转正：由 diagnose-fixture case 覆盖（五类异常逐项命中+环境三类+副本漂移）', run: async () => {},
   },
