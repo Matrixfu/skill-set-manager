@@ -251,12 +251,15 @@ export function apply(ctx, config) {
 
   // 兜底通道：Remote 面不可达时 client 走同源 fetch（同一实现，非第二套逻辑）。
   // 注意：webServer 用 ctx.get 可选取用（headless profile 无此服务时不得崩 entry）。
+  // 关键：路由 disposer 必须挂进 ctx.effect——否则 bundle 禁用后路由泄漏在
+  // app 级路由表里引用已 dispose 的旧 ctx（“inactive context”），再启用时
+  // duplicate 注册被拒，路由永久停在已死的旧 handler 上。
   try {
     const webServer = ctx.get('webServer');
     if (!webServer) {
       ctx.logger.warn('skill-set-manager：无 webServer 服务，fetch 兜底通道不可用（Remote 面不受影响）');
     } else {
-      webServer.register({
+      const route = {
         kind: 'exact',
         path: '/api/skill-set-manager',
         handler: async (req, res) => {
@@ -279,7 +282,19 @@ export function apply(ctx, config) {
             res.end(JSON.stringify({ error: String(e?.message ?? e) }));
           }
         },
-      });
+      };
+      ctx.effect(() => {
+        let off;
+        try {
+          off = webServer.register(route);
+        } catch (e) {
+          // 抢占上一代际泄漏的死路由占位（仅 duplicate 才抢；该路径名空间归本插件）。
+          if (!/duplicate/.test(String(e?.message ?? e))) throw e;
+          webServer.exact?.delete(route.path);
+          off = webServer.register(route);
+        }
+        return () => off();
+      }, 'skill-set-manager.fetchRoute');
     }
   } catch (e) {
     ctx.logger.warn(`skill-set-manager webServer 兜底通道注册失败（不影响 Remote 面）: ${e?.message ?? e}`);
