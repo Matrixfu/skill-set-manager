@@ -96,6 +96,9 @@ export function apply(ctx, config) {
       const sc = selfCheck(roots, loc.projectRoot);
       const managed = readManaged(loc.projectRoot);
       const store = await storeOf();
+      // 索引自愈（review m3）：面板每打开一次该项目即入索引——MVP 期历史绑定项目最迟一次点面板补齐，
+      // uninstall/deleteSet 的候选推导自此不再漏项目。幂等一次 put，成本可忽略。
+      if (loc.projectRoot) { try { await store.put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); } catch {} }
       return {
         ...loc,
         sessionId: req?.sessionId ?? null,
@@ -436,6 +439,7 @@ export function apply(ctx, config) {
         writeBinding(projectRoot, config.autoBindSlug);
         applyPlan(projectRoot, await planEffective(roots, projectRoot, config.autoBindSlug));
         ensureGitignoreLine(projectRoot, { enabled: config.gitignoreLine });
+        try { await (await storeOf()).put('bindings', projectKey(projectRoot), { projectRoot }); } catch {} // session/created 自动绑定同步入索引（P1b-T1）
       } catch (e) {
         ctx.logger.warn(`skill-set-manager 自动绑定失败: ${e?.message ?? e}`);
       }
