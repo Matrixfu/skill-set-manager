@@ -3,7 +3,11 @@
  * 独立叶子模块：github（拉取）与 manifest（认领来源）都要解析来源，放这里避免 ESM 环。
  */
 
-/** owner/repo[@ref][/subpath] → {owner, repo, ref|null, subpath|null}；非法 throw 业务错。 */
+/**
+ * owner/repo[@ref][/subpath] → {owner, repo, ref|null, subpath|null}；非法 throw 业务错。
+ * 容忍三种粘贴形态（都是真实用户输入，用户报告 2026-10-26）：整条 `https://github.com/…` 地址、
+ * clone 地址尾部的 `.git`、网页地址路由残留 `tree/<ref>/`（或 `blob/<ref>/`——无显式 @ref 时当 ref）。
+ */
 export function parseRepoSpec(spec) {
   if (typeof spec !== 'string' || !spec.trim()) throw new Error('技能来源须为非空字符串');
   const rest = spec.trim().replace(/^(https?:\/\/(?:www\.)?github\.com\/|github\.com\/)/, '');
@@ -18,7 +22,16 @@ export function parseRepoSpec(spec) {
   // manifest 存了 github:vercel-labs/skills.git，库「检查更新」exit 128）
   const repo = rawRepo.length > 4 && rawRepo.endsWith('.git') ? rawRepo.slice(0, -4) : rawRepo;
   let subpath = segs.length > 2 ? segs.slice(2).join('/') : null;
-  if (refPart === null) return { owner, repo, ref: null, subpath };
+  // 浏览器地址的残留路由段 owner/repo/{tree|blob}/<ref>/<path>：GitHub 网页地址就是这个形状，
+  // 粘贴它是常态（用户报告 2026-10-26：diagram-design、ask-matt 的认领来源都粘成
+  // …/tree/main/skills、…/blob/main/skills/engineering → tree/main 被当成稀疏路径 →
+  // 稀疏检出空目录 → 检查更新报「上游不含技能」）。仅在没写显式 @ref 时认它，不与 @ 语法打架。
+  let webRef = null;
+  if (refPart === null && subpath) {
+    const ps = subpath.split('/');
+    if ((ps[0] === 'tree' || ps[0] === 'blob') && ps.length >= 2) { webRef = ps[1] || null; subpath = ps.slice(2).join('/') || null; }
+  }
+  if (refPart === null) return { owner, repo, ref: webRef, subpath };
   const rs = refPart.split('/');
   const ref = rs[0];
   if (!ref) throw new Error(`技能来源格式错误 "${spec}"：ref 为空`);

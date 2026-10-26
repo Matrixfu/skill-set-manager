@@ -26,8 +26,9 @@ export function copyDirTree(src, dst, fsImpl = fs) {
 }
 
 /**
- * 稀疏拉取：init + remote add + fetch --depth 1 origin <ref|HEAD> + sparse-checkout
- * （有 subpath 时）+ checkout --detach FETCH_HEAD。返回 {commit, skillsDir}。
+ * 稀疏拉取：init + remote add + fetch --depth 1 --filter=blob:none origin <ref|HEAD>
+ * + sparse-checkout（有 subpath 时）+ checkout --detach FETCH_HEAD。返回 {commit, skillsDir}。
+ * 只取树、blob 按需，避免大仓库整仓拉包炸传输（不认 filter 的远端自动退回全量）。
  */
 export async function fetchRepo(spec, { tmpDir, git = defaultGit, url } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
@@ -42,7 +43,14 @@ export async function fetchRepo(spec, { tmpDir, git = defaultGit, url } = {}) {
   fs.mkdirSync(tmpDir, { recursive: true });
   run(['init', '-q']);
   run(['remote', 'add', 'origin', repoUrl]);
-  run(['fetch', '--depth', '1', 'origin', spec.ref || 'HEAD']);
+  // partial clone（用户报告 2026-10-26：大仓库检查更新报「invalid index-pack output」）：
+  // 整仓 depth-1 也要把**全部 blob** 压成一个 pack（diagram-design 那种带素材的仓库最容易炸），
+  // 改 --filter=blob:none 只取树对象，blob 交给下面的 sparse-checkout 按需拉。
+  // 只有「服务器/老 git 不认 filter」才退回全量拉法；真因（仓库不存在、网络炸）不重试——
+  // 慢网络下重试等于把等待翻倍（verify 有「非 filter 失败只拉一次」断言）。
+  const fetchArgs = (filtered) => ['fetch', '--depth', '1', ...(filtered ? ['--filter=blob:none'] : []), 'origin', spec.ref || 'HEAD'];
+  try { run(fetchArgs(true)); }
+  catch (e) { if (!/filter/i.test(String(e?.message ?? ''))) throw e; run(fetchArgs(false)); }
   if (spec.subpath) run(['sparse-checkout', 'set', '--', spec.subpath]);
   run(['checkout', '-q', '--detach', 'FETCH_HEAD']);
   const commit = run(['rev-parse', 'FETCH_HEAD']).stdout.trim();

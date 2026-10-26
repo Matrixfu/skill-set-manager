@@ -469,6 +469,16 @@ const CASES = [
       for (const [src, want] of [['o/r.git', 'r'], ['https://github.com/vercel-labs/skills.git', 'skills'], ['o/r.git/skills', 'r'], ['o/r.js', 'r.js'], ['o/r@v2.git/a', 'r']])
         eq(g.parseRepoSpec(src).repo, want, `repo 段剥 .git 克隆后缀：${src}`);
       eq(g.normalizeRepoSource('github:vercel-labs/skills.git'), 'github:vercel-labs/skills', '规范形不留 .git 后缀（认领来源同口径）');
+      // 粘贴 GitHub 网页地址 owner/repo/tree/<ref>/<path>（用户报告 2026-10-26：认领来源粘了
+      // github.com/cathrynlavery/diagram-design/tree/main/skills → tree/main/skills 被当稀疏路径
+      // → 检出空目录 → 检查更新报「上游不含技能」；上游真实路径是 skills/diagram-design）
+      const s5 = g.parseRepoSpec('https://github.com/cathrynlavery/diagram-design/tree/main/skills');
+      eq([s5.owner, s5.repo, s5.ref, s5.subpath], ['cathrynlavery', 'diagram-design', 'main', 'skills'], '网页地址 tree/<ref>/<path> 归位');
+      eq(g.normalizeRepoSource('github:cathrynlavery/diagram-design/tree/main/skills'), 'github:cathrynlavery/diagram-design/skills', '规范形剥掉 tree/main 残留');
+      const s6 = g.parseRepoSpec('o/r/blob/dev/pkg/a');
+      eq([s6.ref, s6.subpath], ['dev', 'pkg/a'], 'blob/<ref>/<path> 同口径');
+      const s7 = g.parseRepoSpec('o/r@v2/tree/x'); // 显式 @ref 为准，网页残留规则不得插手
+      eq([s7.ref, s7.subpath], ['v2', 'tree/x'], '显式 @ref 优先于 tree 规则');
       // 报错口径（同一报告）：本机 git 全局 http.sslVerify=false → stderr 首行是 TLS 告警横幅，
       // 真因在 fatal 行；只报首行 = 用户看到「SECURITY WARNING」误判成 GitHub 授权失败
       // 假 git：只有 fetch/ls-remote 炸（fetchRepo 会在 args 前塞 -c 配置，判定须按元素而非 args[0]）
@@ -482,6 +492,27 @@ const CASES = [
       ok(!fm.includes('SECURITY WARNING'), `不得把 TLS 告警横幅当结论，实得：${fm}`);
       const rm = await grab('updates', (uu) => uu.remoteHead({ owner: 'o', repo: 'r', ref: null, subpath: null }, { git: warnGit }));
       ok(rm.includes('not found') && !rm.includes('SECURITY WARNING'), `ls-remote 同口径，实得：${rm}`);
+      // partial clone（用户报告 2026-10-26：大仓库整仓 depth-1 拉包 → 「invalid index-pack output」）：
+      // fetch 带 --filter=blob:none 只取树，blob 按 sparse 路径按需取；服务器/老 git 不认则退回全量
+      const seen = [];
+      const spyGit = (args, cwd) => { seen.push(args.join(' ')); return spawnSync('git', args, { cwd, encoding: 'utf8' }); }; // 此处还不能引用下面 const git（TDZ）
+      const got2 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghpc-')), git: spyGit, url: pathToFileURL(repo).toString() });
+      ok(seen.some((a) => a.includes(' fetch ') && a.includes('--filter=blob:none')), 'fetch 走 partial clone（--filter=blob:none）');
+      eq(got2.commit, head, 'partial clone 仍能取到 commit');
+      ok(fs.existsSync(path.join(got2.skillsDir, 'alpha', 'SKILL.md')), 'partial clone + sparse 仍能检出 skills/alpha');
+      const noFilter = (args) => (args.includes('--filter=blob:none')
+        ? { status: 128, stdout: '', stderr: 'warning: ----------------- SECURITY WARNING ----------------\nfatal: filtering not recognized by server, ignoring server advertisement\n' }
+        : args.includes('rev-parse') ? { status: 0, stdout: 'deadbeef\n', stderr: '' } : { status: 0, stdout: '', stderr: '' });
+      const seen2 = [];
+      const got3 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghnf-')), git: (a, c) => { seen2.push(a.join(' ')); return noFilter(a, c); } });
+      eq(got3.commit, 'deadbeef', '不认 filter 时退回全量仍能装成');
+      ok(seen2.some((a) => a.includes('--filter=blob:none')) && seen2.some((a) => a.includes(' fetch ') && !a.includes('--filter')), '不认 filter → 退回不带 filter 的 fetch');
+      // 真因（仓库不存在/网络炸）绝不重试第二轮：慢网络下白等一遍等于把等待翻倍
+      const seen3 = [];
+      let fm2 = '';
+      try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghrt-')), git: (a) => { seen3.push(a.join(' ')); return a.includes('fetch') ? { status: 128, stdout: '', stderr: "warning: SECURITY\nfatal: repository 'https://github.com/o/r.git.git/' not found\n" } : { status: 0, stdout: '', stderr: '' }; } }); } catch (e) { fm2 = String(e?.message ?? e); }
+      ok(fm2.includes('not found'), `仓库不存在照报 fatal 行，实得：${fm2}`);
+      eq(seen3.filter((a) => a.includes(' fetch ')).length, 1, '非 filter 失败不重试（只拉一次）');
       const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
       const spec = g.parseRepoSpec('o/r/skills');
       const tmp = fs.mkdtempSync(path.join(f.base, 'ghwt-'));
