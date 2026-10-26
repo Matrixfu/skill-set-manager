@@ -222,21 +222,21 @@ const CASES = [
       const s = await core('sets');
       const { syncResident } = await core('resident');
       const { entryKind } = await core('linkx');
-      mkdirp(path.join(f.userDsh, 'res-b')); // 全局区既有同名外来条目
-      fs.writeFileSync(path.join(f.userDsh, 'res-b', 'SKILL.md'), '# foreign\n');
+      mkdirp(path.join(f.userAgentsSkills, 'res-b')); // 常驻区既有同名外来条目
+      fs.writeFileSync(path.join(f.userAgentsSkills, 'res-b', 'SKILL.md'), '# foreign\n');
       await s.saveResident(f.roots, ['res-a', 'res-b']);
       const r = await syncResident(f.roots);
-      eq(entryKind(path.join(f.userDsh, 'res-a')), 'junction', 'res-a 链入全局生效区');
-      eq(fs.readFileSync(path.join(f.userDsh, 'res-b', 'SKILL.md'), 'utf8'), '# foreign\n', '全局区外来同名不被抢占');
-      ok(r.warnings.some((w) => w.includes('res-b')), '全局区冲突有警告');
+      eq(entryKind(path.join(f.userAgentsSkills, 'res-a')), 'junction', 'res-a 链入常驻区 ~/.agents/skills（P3 搬迁）');
+      eq(fs.readFileSync(path.join(f.userAgentsSkills, 'res-b', 'SKILL.md'), 'utf8'), '# foreign\n', '常驻区外来同名不被抢占');
+      ok(r.warnings.some((w) => w.includes('res-b')), '常驻区冲突有警告');
       await s.saveResident(f.roots, []);
       await syncResident(f.roots);
-      ok(!fs.existsSync(path.join(f.userDsh, 'res-a')), '取消常驻 → 精确回收自建链接');
-      ok(fs.existsSync(path.join(f.userDsh, 'res-b')), '非我创建的条目不误删');
+      ok(!fs.existsSync(path.join(f.userAgentsSkills, 'res-a')), '取消常驻 → 精确回收自建链接');
+      ok(fs.existsSync(path.join(f.userAgentsSkills, 'res-b')), '非我创建的条目不误删');
       await s.saveResident(f.roots, ['res-a']);
-      await withRoots(f, { crossHarnessResident: true }); // 开关开 → 同时链跨 harness 区
+      await withRoots(f, { crossHarnessResident: true }); // 开关开 = 额外保留旧 ~/.dsh/skills 链
       await syncResident(f.roots);
-      eq(entryKind(path.join(f.userAgentsSkills, 'res-a')), 'junction', '开关开时链跨 harness 区');
+      eq(entryKind(path.join(f.userDsh, 'res-a')), 'junction', '开关开时旧区同时链入');
     },
   },
   {
@@ -255,7 +255,7 @@ const CASES = [
       const plan = await planEffective(f.roots, f.projectA, 'doc');
       await applyPlan(f.projectA, plan);
       setEq(skillDirNames(f.projectA), ['lib-docx', 'lib-pdf'], '项目条目 = 集（常驻在全局区，§5.3）');
-      eq(entryKind(path.join(f.userDsh, 'resident-x')), 'junction', '常驻在全局生效区可见');
+      eq(entryKind(path.join(f.userAgentsSkills, 'resident-x')), 'junction', '常驻在全局生效区可见（P3 后 = agents 区）');
       const mg = await readManaged(f.projectA);
       eq(mg.setSlug, 'doc', '托管清单记录来源技能集');
       eq(mg.entries['lib-docx'].from, 'library', 'managed.from = 来源标签（§11）');
@@ -704,7 +704,7 @@ const CASES = [
       const ledger = { load: async () => L.data, save: async (d) => { L.data = JSON.parse(JSON.stringify(d)); } };
       const ap = await m.apply(f.roots, { moves: pv.moves, ledger });
       const { entryKind } = await core('linkx');
-      eq(entryKind(path.join(f.userDsh, 'gamma')), 'junction', '原区真身消失、仅剩常驻链（§8.2）');
+      eq(entryKind(path.join(f.userAgentsSkills, 'gamma')), 'junction', '原区真身消失、常驻链在 agents 区（P3）');
       ok(fs.existsSync(path.join(f.library, 'gamma', 'SKILL.md')), '入库');
       eq(JSON.stringify(L.data.moved.map((x) => x.name)), JSON.stringify(['gamma']), 'ledger 记录');
       ok(ap.moved.includes('gamma'), 'apply 返回');
@@ -1014,6 +1014,38 @@ const CASES = [
       ok(/40/.test(p), 'prompt 含 ≤40 字生成口径');
     },
   },
+  {
+    id: 'resident-relocate', title: 'P3-T4 常驻区搬迁：globalResidentDirs 默认 = agents 区、开关 = 额外保留旧区、prune 按台账精确回收',
+    async run(f) {
+      await withRoots(f);
+      const { buildRoots } = await core('paths');
+      eq(JSON.stringify(f.roots.globalResidentDirs), JSON.stringify([f.userAgentsSkills]), '默认常驻区 = ~/.agents/skills');
+      const r2 = buildRoots({ dshHome: f.dshHome, agentsHome: f.agentsHome, crossHarnessResident: true });
+      eq(JSON.stringify(r2.globalResidentDirs), JSON.stringify([f.userAgentsSkills, f.userDsh]), '开关开 = 额外保留旧 dsh 区');
+      const { makeEntry, entryKind } = await core('linkx');
+      const { loadResident, saveResident } = await core('sets');
+      const { pruneLegacyResidentLinks } = await core('resident');
+      for (const n of ['pa', 'pb']) writeSkill(f.library, n);
+      const made = makeEntry(path.join(f.library, 'pa'), path.join(f.userDsh, 'pa'));
+      saveResident(f.roots, [], { links: { [f.userDsh]: { pa: { kind: made.kind } } } }); // 旧区自建链台账（搬迁前状态）
+      mkdirp(path.join(f.userDsh, 'pb'));
+      fs.writeFileSync(path.join(f.userDsh, 'pb', 'SKILL.md'), '# other\n');
+      const pr = await pruneLegacyResidentLinks(f.roots);
+      ok(!fs.existsSync(path.join(f.userDsh, 'pa')), '旧区自建链接被回收');
+      ok(fs.existsSync(path.join(f.userDsh, 'pb')), '旧区他人条目不动');
+      ok(fs.existsSync(path.join(f.library, 'pa', 'SKILL.md')), '库真身无损');
+      setEq(pr.pruned.map((x) => x.name), ['pa'], 'pruned 记录');
+      eq(loadResident(f.roots).links[f.userDsh], undefined, '旧区台账清空');
+      const pr2 = await pruneLegacyResidentLinks(f.roots);
+      eq(pr2.pruned.length, 0, '幂等：第二次无事可做');
+      await withRoots(f, { crossHarnessResident: true }); // 开关开：旧区在 residentDirs 内 → 不算旧区
+      const made2 = makeEntry(path.join(f.library, 'pa'), path.join(f.userDsh, 'pa'));
+      saveResident(f.roots, [], { links: { [f.userDsh]: { pa: { kind: made2.kind } } } });
+      const pr3 = await pruneLegacyResidentLinks(f.roots);
+      eq(pr3.pruned.length, 0, '在区链接不被回收');
+      ok(entryKind(path.join(f.userDsh, 'pa')) === 'junction', '开关开时链接保留');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',
@@ -1132,8 +1164,8 @@ const CASES = [
       const { entryKind } = await core('linkx');
       await s.saveResident(f.roots, ['m1']);
       await syncResident(f.roots);
-      eq(entryKind(path.join(f.userDsh, 'm1')), 'junction', '常驻链接就位');
-      fs.rmdirSync(path.join(f.userDsh, 'm1')); // 外部手删常驻链接
+      eq(entryKind(path.join(f.userAgentsSkills, 'm1')), 'junction', '常驻链接就位（agents 区）');
+      fs.rmdirSync(path.join(f.userAgentsSkills, 'm1')); // 外部手删常驻链接
       await s.saveResident(f.roots, []);
       const r = await syncResident(f.roots); // 退常驻不抛错
       eq(r.warnings.filter((w) => w.includes('m1')).length, 0, '外部手删后退常驻无异常警告');

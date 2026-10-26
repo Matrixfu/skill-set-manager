@@ -41,3 +41,26 @@ export async function syncResident(roots, { fs: fsImpl = fs } = {}) {
   saveResident(roots, doc.skills, { links });
   return { linked: [...desired], warnings };
 }
+
+/**
+ * P3 常驻区搬迁（设计 §6.4/§6.6）：回收「links 台账里有记录、但目录已不在 globalResidentDirs」
+ * 的旧区自建链接（默认即 ~/.dsh/skills 遗留链），他人条目（台账无记录）一律不动。幂等。
+ */
+export async function pruneLegacyResidentLinks(roots, { fs: fsImpl = fs } = {}) {
+  const doc = loadResident(roots);
+  const links = doc.links ?? {};
+  const keep = new Set(roots.globalResidentDirs);
+  const pruned = [];
+  const warnings = [];
+  for (const dir of Object.keys(links)) {
+    if (keep.has(dir)) continue;
+    for (const [name, rec] of Object.entries(links[dir] ?? {})) {
+      try { removeEntry(path.join(dir, name), rec?.kind, { fs: fsImpl }); }
+      catch (e) { warnings.push(`${dir}/${name}: ${e?.message ?? e}`); continue; }
+      pruned.push({ dir, name });
+    }
+    delete links[dir];
+  }
+  saveResident(roots, doc.skills, { links });
+  return { pruned, warnings };
+}

@@ -32,8 +32,8 @@ export function buildRoots({ dshHome, agentsHome, customSkillDirs = [], crossHar
     setsDir: path.join(dshHome, 'skill-sets'),
     userDshRoot: path.join(dshHome, 'skills'),
     userAgentsRoot: path.join(agentsHome, 'skills'),
-    // 常驻链接目标区（§5.3：跨 harness 通用区默认关）
-    globalResidentDirs: [path.join(dshHome, 'skills'), ...(crossHarnessResident ? [path.join(agentsHome, 'skills')] : [])],
+    // 常驻链接目标区（P3 搬迁：默认 = 跨 harness 区 ~/.agents/skills；开关开 = 额外保留旧 ~/.dsh/skills）
+    globalResidentDirs: [path.join(agentsHome, 'skills'), ...(crossHarnessResident ? [path.join(dshHome, 'skills')] : [])],
     customDirs: customSkillDirs.map((d) => path.resolve(d)),
   };
 }
