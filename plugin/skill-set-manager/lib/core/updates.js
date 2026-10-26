@@ -8,16 +8,18 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readManifest, writeSkillManifest, walkFiles } from './manifest.js';
 import { writeTextAtomic } from './atomic.js';
+import { gitFailMessage } from './giterr.js';
 
 const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 
 /** 远端默认分支 HEAD（ls-remote）；失败归一业务错。 */
 export async function remoteHead(spec, { git = defaultGit, url } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
+  const args = ['ls-remote', repoUrl, 'HEAD'];
   let r;
-  try { r = git(['ls-remote', repoUrl, 'HEAD'], process.cwd()); }
+  try { r = git(args, process.cwd()); }
   catch (e) { throw new Error(`git ls-remote failed: ${e?.message ?? e}`); }
-  if (!r || r.status !== 0) throw new Error(`git ls-remote failed: ${String(r?.stderr ?? '').split('\n')[0].trim() || `exit ${r?.status}`}`);
+  if (!r || r.status !== 0) throw new Error(gitFailMessage(args, r));
   const sha = String(r.stdout || '').trim().split(/\s/)[0];
   if (!sha) throw new Error('git ls-remote failed: 空响应');
   return sha;
@@ -48,12 +50,30 @@ export function diffThreeWay(baseline, local, upstream) {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function upstreamDirOf(skillsDir, name, fsImpl) {
-  const d = path.join(skillsDir, name);
-  let names;
-  try { names = fsImpl.readdirSync(d); } catch { throw new Error(`上游不含技能 "${name}"：${d}`); }
-  if (!names.includes('SKILL.md')) throw new Error(`上游不含技能 "${name}"：${d}`);
-  return d;
+function hasSkillMd(dir, fsImpl) {
+  try { return fsImpl.readdirSync(dir).includes('SKILL.md'); } catch { return false; }
+}
+/**
+ * 上游技能目录：先按 `<skillsDir>/<name>` 直取；来源被粘贴成仓库根（无子路径）时，按
+ * 安装侧同口径（installSkills「一层扫描含 SKILL.md 的目录」）**只下探一层**找
+ * `<sub>/<name>/SKILL.md`——用户报告 2026-10-26：`github:vercel-labs/skills` 的
+ * find-skills 实际在 `skills/find-skills`，直取必报「上游不含技能」。
+ * 唯一命中才认；多处命中列候选让用户改来源——猜错等于拿错基线，代价是误覆盖本地文件。
+ */
+export function upstreamDirOf(skillsDir, name, fsImpl) {
+  const direct = path.join(skillsDir, name);
+  if (hasSkillMd(direct, fsImpl)) return direct;
+  let entries = [];
+  try { entries = fsImpl.readdirSync(skillsDir, { withFileTypes: true }); } catch { /* 上游目录读不到 → 走下面的报错 */ }
+  const hits = [];
+  for (const ent of entries) { // 只扫一层（§9.5 同口径）；隐藏目录（.git 等）不作候选
+    if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+    const cand = path.join(skillsDir, ent.name, name);
+    if (hasSkillMd(cand, fsImpl)) hits.push(cand);
+  }
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) throw new Error(`上游 "${name}" 同时出现在多个子目录：${hits.map((d) => path.relative(skillsDir, d)).join('、')}——请把来源改成其中一层（github:owner/repo/<子目录>）`);
+  throw new Error(`上游不含技能 "${name}"：${direct}——若它在上游某个子目录下，请把来源改成 github:owner/repo/<含它的子目录>`);
 }
 
 /** 检查更新：fetch 注入 = async (manifestSourceInfo) => {commit, skillsDir}。 */

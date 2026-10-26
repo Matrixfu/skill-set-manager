@@ -318,11 +318,12 @@ export function apply(ctx, config) {
     /** manifest.source = github:owner/repo[/subpath] → 稀疏拉取（tmp 目录批量回收；url 覆盖同 installApply）。 */
     _fetchFor(tmpDirs, urlOverride = null) {
       return async (source) => {
-        const segs = String(source).replace(/^github:/, '').split('/').filter(Boolean);
-        if (segs.length < 2) throw new Error(`无法解析来源: ${source}`);
+        // 单一口径走 core source.js：手拆 '/' 曾把 clone 地址尾部的 `.git` 当仓库名，
+        // 拼出 owner/repo.git.git → 远端「Repository not found」（用户报告 2026-10-26，检查更新炸）
+        const { spec } = resolveRepoSource(source);
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-up-'));
         tmpDirs.push(tmpDir);
-        return fetchRepo({ owner: segs[0], repo: segs[1], ref: null, subpath: segs.length > 2 ? segs.slice(2).join('/') : null }, { tmpDir, ...(urlOverride ? { url: urlOverride } : {}) });
+        return fetchRepo(spec, { tmpDir, ...(urlOverride ? { url: urlOverride } : {}) });
       };
     }
 

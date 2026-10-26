@@ -464,6 +464,24 @@ const CASES = [
       let threw = false; try { g.parseRepoSpec('bad'); } catch { threw = true; } ok(threw, '非法 spec 应 throw');
       const s4 = g.parseRepoSpec('https://github.com/ox/ry@dev/pkg'); // 粘贴整 URL（review n1）
       eq(s4.owner, 'ox', 'URL 前缀剥离 owner'); eq(s4.repo, 'ry', 'URL 前缀剥离 repo'); eq(s4.ref, 'dev', 'URL 形态 ref'); eq(s4.subpath, 'pkg', 'URL 形态 subpath');
+      // 粘贴 clone 地址带 `.git` 后缀（用户报告 2026-10-26：库「检查更新」find-skills 炸）：
+      // 不剥就拼出 owner/repo.git.git → GitHub「Repository not found」（本机实锤 exit 128）
+      for (const [src, want] of [['o/r.git', 'r'], ['https://github.com/vercel-labs/skills.git', 'skills'], ['o/r.git/skills', 'r'], ['o/r.js', 'r.js'], ['o/r@v2.git/a', 'r']])
+        eq(g.parseRepoSpec(src).repo, want, `repo 段剥 .git 克隆后缀：${src}`);
+      eq(g.normalizeRepoSource('github:vercel-labs/skills.git'), 'github:vercel-labs/skills', '规范形不留 .git 后缀（认领来源同口径）');
+      // 报错口径（同一报告）：本机 git 全局 http.sslVerify=false → stderr 首行是 TLS 告警横幅，
+      // 真因在 fatal 行；只报首行 = 用户看到「SECURITY WARNING」误判成 GitHub 授权失败
+      // 假 git：只有 fetch/ls-remote 炸（fetchRepo 会在 args 前塞 -c 配置，判定须按元素而非 args[0]）
+      const warnGit = (args) => (args.includes('fetch') || args.includes('ls-remote')
+        ? { status: 128, stdout: '', stderr: "warning: ----------------- SECURITY WARNING ----------------\nwarning: | TLS certificate verification has been disabled! |\nwarning: ---------------------------------------------------\nremote: Repository not found.\nfatal: repository 'https://github.com/o/r.git.git/' not found\n" }
+        : { status: 0, stdout: '', stderr: '' });
+      const grab = async (mod, fn) => { let m = ''; try { await fn(await core(mod)); } catch (e) { m = String(e?.message ?? e); } return m; };
+      const fm = await grab('github', (gg) => gg.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { tmpDir: path.join(f.base, 'gherr-'), git: warnGit }));
+      ok(fm.startsWith('git fetch failed'), `fetch 失败归一为业务错，实得：${fm}`);
+      ok(fm.includes('not found'), `git 报错须带 fatal 行，实得：${fm}`);
+      ok(!fm.includes('SECURITY WARNING'), `不得把 TLS 告警横幅当结论，实得：${fm}`);
+      const rm = await grab('updates', (uu) => uu.remoteHead({ owner: 'o', repo: 'r', ref: null, subpath: null }, { git: warnGit }));
+      ok(rm.includes('not found') && !rm.includes('SECURITY WARNING'), `ls-remote 同口径，实得：${rm}`);
       const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
       const spec = g.parseRepoSpec('o/r/skills');
       const tmp = fs.mkdtempSync(path.join(f.base, 'ghwt-'));
@@ -555,6 +573,23 @@ const CASES = [
       const act2 = Object.fromEntries(chk2.files.map((x) => [x.path, x.action]));
       eq(act2['SKILL.md'], 'skip-modified', 'upToDate 仍照出上轮跳过的本地分歧（活体冒烟教训）');
       eq(act2['stable.md'], 'same', '其余 same');
+      // 来源被粘贴成仓库根（无子路径）：按安装侧同口径只下探一层找 <sub>/<name>/SKILL.md
+      // （用户报告 2026-10-26：github:vercel-labs/skills 的 find-skills 实际在 skills/find-skills）
+      const upRoot = path.join(f.base, 'uproot');
+      fs.mkdirSync(path.join(upRoot, 'skills/alpha'), { recursive: true });
+      fs.writeFileSync(path.join(upRoot, 'skills/alpha/SKILL.md'), 'v1 body\n');
+      eq(u.upstreamDirOf(upRoot, 'alpha', fs), path.join(upRoot, 'skills/alpha'), '来源无子路径 → 下探一层命中');
+      fs.mkdirSync(path.join(upRoot, 'other/alpha'), { recursive: true });
+      fs.writeFileSync(path.join(upRoot, 'other/alpha/SKILL.md'), 'dup\n');
+      let em = ''; try { u.upstreamDirOf(upRoot, 'alpha', fs); } catch (e) { em = String(e?.message ?? e); }
+      ok(em.includes('skills') && em.includes('other'), `多处命中列候选不猜，实得：${em}`);
+      let em2 = ''; try { u.upstreamDirOf(upRoot, 'nope', fs); } catch (e) { em2 = String(e?.message ?? e); }
+      ok(em2.includes('上游不含技能 "nope"') && em2.includes('github:'), `不含该技能时给出改来源提示，实得：${em2}`);
+      // 端到端：fetch 返回仓库根当 skillsDir，仍要能定位上游技能做三份比对（原先必抛「上游不含技能」）
+      const fetchRoot = async () => g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'upwt3-')), git, url });
+      const chk3 = await u.checkUpdate(f.roots, 'alpha', { fetch: fetchRoot });
+      eq(chk3.upToDate, true, '无子路径来源也能比对（已在 HEAD）');
+      ok(chk3.files.some((x) => x.path === 'SKILL.md' && x.action === 'skip-modified'), '无子路径来源：下探一层后仍照出本地分歧');
     },
   },
   {

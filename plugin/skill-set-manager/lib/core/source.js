@@ -12,7 +12,11 @@ export function parseRepoSpec(spec) {
   const refPart = at >= 0 ? rest.slice(at + 1) : null;
   const segs = repoPart.split('/').filter(Boolean);
   if (segs.length < 2) throw new Error(`技能来源格式错误 "${spec}"：期望 owner/repo[@ref][/subpath]`);
-  const [owner, repo] = segs;
+  const [owner, rawRepo] = segs;
+  // 尾部 `.git` 是 clone 地址的后缀，不是仓库名（GitHub 网页地址不带它）：不剥就拼出
+  // `owner/repo.git.git` → 远端「Repository not found」（用户报告 2026-10-26：
+  // manifest 存了 github:vercel-labs/skills.git，库「检查更新」exit 128）
+  const repo = rawRepo.length > 4 && rawRepo.endsWith('.git') ? rawRepo.slice(0, -4) : rawRepo;
   let subpath = segs.length > 2 ? segs.slice(2).join('/') : null;
   if (refPart === null) return { owner, repo, ref: null, subpath };
   const rs = refPart.split('/');

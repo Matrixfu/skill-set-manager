@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { writeSkillManifest } from './manifest.js';
+import { gitFailMessage } from './giterr.js';
 
 /** 来源解析与归一在叶子模块 source.js（github 与 manifest 共用，避免 ESM 环）；此处转发保持既有 import 不变。 */
 export { parseRepoSpec, normalizeRepoSource } from './source.js';
@@ -35,7 +36,7 @@ export async function fetchRepo(spec, { tmpDir, git = defaultGit, url } = {}) {
     // 强制 LF：autocrlf 机器上检出 CRLF 会使逐文件哈希随行尾漂移（manifest 不可移植）。
     try { r = git(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], tmpDir); }
     catch (e) { throw new Error(`git ${args[0]} failed: ${e?.message ?? e}`); }
-    if (!r || r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r?.stderr ?? '').split('\n')[0].trim() || `exit ${r?.status}`}`);
+    if (!r || r.status !== 0) throw new Error(gitFailMessage(args, r));
     return r;
   };
   fs.mkdirSync(tmpDir, { recursive: true });

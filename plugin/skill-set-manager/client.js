@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
         settingsLabel: '技能集管理器', tabLibrary: '库', tabOps: '安装与更新', tabDiag: '诊断',
         filterPh: '按名称/来源过滤', managedTag: '受管', unmanagedTag: '未登记', modifiedTag: '本地改动',
         backupsTitle: '回收站', restoreGo: '恢复', checkUp: '检查更新', applyUp: '应用更新',
-        upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过',
+        upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过', noContentDiff: '内容已一致', claimNoCommit: '来源为认领，未记 commit',
         uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
         installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
         migrateTitle: '旧通用区迁移（~/.dsh/skills，一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
@@ -79,7 +79,7 @@ window.__ModuleLoader__.load({
         settingsLabel: 'Skill Sets', tabLibrary: 'Library', tabOps: 'Install & update', tabDiag: 'Diagnose',
         filterPh: 'Filter by name/source', managedTag: 'managed', unmanagedTag: 'untracked', modifiedTag: 'locally modified',
         backupsTitle: 'Trash', restoreGo: 'Restore', checkUp: 'Check update', applyUp: 'Apply update',
-        upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped',
+        upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped', noContentDiff: 'contents already match', claimNoCommit: 'source claimed without a recorded commit',
         uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
         installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
         migrateTitle: 'Migrate legacy shared area (~/.dsh/skills, one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
@@ -764,6 +764,10 @@ window.__ModuleLoader__.load({
                     })()
                   : (() => {
                       const c = counts(upRes[x.name].files);
+                      // 远端 commit 前进了但一个文件都没变（或来源是认领的、current 为空无法比 commit）：
+                      // 报「差异 ↑0 +0 −0」会被读成“有更新可装”，直说内容已一致（用户报告 2026-10-26 连带场景）
+                      if (!c.update && !c.add && !c.remove && !c['skip-modified'])
+                        return `${t('noContentDiff')} → @${String(upRes[x.name].remote ?? '').slice(0, 7)}${upRes[x.name].current ? '' : `（${t('claimNoCommit')}）`}`;
                       return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(upRes[x.name].remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;
                     })()),
                 // 文件级 diff + 跳过项名单（§13.6 / review m5）：非 same 的条目逐行列出
