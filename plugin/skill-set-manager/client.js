@@ -257,7 +257,7 @@ window.__ModuleLoader__.load({
           : null,
         confirm?.kind === 'del'
           ? h('div', { className: 'ssm-confirm' }, t('confirmDel'), ' ', confirm.slug, ' ',
-              h('button', { autoFocus: true, disabled: busy, onClick: () => run(() => call(ctx, 'deleteSet', { slug: confirm.slug })) }, t('del')),
+              h('button', { autoFocus: true, disabled: busy, className: 'ssm-danger', onClick: () => run(() => call(ctx, 'deleteSet', { slug: confirm.slug })) }, t('del')),
               h('button', { onClick: () => setConfirm(null) }, '×'))
           : null,
         h('div', { className: 'ssm-sec' }, t('sets')),
@@ -272,7 +272,7 @@ window.__ModuleLoader__.load({
             h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'copySet', { slug: s.slug })) }, t('copy')),
             h('button', { disabled: busy, onClick: () => { setRenaming(s.slug); setRenameDraft(s.name); } }, t('rename')),
             h('button', { disabled: busy, onClick: async () => { try { const j = await call(ctx, 'exportSet', { slug: s.slug }); setIo({ mode: 'export', text: JSON.stringify(j, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, t('exportJson')),
-            h('button', { disabled: busy, onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del'))),
+            h('button', { disabled: busy, className: 'ssm-danger', onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del'))),
           renaming === s.slug
             ? h('div', { className: 'ssm-row' },
                 h('input', { className: 'ssm-input', autoFocus: true, value: renameDraft, disabled: busy, onChange: (e) => setRenameDraft(e.target.value) }),
@@ -394,9 +394,9 @@ window.__ModuleLoader__.load({
           : null,
         st.binding?.setSlug ? (confirmUnbind
           ? h('div', { className: 'ssm-confirm' }, t('confirmUnbind'), ' ',
-              h('button', { autoFocus: true, disabled: busy, onClick: () => run(() => call(ctx, 'unbind', { sessionId })) }, t('unbindGo')),
+              h('button', { autoFocus: true, disabled: busy, className: 'ssm-danger', onClick: () => run(() => call(ctx, 'unbind', { sessionId })) }, t('unbindGo')),
               h('button', { onClick: () => setConfirmUnbind(false) }, '×'))
-          : h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => setConfirmUnbind(true) }, t('unbindGo'))))
+          : h('div', { className: 'ssm-row' }, h('button', { disabled: busy, className: 'ssm-danger', onClick: () => setConfirmUnbind(true) }, t('unbindGo'))))
           : null,
         (sc.foreign?.length ? h('div', { className: 'ssm-hint' }, t('foreignLine'), '：', (sc.foreign ?? []).join(', ')) : null),
         st.undoAvailable ? h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, t('undo'))) : null,
@@ -692,7 +692,7 @@ window.__ModuleLoader__.load({
                   if (!on) setClaimDraft({ source: String(x.source).startsWith('github:') ? String(x.source) : '', commit: x.commit ? String(x.commit) : '' });
                 },
               }, String(x.source).startsWith('github:') ? t('claimEdit') : t('claimGo')),
-              h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
+              h('button', { disabled: !!busy, className: 'ssm-danger', onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
             // P3 中文用途灰字行（未翻译显英文 + 待翻译角标，§6.1）
             x.descriptionZh
               ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' } }, x.descriptionZh)
@@ -730,7 +730,7 @@ window.__ModuleLoader__.load({
               : null,
             confirmUn === x.name
               ? h('div', { className: 'ssm-confirm' }, t('confirmUn'), ' ', x.name, ' ',
-                  h('button', { autoFocus: true, disabled: !!busy, onClick: () => run(`un:${x.name}`, async () => { await call(ctx, 'uninstallSkill', { name: x.name }); setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); }) }, t('uninstallGo')),
+                  h('button', { autoFocus: true, disabled: !!busy, className: 'ssm-danger', onClick: () => run(`un:${x.name}`, async () => { await call(ctx, 'uninstallSkill', { name: x.name }); setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); }) }, t('uninstallGo')),
                   h('button', { onClick: () => setConfirmUn(null) }, '×'))
               : null,
             backupsOf?.name === x.name
@@ -849,8 +849,10 @@ window.__ModuleLoader__.load({
 .ssm-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
 .ssm-n{color:var(--dsw-alias-label-secondary);font-size:11px}
 .ssm-cur-tag{font-size:10px;color:var(--dsw-alias-brand-primary)}
-.ssm-row button:not(.ssm-pick){font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 10px;cursor:pointer} /* 明确按钮外观（用户反馈 2026-10-26：此前无边框形同文字） */
-.ssm-row button:not(.ssm-pick):hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-label-primary) 30%, transparent)}
+.ssm-row button:not(.ssm-pick){font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌色软底（用户 2026-10-26：要一眼可辨的按钮） */
+.ssm-row button:not(.ssm-pick):hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
+.ssm-row button.ssm-danger,.ssm-settings .ssm-row button.ssm-danger,.ssm-confirm button.ssm-danger,.ssm-settings .ssm-confirm button.ssm-danger{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 16%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent)} /* 高危操作（解绑/卸载/删除）错误色（用户 2026-10-26） */
+.ssm-row button.ssm-danger:hover,.ssm-settings .ssm-row button.ssm-danger:hover,.ssm-confirm button.ssm-danger:hover,.ssm-settings .ssm-confirm button.ssm-danger:hover{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 28%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary) 75%, transparent)}
 .ssm-input{flex:1;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 7px;min-width:0}
 .ssm-io{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .ssm-textarea{width:100%;box-sizing:border-box;resize:vertical;font:11px/1.5 ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px}
@@ -879,8 +881,8 @@ window.__ModuleLoader__.load({
 .ssm-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
 .ssm-click{cursor:pointer}
 .ssm-click:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-radius:6px}
-.ssm-settings .ssm-row button{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 10px;cursor:pointer}
-.ssm-settings .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-label-primary) 30%, transparent)}
+.ssm-settings .ssm-row button{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer}
+.ssm-settings .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
 .ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 `;
 
