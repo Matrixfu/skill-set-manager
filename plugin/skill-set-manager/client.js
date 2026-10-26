@@ -41,6 +41,9 @@ window.__ModuleLoader__.load({
         unbindGo: '解绑', confirmUnbind: '确认解绑？托管条目将被回收，用户自有条目不动',
         foreignLine: '外来条目（不接管、切换不覆盖）',
         settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
+        searchPh: '按名称/用途搜索技能…', hitCount: '命中', pendingTag: '待翻译',
+        residentRow: '全局常驻 · 已在所有项目生效', foreignRow: '外来常驻 · 其他工具放入 ~/.agents/skills',
+        goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择，或用临时覆盖（仅本会话）',
         tabTitle: '技能集详情', tabDesc: '完整生效清单、状态分区与诊断摘要', openRight: '在右栏打开技能集详情',
         rpEffective: '生效清单', rpSelf: '状态自检', rpDiag: '诊断摘要',
         rpFrozen: '技能集已删除（冻结：清单原样保留）', rpClick: '点击查看 SKILL.md', rpNoSession: '（右栏 tab 未绑定会话）',
@@ -84,6 +87,9 @@ window.__ModuleLoader__.load({
         unbindGo: 'Unbind', confirmUnbind: 'Unbind? Managed entries are reclaimed; your own entries stay.',
         foreignLine: 'Foreign entries (untouched by switching)',
         settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
+        searchPh: 'Search skills by name or purpose…', hitCount: 'matches', pendingTag: 'untranslated',
+        residentRow: 'Global resident · active in every project', foreignRow: 'Foreign resident · from ~/.agents/skills',
+        goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above, or use session override',
         tabTitle: 'Skill set detail', tabDesc: 'Full effective list, status partition and diagnose summary', openRight: 'Open skill set detail in right sidebar',
         rpEffective: 'Effective list', rpSelf: 'Self-check', rpDiag: 'Diagnose summary',
         rpFrozen: 'Set deleted (frozen: list kept as-is)', rpClick: 'Click to open SKILL.md', rpNoSession: '(right tab has no bound session)',
@@ -148,6 +154,30 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 搜索匹配器——权威实现 = lib/core/search.js（verify CASES search-core 钉死口径）。
+     * client bundle 是 __ModuleLoader__ factory，require 解析不了相对路径（预裁定），内联同款；改口径须两处同步。
+     */
+    function normalizeQuery(s) {
+      if (typeof s !== 'string') return '';
+      return s.toLowerCase().replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)).replace(/\u3000/g, ' ');
+    }
+    function searchRows(rows, query, fields = ['name', 'source', 'description', 'descriptionZh']) {
+      const list = Array.isArray(rows) ? rows : [];
+      const tokens = normalizeQuery(query).split(/\s+/).filter(Boolean);
+      if (!tokens.length) return list.slice();
+      const scored = [];
+      for (const row of list) {
+        const vals = fields.map((f) => normalizeQuery(row?.[f]));
+        if (!tokens.every((tk) => vals.some((v) => v.includes(tk)))) continue;
+        const name = vals[0];
+        const rank = tokens.every((tk) => name.startsWith(tk)) ? 0 : tokens.every((tk) => name.includes(tk)) ? 1 : 2;
+        scored.push({ row, rank });
+      }
+      scored.sort((a, b) => a.rank - b.rank || String(a.row?.name ?? '').localeCompare(String(b.row?.name ?? '')));
+      return scored.map((x) => x.row);
+    }
+
     function Panel({ ctx, t, sessionId, onClose, bs }) {
       const [state, setState] = React.useState(null);
       const [error, setError] = React.useState(null);
@@ -159,6 +189,7 @@ window.__ModuleLoader__.load({
       const [io, setIo] = React.useState(null); // {mode:'export'|'import', text, copied?}
       const [confirmUnbind, setConfirmUnbind] = React.useState(false);
       const [edit, setEdit] = React.useState(null); // {slug, picked:{name:true}}——编辑成员表单（§5#2）
+      const [q, setQ] = React.useState(''); // P3 搜索框（设计 §6.3）：非空 → 结果列表替换三区
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -180,6 +211,13 @@ window.__ModuleLoader__.load({
       const eff = new Set([...(st.effective?.names ?? []), ...Object.keys(st.managed ?? {})]);
       const resident = new Set(st.resident ?? []);
       const managed = Object.keys(st.managed ?? {});
+      // P3 搜索结果（设计 §6.3/§6.4）：语料 = 库行 ∪ 常驻名单 ∪ 盘上外来常驻（灰行判定 = 名单 ∪ 实扫）
+      const foreignRes = new Set(st.residentForeign ?? []);
+      const bound = !!st.binding?.setSlug;
+      const qq = q.trim();
+      const corpus = [...(st.library ?? [])];
+      for (const n of new Set([...(st.resident ?? []), ...foreignRes])) if (!corpus.some((l) => l.name === n)) corpus.push({ name: n, source: 'resident', description: null, descriptionZh: null });
+      const hits = qq ? searchRows(corpus, qq) : [];
       const doSwitch = (slug) => {
         if (st.rootDrift) { setConfirm({ kind: 'switch', slug }); return; } // 仅根漂移需确认（§6.5）
         run(() => call(ctx, 'switchSet', { sessionId, slug }));
@@ -341,25 +379,48 @@ window.__ModuleLoader__.load({
           : null,
         (sc.foreign?.length ? h('div', { className: 'ssm-hint' }, t('foreignLine'), '：', (sc.foreign ?? []).join(', ')) : null),
         st.undoAvailable ? h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, t('undo'))) : null,
-        h('div', { className: 'ssm-sec' }, t('managedSec')),
-        h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
-          ...managed.map((n) => h('label', { key: n, className: 'ssm-chip' },
-            h('input', { type: 'checkbox', checked: true, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }), ' ', n))),
-        h('div', { className: 'ssm-sec' }, t('resident')),
-        h('div', { className: 'ssm-hint' }, t('residentHint')),
-        h('div', { className: 'ssm-chips' }, ...(st.library ?? []).map((lib) => h('label', { key: lib.name, className: 'ssm-chip' + (resident.has(lib.name) ? ' ssm-on' : '') },
-          h('input', { type: 'checkbox', checked: resident.has(lib.name), disabled: busy, onChange: (e) => {
-            const next = e.target.checked ? [...(st.resident ?? []), lib.name] : (st.resident ?? []).filter((n) => n !== lib.name);
-            run(() => call(ctx, 'setResident', { names: next }));
-          } }), ' ', lib.name, h(LibBadges, { lib })))),
-        h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
-        h('div', { className: 'ssm-chips' },
-          ...(st.binding?.setSlug ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip' },
-            h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
-            : []),
-          st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
-        h('div', { className: 'ssm-hint' }, t('hintP2')),
-        h('div', { className: 'ssm-hint' }, t('settingsHint')));
+        // P3 搜索框（设计 §6.3）：技能集区之后、三区之前；非空 query → 结果列表替换三区
+        h('div', { className: 'ssm-row' },
+          h('input', { className: 'ssm-input', placeholder: t('searchPh'), value: q, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setQ(e.target.value) }),
+          q ? h('button', { disabled: busy, onClick: () => setQ('') }, '×') : null),
+        qq
+          ? h(React.Fragment, null,
+              h('div', { className: 'ssm-sec' }, `${hits.length} ${t('hitCount')}`),
+              bound ? null : h('div', { className: 'ssm-hint' }, t('unboundHint')),
+              hits.length ? null : h('div', { className: 'ssm-empty' }, t('none')),
+              ...hits.map((l) => {
+                const isRes = resident.has(l.name) || foreignRes.has(l.name);
+                if (isRes) return h('div', { key: l.name, className: 'ssm-row ssm-gray', title: l.descriptionZh ?? l.description ?? undefined }, // 灰行只读、无复选框（反目标项）
+                  h('span', null, l.name),
+                  h('span', { className: 'ssm-n' }, ' ', resident.has(l.name) ? t('residentRow') : t('foreignRow')),
+                  h('span', { className: 'ssm-grow' }, null),
+                  h('span', { className: 'ssm-n' }, t('goSettings'))); // T0 静态裁定：无编程跳转 → 纯文案
+                const on = eff.has(l.name);
+                return h('div', { key: l.name, className: 'ssm-row' },
+                  h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
+                    h('input', { type: 'checkbox', checked: on, disabled: busy || !bound, title: l.descriptionZh ?? undefined,
+                      onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l })),
+                  h('span', { className: 'ssm-grow' }, null),
+                  l.descriptionZh
+                    ? h('span', { className: 'ssm-n', title: l.description ?? undefined }, l.descriptionZh)
+                    : l.description
+                      ? h('span', { className: 'ssm-desc-en', title: l.description }, l.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
+                      : null);
+              }))
+          : h(React.Fragment, null,
+              h('div', { className: 'ssm-sec' }, t('managedSec')),
+              h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
+                ...managed.map((n) => h('label', { key: n, className: 'ssm-chip' },
+                  h('input', { type: 'checkbox', checked: true, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }), ' ', n))),
+              // 常驻大平铺段已删（P3 设计 §6.3）：常驻管理移设置页「全局技能集」tab；弹窗内仅搜索结果灰行
+              h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
+              h('div', { className: 'ssm-chips' },
+                ...(st.binding?.setSlug ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip', title: l.descriptionZh ?? undefined },
+                  h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
+                  : []),
+                st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
+              h('div', { className: 'ssm-hint' }, t('hintP2')),
+              h('div', { className: 'ssm-hint' }, t('settingsHint'))));
     }
 
     function Dot({ st }) {
@@ -663,6 +724,8 @@ window.__ModuleLoader__.load({
 .ssm-chips{display:flex;flex-wrap:wrap;gap:4px;font-size:11px}
 .ssm-chips .ssm-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;cursor:pointer}
 .ssm-chips .ssm-on{border-color:var(--dsw-alias-brand-primary)}
+.ssm-gray{opacity:.55}
+.ssm-desc-en{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .ssm-empty{font-size:11px;color:var(--dsw-alias-label-secondary)}
 .ssm-settings{display:flex;flex-direction:column;gap:8px;padding:4px 2px;max-width:920px}
 .ssm-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}
