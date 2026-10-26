@@ -957,6 +957,29 @@ const CASES = [
       eq(tr.CACHE_KEY, 'translations', '缓存 key 常量');
     },
   },
+  {
+    id: 'search-core', title: 'P3-T2 匹配器：中文经 zh 命中、token AND、全半角折叠、名称前缀优先、空 query 原序',
+    async run(f) {
+      const { searchRows, normalize } = await core('search');
+      const rows = [
+        { name: 'receiving-code-review', source: 'github:obra/superpowers', description: 'Use when responding to code review feedback', descriptionZh: '收到代码审查反馈时使用' },
+        { name: 'codebase-design', source: 'local', description: 'Design deep modules', descriptionZh: '设计深层模块' },
+        { name: 'abc-tool', source: 'github:y', description: null, descriptionZh: null },
+      ];
+      const names = (q) => searchRows(rows, q).map((r) => r.name);
+      eq(normalize('ＡＢＣ　ＤＥＦ'), 'abc def', '全角→半角 + 全角空格折叠');
+      eq(names('审查'), ['receiving-code-review'], '中文 token 经 descriptionZh 命中');
+      eq(names('review'), ['receiving-code-review'], '英文 token 命中 name/description 子串');
+      eq(names('反馈 feedback'), ['receiving-code-review'], '两 token 同行 AND（跨 zh/en 字段）');
+      eq(names('审查 module'), [], 'token 须同行命中（跨行不算）');
+      eq(names('ＡＢＣ'), ['abc-tool'], '全角查询命中半角 name');
+      eq(names('code'), ['codebase-design', 'receiving-code-review'], '名称前缀命中排前');
+      eq(names(''), ['receiving-code-review', 'codebase-design', 'abc-tool'], '空 query 原序全量');
+      eq(names('不存在xyz'), [], '无命中 → 空');
+      eq(searchRows(null, 'x'), [], 'rows 非数组 → 空');
+      eq(searchRows(rows, '  ').length, 3, '纯空白 = 空 query');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',
