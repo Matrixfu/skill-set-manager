@@ -980,6 +980,40 @@ const CASES = [
       eq(searchRows(rows, '  ').length, 3, '纯空白 = 空 query');
     },
   },
+  {
+    id: 'translate-exec-core', title: 'P3-T3 翻译执行器：LLM 优先、mt 兜底（缺席不调）、双败不炸批、并发≤2、上限 50 截断',
+    async run(f) {
+      const { runBatch, buildLlmPrompt } = await core('translateExec');
+      const en = (n) => 'en text ' + n;
+      let r = await runBatch({ items: [{ name: 'a', en: en('a') }], callLlm: async () => '中文甲', callMt: async () => '机翻甲' });
+      eq(r.done, [{ name: 'a', zh: '中文甲', via: 'llm' }], 'LLM 成功 → via=llm');
+      eq(r.failed, [], '无失败');
+      r = await runBatch({ items: [{ name: 'b', en: en('b') }], callLlm: async () => { throw new Error('llm down'); }, callMt: async () => ' 机翻乙 ' });
+      eq(r.done, [{ name: 'b', zh: '机翻乙', via: 'mt' }], 'LLM 抛 → mt 兜底且 trim');
+      r = await runBatch({ items: [{ name: 'c', en: en('c') }], callLlm: async () => { throw new Error('e1'); }, callMt: async () => { throw new Error('e2'); } });
+      eq(r.done, [], '双败无 done');
+      eq(r.failed.length, 1, '双败 → 单条 failed 不炸批');
+      ok(r.failed[0].error.includes('e2'), 'failed 带末错信息');
+      r = await runBatch({ items: [{ name: 'd', en: en('d') }], callLlm: async () => { throw new Error('no-llm'); }, callMt: null });
+      eq(r.failed.length, 1, '无兜底路由（translator 缺席实态）→ failed');
+      ok(r.failed[0].error.includes('no-llm'), '无兜底时保留 llm 错因');
+      r = await runBatch({ items: [{ name: 'e', en: en('e') }], callLlm: async () => '   ', callMt: async () => '机翻戊' });
+      eq(r.done, [{ name: 'e', zh: '机翻戊', via: 'mt' }], 'LLM 空串 → 走兜底');
+      let cur = 0, max = 0;
+      const slow = async () => { cur++; max = Math.max(max, cur); await new Promise((res) => setTimeout(res, 20)); cur--; return '中'; };
+      r = await runBatch({ items: Array.from({ length: 6 }, (_, i) => ({ name: 'n' + i, en: en(i) })), callLlm: slow, callMt: null });
+      eq(r.done.length, 6, '6 条全成');
+      ok(max <= 2, `并发峰值 ${max} 应 ≤2`);
+      r = await runBatch({ items: Array.from({ length: 101 }, (_, i) => ({ name: 'm' + i, en: en(i) })), callLlm: async () => '中', callMt: null });
+      eq(r.done.length, 50, '单次批量截 50');
+      eq(r.skipped, 51, 'skipped=51');
+      r = await runBatch({ items: [], callLlm: async () => '中', callMt: null });
+      eq(r, { done: [], failed: [], skipped: 0 }, '空 items → 空结果');
+      const p = buildLlmPrompt(['text one', 'text two']);
+      ok(p.includes('text one') && p.includes('text two'), 'prompt 含全部文本');
+      ok(/40/.test(p), 'prompt 含 ≤40 字生成口径');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',
