@@ -1132,6 +1132,31 @@ const CASES = [
       eq(calls, 1, 'autoTranslate=true → 触发一次带 pending 名单');
     },
   },
+  {
+    id: 'p3-storage-wiring', title: 'P3 活体复盘：fallback store 接受全部在用表名（migrate_agents 非连字符）、带点 projectKey 可读写、. 与 .. 拒绝',
+    run: async (f) => {
+      const { makeFallbackStore, projectKey } = await core('storage');
+      const store = makeFallbackStore(path.join(f.base, 'wstore'));
+      // 活体实锤（2026-10-26 复盘）：本机 store = fallback；连字符表名曾炸 migrateAgents*，
+      // 带点 projectKey（无会话 state 路径）曾被 KEY_RE 拒 → 两教训各钉一条。
+      for (const t of ['pending', 'undo', 'oplog', 'bindings', 'migration', 'migrate_agents', 'translations']) {
+        await store.put(t, 'probe', { v: 1 });
+        eq((await store.get(t, 'probe'))?.v, 1, `表 ${t} 可读写`);
+      }
+      let hyphen = false;
+      try { await store.put('migrate-agents', 'ledger', {}); } catch { hyphen = true; }
+      ok(hyphen, '连字符表名仍被拒（须用 migrate_agents）');
+      const dotKey = projectKey('C:\\Users\\x\\.dsh\\profiles\\desktop');
+      ok(dotKey.includes('.'), `projectKey 含点（${dotKey}）`);
+      await store.put('bindings', dotKey, { projectRoot: 'x' });
+      eq((await store.get('bindings', dotKey))?.projectRoot, 'x', '带点 key 可读写（无会话 state 路径）');
+      for (const evil of ['.', '..']) {
+        let bad = false;
+        try { await store.put('bindings', evil, {}); } catch { bad = true; }
+        ok(bad, `key "${evil}" 被拒（防目录穿越）`);
+      }
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const DOMAIN_NAME = 'skill_set_manager'; // 下划线：UNIT_NAME_RE 拒绝连字符（探针取证）
-export const KEY_RE = /^[a-zA-Z0-9_-]+$/;
+export const KEY_RE = /^[a-zA-Z0-9_.-]+$/; // 点允许：projectKey 可含点目录段（如 .dsh，无会话 state 路径活体实锤 2026-10-26）；'.'/'..' 单独拒绝防穿越
 
 export function projectKey(p) {
   return '--' + String(p).replace(/[\\/:]+/g, '-') + '--';
@@ -20,7 +20,7 @@ export function makeFallbackStore(dir) {
     return path.join(dir, t);
   };
   const file = (t, k) => {
-    if (!KEY_RE.test(k)) throw new Error(`非法记录 key（须 path-safe）: ${k}`);
+    if (!KEY_RE.test(k) || k === '.' || k === '..') throw new Error(`非法记录 key（须 path-safe）: ${k}`);
     return path.join(tableDir(t), `${k}.json`);
   };
   return {
@@ -65,6 +65,9 @@ export async function openDomain(ctx, { fallbackDir } = {}) {
         oplog: { valueSchema: z.object({ at: z.string(), kind: z.string(), detail: z.unknown() }) },
         bindings: { valueSchema: z.object({ projectRoot: z.string() }) },
         migration: { valueSchema: z.object({ moved: z.array(z.object({ name: z.string(), from: z.string(), to: z.string() })) }) },
+        // P3 新表（domain kind 也须在场：table() 只认白名单，活体复盘 2026-10-26）
+        translations: { valueSchema: z.record(z.object({ srcHash: z.string(), en: z.string().nullable().optional(), zh: z.string().nullable().optional(), status: z.string(), updatedAt: z.string().optional() })) },
+        migrate_agents: { valueSchema: z.object({ moved: z.array(z.object({ name: z.string(), from: z.string(), to: z.string(), claimed: z.boolean().optional() })) }) },
       },
     });
     return {

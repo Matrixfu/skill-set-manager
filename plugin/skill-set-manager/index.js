@@ -469,8 +469,8 @@ export function apply(ctx, config) {
 
     _migrateAgentsLedger() {
       return {
-        load: async () => (await storeOf()).get('migrate-agents', 'ledger'),
-        save: async (data) => { await (await storeOf()).put('migrate-agents', 'ledger', data); },
+        load: async () => (await storeOf()).get('migrate_agents', 'ledger'), // 表名禁连字符（fallback/domain 两侧同款约束，活体实锤）
+        save: async (data) => { await (await storeOf()).put('migrate_agents', 'ledger', data); },
       };
     }
 
