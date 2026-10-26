@@ -121,6 +121,7 @@ export function apply(ctx, config) {
         residentTarget: roots.globalResidentDirs[0], // 弹窗「去设置管理」文案指向
         selfCheck: { ok: sc.ok, frozen: sc.frozen, unbound: sc.unbound, missing: sc.missing, extra: sc.extra, foreign: sc.foreign, brokenLinks: sc.brokenLinks, detail: sc.detail },
         managed: managed?.entries ?? {},
+        sessionOverride: managed?.sessionOverride ?? null, // 覆盖明细透出（用户 2026-10-26：被剔项从三区消失无处发现/还原）
         sessionOverrideActive: (managed?.sessionOverride?.added?.length ?? 0) + (managed?.sessionOverride?.removed?.length ?? 0) > 0,
         undoAvailable: !!(await store.get('undo', projectKey(loc.projectRoot))),
       };

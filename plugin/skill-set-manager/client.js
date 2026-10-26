@@ -16,6 +16,7 @@ window.__ModuleLoader__.load({
         chip: '技能集', panel: '技能集管理器', close: '关闭', sets: '技能集', projectRoot: '项目根',
         rootDrift: '（≠ 会话目录——切换影响该仓库全部会话）', resident: '全局常驻（不受管控）',
         managedSec: '技能集提供（受管）', override: '临时覆盖', overrideOn: '临时覆盖中', endOverride: '结束覆盖',
+        ovRemoved: '已被剔除', ovRestoreTip: '重新勾选即恢复本会话生效', overrideHint: '临时覆盖中：在「受管」区取消勾选 = 仅本会话剔除（不改技能集）；重新勾选或「结束覆盖」即恢复；要从集合里永久移除请用集合区「编辑成员」',
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
         confirmSwitch: '确认切换：将改写仓库根的 .dsh/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
@@ -66,6 +67,7 @@ window.__ModuleLoader__.load({
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
         rootDrift: '(≠ session dir — switching affects every session in this repo)', resident: 'Global resident (unmanaged)',
         managedSec: 'Set-provided (managed)', override: 'Session override', overrideOn: 'Override active', endOverride: 'End override',
+        ovRemoved: 'removed by override', ovRestoreTip: 'Tick again to restore for this session', overrideHint: 'Override active: unticking in the managed area removes it for this session only (the set is unchanged); tick again or "End override" to restore; to remove from the set permanently use "Edit members" in the sets area',
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
         confirmSwitch: 'Confirm switch: rewrites .dsh/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
@@ -464,8 +466,12 @@ window.__ModuleLoader__.load({
                   // 未绑定（用户 2026-10-26）：候选 = 库 − 常驻全局，勾选进本地草稿，「另存为当前清单」建集并绑定
                   : (st.library ?? []).filter((l) => !resident.has(l.name) && !foreignRes.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip' + (draftPick.has(l.name) ? ' ssm-on' : ''), title: l.descriptionZh ?? undefined },
                       h('input', { type: 'checkbox', checked: draftPick.has(l.name), disabled: busy, onChange: () => togglePick(l.name) }), ' ', l.name, h(LibBadges, { lib: l })))),
+                  // 被覆盖剔除的集成员（用户 2026-10-26：testt 4 技能项目只见 3，被剔项从三区消失）——显示并可直接勾回
+                  ...((st.sessionOverride?.removed) ?? []).map((n) => h('label', { key: 'ovr-' + n, className: 'ssm-chip', title: t('ovRestoreTip') },
+                    h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [n] })) }), ' ', n,
+                    h('span', { className: 'ssm-n' }, ' ', t('ovRemoved')))),
                 st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
-              h('div', { className: 'ssm-hint' }, bound ? t('hintP2') : t('draftHint')),
+              h('div', { className: 'ssm-hint' }, bound ? (st.sessionOverrideActive ? t('overrideHint') : t('hintP2')) : t('draftHint')),
               h('div', { className: 'ssm-hint' }, t('settingsHint'))));
     }
 
