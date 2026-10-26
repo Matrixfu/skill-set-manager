@@ -37,7 +37,7 @@ export function preview(roots, { fromDir = roots.userDshRoot } = {}, { fs: fsImp
     if (exists) { keep.push({ name, reason: 'exists' }); continue; }
     moves.push({ name, from, to });
   }
-  const warnings = ['通用生效区中的技能将整体移入技能库；移空后，其他 harness 将只剩常驻技能（§8.2）。跨 harness 通用区（~/.agents/skills）不在默认范围。'];
+  const warnings = ['旧通用区（~/.dsh/skills）中的技能将整体移入技能库；移空后，其他 harness 将只剩常驻技能（§8.2）。跨 harness 通用区（~/.agents/skills）不在本向导范围——请使用「跨 harness 通用区迁移」（同页上方）。'];
   return { moves, keep, warnings };
 }
 

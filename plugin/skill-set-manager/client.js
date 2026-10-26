@@ -29,9 +29,10 @@ window.__ModuleLoader__.load({
         upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过',
         uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
         installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
-        migrateTitle: '通用生效区迁移（一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
+        migrateTitle: '旧通用区迁移（~/.dsh/skills，一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
         migrateMoves: '将移动', migrateKeep: '同名保留',
         migrateAgentsTitle: '跨 harness 通用区迁移（~/.agents/skills，一次性）', migrateAgentsGo: '预览并迁移',
+        migrateAgentsHint: '把与其他 harness 共用的通用区技能移入技能库；只移无 manifest 的纯目录，其他工具的条目与同名保留不动，可一键回滚。',
         diagRun: '运行诊断', fixReclaim: '回收失效链接', fixRebuild: '按当前集重建',
         diagPartition: '分区说明', diagCopies: '副本漂移', diagDangling: '悬空引用',
         diagDeadLinks: '失效链接', diagStructure: '结构问题', diagEnv: '环境',
@@ -78,9 +79,10 @@ window.__ModuleLoader__.load({
         upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped',
         uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
         installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
-        migrateTitle: 'Migrate common skills (one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
+        migrateTitle: 'Migrate legacy shared area (~/.dsh/skills, one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
         migrateMoves: 'Will move', migrateKeep: 'Kept (name clash)',
         migrateAgentsTitle: 'Migrate cross-harness skills (~/.agents/skills, one-time)', migrateAgentsGo: 'Preview & migrate',
+        migrateAgentsHint: 'Move skills from the shared cross-harness dir into the library; only plain dirs without a manifest move — other tools’ entries and same-name collisions stay put, undoable.',
         diagRun: 'Run diagnose', fixReclaim: 'Reclaim dead links', fixRebuild: 'Rebuild from set',
         diagPartition: 'Partition', diagCopies: 'Copy drift', diagDangling: 'Dangling refs',
         diagDeadLinks: 'Dead links', diagStructure: 'Structure', diagEnv: 'Environment',
@@ -658,16 +660,6 @@ window.__ModuleLoader__.load({
                 ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-warn-inline' }, `${f.name}: ${f.error ?? ''}`)))
             : null,
           h('div', { className: 'ssm-hint' }, t('autoTranslateHint')),
-          h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
-            migA?.applied ? h('button', { disabled: !!busy, onClick: () => run('migAU', async () => { await call(ctx, 'migrateAgentsUndo', {}); setMigA(null); await load(); }) }, t('migrateUndo')) : null,
-            migA && !migA.applied ? h('button', { disabled: !!busy || !(migA.preview?.moves?.length), onClick: () => run('migAA', async () => { await call(ctx, 'migrateAgentsApply', {}); setMigA({ preview: null, applied: true }); await load(); }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
-            !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsTitle')) : null),
-          migA?.preview
-            ? h('div', { className: 'ssm-hint' },
-                `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${k.reason})`).join(', ') || t('none')}`,
-                ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-warn-inline' }, w)))
-            : null,
           rows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
           ...rows.map((x) => h('div', { key: x.name, className: 'ssm-srow' },
             h('div', { className: 'ssm-row' },
@@ -785,6 +777,17 @@ window.__ModuleLoader__.load({
           instRes
             ? h('div', { className: 'ssm-hint' }, `@${String(instRes.commit ?? '').slice(0, 7)} `,
                 ...(instRes.results ?? []).map((r) => h('span', { key: r.name, className: 'ssm-chip' }, `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}`)))
+            : null,
+          h('div', { className: 'ssm-sec' }, t('migrateAgentsTitle')),
+          h('div', { className: 'ssm-row' },
+            h('button', { disabled: !!busy, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
+            migA?.applied ? h('button', { disabled: !!busy, onClick: () => run('migAU', async () => { await call(ctx, 'migrateAgentsUndo', {}); setMigA(null); await load(); }) }, t('migrateUndo')) : null,
+            migA && !migA.applied ? h('button', { disabled: !!busy || !(migA.preview?.moves?.length), onClick: () => run('migAA', async () => { await call(ctx, 'migrateAgentsApply', {}); setMigA({ preview: null, applied: true }); await load(); }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
+            !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsHint')) : null),
+          migA?.preview
+            ? h('div', { className: 'ssm-hint' },
+                `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${k.reason})`).join(', ') || t('none')}`,
+                ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-warn-inline' }, w)))
             : null,
           h('div', { className: 'ssm-sec' }, t('migrateTitle')),
           h('div', { className: 'ssm-row' },
