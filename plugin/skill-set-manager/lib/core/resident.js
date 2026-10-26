@@ -19,12 +19,15 @@ export function dropResidentName(roots, name) {
   return true;
 }
 
-/** 按 resident.json  desired 状态同步全部 globalResidentDirs；返回 { linked, warnings }。 */
+/** 按 resident.json desired 状态同步全部 globalResidentDirs；返回 { linked, ghosts, warnings }。
+ *  幽灵名自动收敛（用户报告 2026-10-26：名单内技能体被外部删除 → 弹窗「缺失」幽灵 + 每次启动反复告警）：
+ *  库里没有本体的名字 → 回收残留自建链并从名单剔除；回收失败则保留名单下次启动重试。 */
 export async function syncResident(roots, { fs: fsImpl = fs } = {}) {
   const doc = loadResident(roots);
   const desired = new Set(doc.skills);
   const links = doc.links ?? {};
   const warnings = [];
+  const ghosts = [];
   for (const dir of roots.globalResidentDirs) {
     const dirLinks = links[dir] ?? {};
     for (const name of desired) {
@@ -32,7 +35,16 @@ export async function syncResident(roots, { fs: fsImpl = fs } = {}) {
       const linkPath = path.join(dir, name);
       let targetOk = false;
       try { targetOk = fsImpl.statSync(path.join(target, 'SKILL.md')).isFile(); } catch {}
-      if (!targetOk) { warnings.push(`${name}: 库里没有技能体，未链接`); continue; }
+      if (!targetOk) {
+        if (dirLinks[name]) {
+          try { removeEntry(linkPath, dirLinks[name].kind, { fs: fsImpl }); }
+          catch (e) { warnings.push(`${name}: 幽灵残链回收失败（名单保留，下次启动重试）: ${e?.message ?? e}`); continue; }
+          delete dirLinks[name];
+        }
+        if (!ghosts.includes(name)) ghosts.push(name);
+        warnings.push(`${name}: 库里没有技能体，已从常驻名单自动剔除`);
+        continue;
+      }
       const mine = dirLinks[name];
       const kind = entryKind(linkPath, { fs: fsImpl });
       if (kind !== 'missing' && !mine) {
@@ -50,8 +62,9 @@ export async function syncResident(roots, { fs: fsImpl = fs } = {}) {
     }
     links[dir] = dirLinks;
   }
-  saveResident(roots, doc.skills, { links });
-  return { linked: [...desired], warnings };
+  const kept = doc.skills.filter((s) => !ghosts.includes(s));
+  saveResident(roots, kept, { links });
+  return { linked: kept, ghosts, warnings };
 }
 
 /**

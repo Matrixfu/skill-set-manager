@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
         confirmSwitch: '确认切换：将改写仓库根的 .dsh/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
-        regen: '重新生成', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
+        regen: '重新生成', pruneMissing: '从集合移除缺失成员', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         noSession: '先在对话页打开一个会话',
@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
         confirmSwitch: 'Confirm switch: rewrites .dsh/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
-        regen: 'Regenerate', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
+        regen: 'Regenerate', pruneMissing: 'Remove missing members', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         noSession: 'Open a conversation session first',
@@ -247,7 +247,15 @@ window.__ModuleLoader__.load({
         st.presetWarn ? h('div', { className: 'ssm-warn' }, st.presetWarn) : null,
         sc.ok === false && !sc.unbound
           ? h('div', { className: sc.frozen ? 'ssm-warn' : 'ssm-err' }, sc.detail, ' ',
-              sc.frozen ? null : h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'bind', { sessionId, slug: st.binding?.setSlug })) }, t('regen')))
+              sc.frozen ? null : h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'bind', { sessionId, slug: st.binding?.setSlug })) }, t('regen')),
+              // 幽灵名快捷修复（用户报告 2026-10-26：speckit-* 实体被外部删除，regen 无源可重建，唯一出路是从集合剔除）
+              st.set && (st.effective?.missing ?? []).length
+                ? h('button', { disabled: busy, className: 'ssm-danger', onClick: () => run(async () => {
+                    const miss = new Set(st.effective.missing);
+                    await call(ctx, 'saveSet', { set: { ...st.set, skills: (st.set.skills ?? []).filter((n) => !miss.has(n)) } });
+                    await load();
+                  }) }, t('pruneMissing'))
+                : null)
           : null,
         error ? h('div', { className: 'ssm-err' }, error) : null,
         confirm?.kind === 'switch'

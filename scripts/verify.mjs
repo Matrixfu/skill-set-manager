@@ -1056,6 +1056,20 @@ const CASES = [
       await rs.syncResident(f.roots);
       ok(!fs.existsSync(path.join(f.userAgentsSkills, 'ghost-x')), 'syncResident 回收自建链接');
       ok(fs.existsSync(path.join(f.library, 'ghost-x', 'SKILL.md')), '库真身无损');
+      // 幽灵名自动收敛（用户报告 2026-10-26：speckit-* 实体被外部删除，名单幽灵致弹窗「缺失」+ 启动反复告警）
+      writeSkill(f.library, 'ok-s');
+      writeSkill(f.library, 'gone');
+      const dead = makeEntry(path.join(f.library, 'gone'), path.join(f.userAgentsSkills, 'gone')); // 曾有自建链
+      fs.rmSync(path.join(f.library, 'gone'), { recursive: true, force: true }); // 库本体消失 → 幽灵（有残链）
+      saveResident(f.roots, ['ok-s', 'gone', 'nov'], { links: { [f.userAgentsSkills]: { gone: { kind: dead.kind } } } });
+      const sy = await rs.syncResident(f.roots);
+      setEq(sy.ghosts, ['gone', 'nov'], '库里无本体：带残链与无链都收敛');
+      setEq(loadResident(f.roots).skills, ['ok-s'], '名单自动剔幽灵');
+      ok(!fs.existsSync(path.join(f.userAgentsSkills, 'gone')), '幽灵残链一并回收');
+      ok(fs.existsSync(path.join(f.userAgentsSkills, 'ok-s')), '正常常驻不受影响');
+      ok(sy.warnings.some((w) => w.includes('nov') && w.includes('剔除')), '剔除有警告记录');
+      const sy2 = await rs.syncResident(f.roots);
+      eq(sy2.ghosts.length, 0, '幂等：二次无幽灵可剔');
       eq(rs.dropResidentName(f.roots, 'ghost-x'), false, '名单外名字 drop 返回 false（幂等）');
       // N1（终审 2026-10-26）：prune removeEntry 失败 → 失败项保留台账下次重试，不清整目录
       saveResident(f.roots, [], { links: { [f.userDsh]: { pb2: { kind: 'junction' }, pb3: { kind: 'junction' } } } });
