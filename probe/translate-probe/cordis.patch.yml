@@ -1,0 +1,3 @@
+- insert:
+    - id: translate-probe
+      name: '@matrixfu/translate-probe'
