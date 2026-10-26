@@ -1272,6 +1272,23 @@ const CASES = [
       ok(r5.failed.every((f) => String(f.error).includes('boom')), '回退错误入 failed 记录');
     },
   },
+  {
+    id: 'save-as-resident', title: 'P3 另存为 excludeResident：常驻（全局）名不写进集合（用户 2026-10-26：另存把全局技能连进项目 .dsh/skills）',
+    async run(f) {
+      await withRoots(f);
+      const { saveAsSet, saveResident, effectiveNames } = await core('sets');
+      for (const n of ['g1', 'p1', 'p2']) writeSkill(f.library, n);
+      saveResident(f.roots, ['g1']);
+      const eff = effectiveNames(f.roots, null);
+      setEq(eff.names, ['g1'], '未绑定生效清单 = 常驻（现状语义，供 RPC 兜底源）');
+      const s1 = saveAsSet(f.roots, { name: '项目组', names: eff.names, excludeResident: true });
+      setEq(s1.skills, [], 'excludeResident：常驻名剔除 → 成员不含全局');
+      const s2 = saveAsSet(f.roots, { name: '自选组', names: ['p1', 'p2', 'g1'] });
+      setEq(s2.skills, ['p1', 'p2', 'g1'], '缺省不剔除（显式名单原样）');
+      const s3 = saveAsSet(f.roots, { name: '显剔', names: ['p1', 'g1'], excludeResident: true });
+      setEq(s3.skills, ['p1'], '显式名单同样可剔常驻');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',

@@ -166,8 +166,11 @@ export function apply(ctx, config) {
     async saveAsFromEffective(req) {
       const loc = await this.locate(req);
       const binding = readBinding(loc.projectRoot);
-      const names = req.names ?? sets.effectiveNames(roots, binding?.setSlug).names;
-      return sets.saveAsSet(roots, { name: req.name, names });
+      // 显式 names = 弹窗勾选草稿（候选区已排除常驻，原样保存）；
+      // 隐式 = 生效清单兜底，须剔常驻（用户 2026-10-26：全局技能不该被另存进项目集合）
+      const explicit = Array.isArray(req.names);
+      const names = explicit ? req.names : sets.effectiveNames(roots, binding?.setSlug).names;
+      return sets.saveAsSet(roots, { name: req.name, names, excludeResident: !explicit });
     }
 
     async exportSet(req) {

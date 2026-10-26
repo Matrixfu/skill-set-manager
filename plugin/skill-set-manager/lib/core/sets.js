@@ -117,10 +117,17 @@ export function effectiveNames(roots, setSlug) {
   return { names, missing: names.filter((n) => !skillExists(roots, n)) };
 }
 
-/** 从当前生效清单另存为（§5.4：第一次建集的主路径）。 */
-export function saveAsSet(roots, { name, names }) {
+/** 从当前生效清单另存为（§5.4：第一次建集的主路径）。
+ *  excludeResident（用户 2026-10-26）：常驻 = 全局生效，不该进项目集合
+ *  （否则另存后绑定会把全局技能再写一份进项目 .dsh/skills）。 */
+export function saveAsSet(roots, { name, names, excludeResident = false }) {
   const slug = uniqueSlug(roots, slugify(name) || 'set');
-  return saveSet(roots, { slug, name, description: '', skills: names });
+  let skills = names ?? [];
+  if (excludeResident) {
+    const resident = new Set(loadResident(roots).skills);
+    skills = skills.filter((n) => !resident.has(n));
+  }
+  return saveSet(roots, { slug, name, description: '', skills });
 }
 
 /** 导出 = 名字列表 + 可选来源 pin（§5.6）。 */

@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
         confirmSwitch: '确认切换：将改写仓库根的 .dsh/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
-        regen: '重新生成', pruneMissing: '从集合移除缺失成员', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
+        regen: '重新生成', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选技能 → 上方输入集合名 → 「另存为当前清单」即创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         noSession: '先在对话页打开一个会话',
@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
         confirmSwitch: 'Confirm switch: rewrites .dsh/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
-        regen: 'Regenerate', pruneMissing: 'Remove missing members', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
+        regen: 'Regenerate', pruneMissing: 'Remove missing members', draftHint: 'No set bound: tick skills, name the set above, then "Save current as set" creates it and binds this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         noSession: 'Open a conversation session first',
@@ -199,6 +199,8 @@ window.__ModuleLoader__.load({
       const [edit, setEdit] = React.useState(null); // {slug, picked:{name:true}}——编辑成员表单（§5#2）
       const [q, setQ] = React.useState(''); // P3 搜索框（设计 §6.3）：非空 → 结果列表替换三区
       const [mq, setMq] = React.useState(''); // P3 成员编辑表单过滤（§6.2；勾选态 picked 按名字存，过滤不丢）
+      const [draftPick, setDraftPick] = React.useState(() => new Set()); // 未绑定勾选草稿（用户 2026-10-26：未绑定也要能挑技能→存集）
+      const togglePick = (n) => setDraftPick((s) => { const next = new Set(s); if (next.has(n)) next.delete(n); else next.add(n); return next; });
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -320,7 +322,15 @@ window.__ModuleLoader__.load({
             : null)),
         h('div', { className: 'ssm-row' },
           h('input', { className: 'ssm-input', placeholder: t('newName'), value: draft, onChange: (e) => setDraft(e.target.value) }),
-          h('button', { disabled: busy || !draft.trim(), onClick: () => run(() => call(ctx, 'saveAsFromEffective', { sessionId, name: draft.trim() }).then(() => setDraft(''))) }, t('saveAs')),
+          h('button', { disabled: busy || !draft.trim() || (!bound && !draftPick.size), title: !bound && !draftPick.size ? t('draftHint') : undefined, onClick: () => run(async () => {
+            const name = draft.trim();
+            // 未绑定走显式草稿名单（候选已剔常驻）；已绑定隐式 = 生效清单，host 端剔常驻（save-as-resident CASE）
+            const s = await call(ctx, 'saveAsFromEffective', { sessionId, name, ...(bound ? {} : { names: [...draftPick] }) });
+            if (!bound && s?.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 存集即生效：本项目只出现所选技能
+            setDraftPick(new Set());
+            setDraft('');
+            await load();
+          }) }, t('saveAs')),
           h('button', { disabled: busy, onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, t('importJson'))),
         io
           ? h('div', { className: 'ssm-io' },
@@ -435,9 +445,9 @@ window.__ModuleLoader__.load({
                 const on = eff.has(l.name);
                 return h('div', { key: l.name, className: 'ssm-srow' },
                   h('div', { className: 'ssm-row' },
-                    h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
-                      h('input', { type: 'checkbox', checked: on, disabled: busy || !bound, title: l.descriptionZh ?? undefined,
-                        onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l }))),
+                    h('label', { className: 'ssm-chip' + ((bound ? on : draftPick.has(l.name)) ? ' ssm-on' : '') },
+                      h('input', { type: 'checkbox', checked: bound ? on : draftPick.has(l.name), disabled: busy, title: l.descriptionZh ?? undefined,
+                        onChange: () => bound ? run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) : togglePick(l.name) }), ' ', l.name, h(LibBadges, { lib: l }))),
                   desc);
               }))
           : h(React.Fragment, null,
@@ -448,11 +458,14 @@ window.__ModuleLoader__.load({
               // 常驻大平铺段已删（P3 设计 §6.3）：常驻管理移设置页「全局技能集」tab；弹窗内仅搜索结果灰行
               h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
               h('div', { className: 'ssm-chips' },
-                ...(st.binding?.setSlug ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip', title: l.descriptionZh ?? undefined },
-                  h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
-                  : []),
+                ...(bound
+                  ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip', title: l.descriptionZh ?? undefined },
+                      h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
+                  // 未绑定（用户 2026-10-26）：候选 = 库 − 常驻全局，勾选进本地草稿，「另存为当前清单」建集并绑定
+                  : (st.library ?? []).filter((l) => !resident.has(l.name) && !foreignRes.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip' + (draftPick.has(l.name) ? ' ssm-on' : ''), title: l.descriptionZh ?? undefined },
+                      h('input', { type: 'checkbox', checked: draftPick.has(l.name), disabled: busy, onChange: () => togglePick(l.name) }), ' ', l.name, h(LibBadges, { lib: l })))),
                 st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
-              h('div', { className: 'ssm-hint' }, t('hintP2')),
+              h('div', { className: 'ssm-hint' }, bound ? t('hintP2') : t('draftHint')),
               h('div', { className: 'ssm-hint' }, t('settingsHint'))));
     }
 
