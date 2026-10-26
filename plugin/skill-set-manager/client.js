@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
         noSession: '先在对话页打开一个会话',
         settingsLabel: '技能集管理器', tabLibrary: '库', tabOps: '安装与更新', tabDiag: '诊断',
         filterPh: '按名称/来源过滤', managedTag: '受管', unmanagedTag: '未登记', modifiedTag: '本地改动',
-        backupsTitle: '回收站', restoreGo: '恢复', checkUp: '检查更新', applyUp: '应用更新',
+        backupsTitle: '回收站', restoreGo: '恢复', checkUp: '检查更新', applyUp: '应用更新', checkingUp: '检查更新中…', applyingUp: '应用更新中…',
         upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过', noContentDiff: '内容已一致', claimNoCommit: '来源为认领，未记 commit',
         uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
         installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
@@ -78,7 +78,7 @@ window.__ModuleLoader__.load({
         noSession: 'Open a conversation session first',
         settingsLabel: 'Skill Sets', tabLibrary: 'Library', tabOps: 'Install & update', tabDiag: 'Diagnose',
         filterPh: 'Filter by name/source', managedTag: 'managed', unmanagedTag: 'untracked', modifiedTag: 'locally modified',
-        backupsTitle: 'Trash', restoreGo: 'Restore', checkUp: 'Check update', applyUp: 'Apply update',
+        backupsTitle: 'Trash', restoreGo: 'Restore', checkUp: 'Check update', applyUp: 'Apply update', checkingUp: 'Checking…', applyingUp: 'Applying…',
         upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped', noContentDiff: 'contents already match', claimNoCommit: 'source claimed without a recorded commit',
         uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
         installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
@@ -640,6 +640,9 @@ window.__ModuleLoader__.load({
         } catch (e) { setMsg({ kind: 'err', text: `${t('opFailed')}: ${e?.message ?? e}` }); }
         finally { setBusy(null); }
       };
+      /** 进行中按钮 = 转圈小图标 + 进行时文案（用户 2026-10-26：检查更新要等几十秒，界面毫无反应像卡死）。 */
+      const busyBtn = (key, label, doing, onClick) => h('button', { disabled: !!busy, onClick },
+        busy === key ? h('span', { className: 'ssm-spin' }, null) : null, busy === key ? doing : label);
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
       const rows = searchRows(lib, filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
       const gCorpus = [...lib, ...foreign.filter((n) => !lib.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
@@ -713,10 +716,10 @@ window.__ModuleLoader__.load({
               h('span', { className: 'ssm-n' }, `${String(x.source).replace('github:', '')}${x.commit ? ` @${String(x.commit).slice(0, 7)}` : ''}`),
               h('span', { className: 'ssm-grow' }, null),
               String(x.source).startsWith('github:')
-                ? h('button', { disabled: !!busy, onClick: () => run(`chk:${x.name}`, async () => { const v = await call(ctx, 'updateCheck', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: v })); }) }, t('checkUp'))
+                ? busyBtn(`chk:${x.name}`, t('checkUp'), t('checkingUp'), () => run(`chk:${x.name}`, async () => { const v = await call(ctx, 'updateCheck', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: v })); }))
                 : null,
               upRes[x.name] && !upRes[x.name].upToDate
-                ? h('button', { disabled: !!busy, onClick: () => run(`ap:${x.name}`, async () => { const r = await call(ctx, 'updateApply', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); return r?.backup ? { noteText: `${t('opDone')} · ${t('backupAt')} ${r.backup}` } : null; }) }, t('applyUp'))
+                ? busyBtn(`ap:${x.name}`, t('applyUp'), t('applyingUp'), () => run(`ap:${x.name}`, async () => { const r = await call(ctx, 'updateApply', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); return r?.backup ? { noteText: `${t('opDone')} · ${t('backupAt')} ${r.backup}` } : null; }))
                 : null,
               x.backupCount
                 ? h('button', { disabled: !!busy, onClick: () => {
@@ -887,6 +890,8 @@ window.__ModuleLoader__.load({
 .ssm-grow{flex:1}
 .ssm-root{font-size:11px;color:var(--dsw-alias-label-secondary);word-break:break-all}
 .ssm-warn-inline{color:var(--dsw-alias-state-warn-primary,#f5a623)}
+.ssm-spin{display:inline-block;width:.7em;height:.7em;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:ssm-spin .7s linear infinite;vertical-align:-1px;margin-right:5px}
+@keyframes ssm-spin{to{transform:rotate(360deg)}}
 .ssm-warn,.ssm-err{font-size:11px;padding:4px 6px;border-radius:6px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f5a623) 18%,transparent)}
 .ssm-err{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 16%,transparent)}
 .ssm-sec{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px;display:flex;gap:6px;align-items:center}
