@@ -44,6 +44,10 @@ window.__ModuleLoader__.load({
         searchPh: '按名称/用途搜索技能…', hitCount: '命中', pendingTag: '待翻译',
         residentRow: '全局常驻 · 已在所有项目生效', foreignRow: '外来常驻 · 其他工具放入 ~/.agents/skills',
         goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择，或用临时覆盖（仅本会话）',
+        tabGlobal: '全局技能集', globalTabHint: '常驻技能在所有项目生效；链接落在下行所示目录（跨 harness 共享，其他工具可见）。外来常驻条目只读。',
+        residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果',
+        modelSelect: '翻译模型（默认 = 当前会话模型）', currentModel: '当前模型（默认）',
+        autoTranslateHint: '自动翻译默认关（零出网）；关闭时用手动批量按钮。中文写缓存、不改技能原文。',
         tabTitle: '技能集详情', tabDesc: '完整生效清单、状态分区与诊断摘要', openRight: '在右栏打开技能集详情',
         rpEffective: '生效清单', rpSelf: '状态自检', rpDiag: '诊断摘要',
         rpFrozen: '技能集已删除（冻结：清单原样保留）', rpClick: '点击查看 SKILL.md', rpNoSession: '（右栏 tab 未绑定会话）',
@@ -90,6 +94,10 @@ window.__ModuleLoader__.load({
         searchPh: 'Search skills by name or purpose…', hitCount: 'matches', pendingTag: 'untranslated',
         residentRow: 'Global resident · active in every project', foreignRow: 'Foreign resident · from ~/.agents/skills',
         goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above, or use session override',
+        tabGlobal: 'Global Skills', globalTabHint: 'Resident skills apply to every project; links live in the dir shown below (shared across harnesses). Foreign residents are read-only.',
+        residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result',
+        modelSelect: 'Translate model (default = current model)', currentModel: 'Current model (default)',
+        autoTranslateHint: 'Auto-translate is off by default (no outbound traffic); use the batch button any time. Translations are cached; originals untouched.',
         tabTitle: 'Skill set detail', tabDesc: 'Full effective list, status partition and diagnose summary', openRight: 'Open skill set detail in right sidebar',
         rpEffective: 'Effective list', rpSelf: 'Self-check', rpDiag: 'Diagnose summary',
         rpFrozen: 'Set deleted (frozen: list kept as-is)', rpClick: 'Click to open SKILL.md', rpNoSession: '(right tab has no bound session)',
@@ -540,12 +548,27 @@ window.__ModuleLoader__.load({
       const [overwrite, setOverwrite] = React.useState(false);
       const [instRes, setInstRes] = React.useState(null);
       const [mig, setMig] = React.useState(null); // {preview, applied}
+      // P3 全局技能集 tab + 翻译/agents 迁移（设计 §6.4/§6.1/§6.6）
+      const [gq, setGq] = React.useState('');
+      const [gOnly, setGOnly] = React.useState(false);
+      const [resident, setResident] = React.useState([]);
+      const [foreign, setForeign] = React.useState([]);
+      const [rTarget, setRTarget] = React.useState('');
+      const [tr, setTr] = React.useState(null); // {pending, models, model, result}
+      const [migA, setMigA] = React.useState(null); // {preview, applied}
       const [diag, setDiag] = React.useState(null);
       const load = React.useCallback(async () => {
         try { const v = await call(ctx, 'libraryList', {}); setLib(v.library ?? []); }
         catch (e) { setMsg({ kind: 'err', text: `${t('loadFailed')}: ${e?.message ?? e}` }); }
       }, [ctx]);
       React.useEffect(() => { load(); }, [load]);
+      const loadState = React.useCallback(async () => {
+        try {
+          const v = await call(ctx, 'state', bus.sessionId ? { sessionId: bus.sessionId } : {});
+          setResident(v.resident ?? []); setForeign(v.residentForeign ?? []); setRTarget(v.residentTarget ?? '');
+        } catch { /* 无会话时项目面可能拒；全局字段照常取 */ }
+      }, [ctx]);
+      React.useEffect(() => { loadState(); }, [loadState]);
       const run = async (key, fn) => {
         setBusy(key); setMsg(null);
         try {
@@ -557,8 +580,9 @@ window.__ModuleLoader__.load({
         finally { setBusy(null); }
       };
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
-      const q = filter.trim().toLowerCase();
-      const rows = lib.filter((x) => !q || x.name.toLowerCase().includes(q) || String(x.source).toLowerCase().includes(q));
+      const rows = searchRows(lib, filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
+      const gCorpus = [...lib, ...foreign.filter((n) => !lib.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
+      const grows = searchRows(gCorpus, gq).filter((r) => !gOnly || resident.includes(r.name) || foreign.includes(r.name));
       const counts = (files) => {
         const c = { update: 0, add: 0, remove: 0, 'skip-modified': 0 };
         for (const f of files ?? []) if (c[f.action] !== undefined) c[f.action] += 1;
@@ -566,10 +590,35 @@ window.__ModuleLoader__.load({
       };
       const tabBtn = (id, label) => h('button', { className: 'ssm-tab' + (tab === id ? ' ssm-tab-on' : ''), disabled: !!busy, onClick: () => setTab(id) }, label);
       return h('div', { className: 'ssm-settings' },
-        h('div', { className: 'ssm-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
+        h('div', { className: 'ssm-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('global', t('tabGlobal')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
         msg ? h('div', { className: msg.kind === 'err' ? 'ssm-err' : 'ssm-ok' }, msg.text) : null,
         tab === 'library' ? h(React.Fragment, null,
           h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('filterPh'), value: filter, onChange: (e) => setFilter(e.target.value) }),
+          // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
+          h('div', { className: 'ssm-row' },
+            h('button', { disabled: !!busy, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
+            tr?.pending?.length
+              ? h(React.Fragment, null,
+                  h('select', { className: 'ssm-input', style: { maxWidth: 280 }, disabled: !!busy, title: t('modelSelect'), value: tr.model, onChange: (e) => setTr({ ...tr, model: e.target.value }) },
+                    h('option', { value: '' }, t('currentModel')),
+                    ...(tr.models?.options ?? []).map((o) => h('option', { key: `${o.provider}/${o.model}`, value: `${o.provider}|${o.model}` }, o.label))),
+                  h('button', { disabled: !!busy, onClick: () => run('trR', async () => { const [provider, model] = tr.model ? tr.model.split('|') : [null, null]; const r = await call(ctx, 'translateRun', { names: tr.pending.map((p) => p.name), provider, model }); setTr({ ...tr, result: r }); await load(); }) }, `${t('translateGo')}(${tr.pending.length})`))
+              : null),
+          tr?.result
+            ? h('div', { className: 'ssm-hint' }, `${t('translateDone')}: ✓${(tr.result.done ?? []).length} ×${(tr.result.failed ?? []).length}${tr.result.skipped ? ` ⏭${tr.result.skipped}` : ''}`,
+                ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-warn-inline' }, `${f.name}: ${f.error ?? ''}`)))
+            : null,
+          h('div', { className: 'ssm-hint' }, t('autoTranslateHint')),
+          h('div', { className: 'ssm-row' },
+            h('button', { disabled: !!busy, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
+            migA?.applied ? h('button', { disabled: !!busy, onClick: () => run('migAU', async () => { await call(ctx, 'migrateAgentsUndo', {}); setMigA(null); await load(); }) }, t('migrateUndo')) : null,
+            migA && !migA.applied ? h('button', { disabled: !!busy, onClick: () => run('migAA', async () => { await call(ctx, 'migrateAgentsApply', {}); setMigA({ preview: null, applied: true }); await load(); }) }, t('migrateApply')) : null,
+            !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsTitle')) : null),
+          migA?.preview
+            ? h('div', { className: 'ssm-hint' },
+                `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${k.reason})`).join(', ') || t('none')}`,
+                ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-warn-inline' }, w)))
+            : null,
           rows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
           ...rows.map((x) => h('div', { key: x.name, className: 'ssm-srow' },
             h('div', { className: 'ssm-row' },
@@ -602,6 +651,12 @@ window.__ModuleLoader__.load({
                 },
               }, String(x.source).startsWith('github:') ? t('claimEdit') : t('claimGo')),
               h('button', { disabled: !!busy, onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
+            // P3 中文用途灰字行（未翻译显英文 + 待翻译角标，§6.1）
+            x.descriptionZh
+              ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' } }, x.descriptionZh)
+              : x.description
+                ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0' }, title: x.description }, x.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
+                : null,
             // 行内认领来源（§8.1）：自绘输入行，不用 window.prompt（§6.4）
             claimOf === x.name
               ? h(React.Fragment, null,
@@ -644,6 +699,32 @@ window.__ModuleLoader__.load({
                     h('button', { disabled: !!busy, onClick: () => run(`rs:${b.dir}`, async () => { await call(ctx, 'backupRestore', { name: x.name, dir: b.dir }); setBackupsOf(null); await load(); }) }, t('restoreGo')))))
               : null))
         ) : null,
+        tab === 'global' ? h(React.Fragment, null, // P3 全局技能集 tab（设计 §6.4）：常驻名单 + 外来只读
+          h('div', { className: 'ssm-hint' }, t('globalTabHint'), rTarget ? ` ${rTarget}` : ''),
+          h('div', { className: 'ssm-row' },
+            h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('searchPh'), value: gq, disabled: !!busy, onChange: (e) => setGq(e.target.value) }),
+            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: gOnly, disabled: !!busy, onChange: (e) => setGOnly(e.target.checked) }), ' ', t('residentOnly'))),
+          grows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
+          ...grows.map((r) => {
+            if (r.foreign) return h('div', { key: r.name, className: 'ssm-srow ssm-gray' },
+              h('div', { className: 'ssm-row' },
+                h('span', { className: 'ssm-cur' }, r.name),
+                h(Tag, { text: t('foreignRow'), warn: true }),
+                h('span', { className: 'ssm-grow' }, null),
+                h('span', { className: 'ssm-n' }, t('goSettings'))));
+            const on = resident.includes(r.name);
+            return h('div', { key: r.name, className: 'ssm-srow' },
+              h('div', { className: 'ssm-row' },
+                h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
+                  h('input', { type: 'checkbox', checked: on, disabled: !!busy, onChange: () => run(`res:${r.name}`, async () => {
+                    const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
+                    await call(ctx, 'setResident', { names: next });
+                    await loadState();
+                  }) }), ' ', r.name),
+                String(r.source).startsWith('github:') ? h('span', { className: 'ssm-n' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
+                h('span', { className: 'ssm-grow' }, null),
+                r.descriptionZh ? h('span', { className: 'ssm-n', title: r.description ?? undefined }, r.descriptionZh) : null));
+          })) : null,
         tab === 'ops' ? h(React.Fragment, null,
           h('div', { className: 'ssm-sec' }, t('installTitle')),
           h('div', { className: 'ssm-row' },
