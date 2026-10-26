@@ -258,8 +258,7 @@ window.__ModuleLoader__.load({
               st.set && (st.effective?.missing ?? []).length
                 ? h('button', { disabled: busy, className: 'ssm-danger', onClick: () => run(async () => {
                     const miss = new Set(st.effective.missing);
-                    await call(ctx, 'saveSet', { set: { ...st.set, skills: (st.set.skills ?? []).filter((n) => !miss.has(n)) } });
-                    await load();
+                    await call(ctx, 'saveSet', { set: { ...st.set, skills: (st.set.skills ?? []).filter((n) => !miss.has(n)) } }); // 刷新由 run() 的 finally reload() 负责；Panel 作用域里没有 load（误写会 ReferenceError）
                   }) }, t('pruneMissing'))
                 : null)
           : null,
@@ -337,8 +336,7 @@ window.__ModuleLoader__.load({
             const s = await call(ctx, 'saveAsFromEffective', { sessionId, name, ...(bound ? {} : { names: [...draftPick] }) });
             if (!bound && s?.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 存集即生效：本项目只出现所选技能
             setDraftPick(new Set());
-            setDraft('');
-            await load();
+            setDraft(''); // 新建集已落盘；刷新同上走 reload()（用户报告：保存成功却弹「操作失败: load is not defined」）
           }) }, t('saveAs')),
           h('button', { disabled: busy, onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, t('importJson'))),
         io

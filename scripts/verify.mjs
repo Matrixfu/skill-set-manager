@@ -1735,6 +1735,67 @@ const CASES = [
       ok(t3, '非 kebab-case 名拒绝认领');
     },
   },
+  {
+    id: 'client-scope',
+    title: 'client.js 分段作用域扫描：只在点击路径上炸的 ReferenceError（§10 UI 无 linter）',
+    async run() {
+      // 教训（用户报告 2026-10-26）：新建「文档类」技能集已保存成功，面板却弹「操作失败: load is not
+      // defined」——Panel 作用域里的重载函数叫 reload，「另存为」与「剔除幽灵名」两处写成 load()。
+      // client.js 没有 linter（package.json 无 devDeps），node --check 也不报未定义标识符，
+      // 这类笔误只有真点到那个按钮才抛，且 run() 的 catch 把它降级成一条错误文案 → 数据已写对、UI 却说失败。
+      const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'function', 'typeof', 'new', 'await', 'yield', 'do', 'else', 'try', 'finally', 'case', 'in', 'of', 'instanceof', 'void', 'delete', 'throw', 'super', 'import', 'async', 'const', 'let', 'var', 'class', 'extends', 'get', 'set', 'default']);
+      const GLOBALS = new Set(['window', 'document', 'navigator', 'localStorage', 'sessionStorage', 'fetch', 'console', 'JSON', 'Math', 'Object', 'Array', 'Set', 'Map', 'WeakMap', 'WeakSet', 'Promise', 'Error', 'TypeError', 'Date', 'RegExp', 'Symbol', 'String', 'Number', 'Boolean', 'Intl', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'queueMicrotask', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'AbortController', 'URL', 'URLSearchParams', 'Blob', 'File', 'FileReader', 'crypto', 'structuredClone', 'matchMedia', 'getComputedStyle', 'TextEncoder', 'TextDecoder', 'performance', 'Proxy', 'Reflect', 'globalThis', 'Infinity', 'NaN', 'undefined', 'arguments', 'btoa', 'atob', 'alert', 'confirm', 'prompt', 'React']);
+      const blank = (m) => m.replace(/[^\n]/g, ' '); // 抹掉内容但保行号列宽（报错才指得准）
+      const strip = (raw) => raw
+        .replace(/\/\*[\s\S]*?\*\//g, blank)
+        .replace(/(^|[ \t])\/\/[^\n]*/gm, (m, p) => p + blank(m.slice(p.length))) // `https://` 前有冒号，不会被当注释
+        .replace(/`(?:\\[\s\S]|[^`\\])*`/g, blank)
+        .replace(/'(?:\\[\s\S]|[^'\\\n])*'/g, '""')
+        .replace(/"(?:\\[\s\S]|[^"\\\n])*"/g, '""');
+      const ids = (s, into) => { for (const m of String(s).matchAll(/[A-Za-z_$][\w$]*/g)) into.add(m[0]); return into; };
+      const declaredIn = (text) => {
+        const set = new Set();
+        for (const m of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*|[{\[][^\n]*?[}\]])/g)) ids(m[1], set);
+        for (const m of text.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)/g)) set.add(m[1]);
+        for (const m of text.matchAll(/\(([^()]*)\)\s*(?:=>|\{)/g)) ids(m[1], set); // 参数表（含 ({ctx,t}) 解构）
+        for (const m of text.matchAll(/(?:^|[^\w$])([A-Za-z_$][\w$]*)\s*=>/g)) set.add(m[1]); // 单参箭头
+        for (const m of text.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) set.add(m[1]);
+        for (const m of text.matchAll(/\bfor\s*\(\s*(?:await\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) set.add(m[1]);
+        for (const m of text.matchAll(/(?:^|[{,])\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^()]*\)\s*\{/gm)) set.add(m[1]); // 对象简写方法（行首或 `{`/`,` 后）
+        return set;
+      };
+      /** 按「模块顶层段」分段扫：跨段不可见，所以别段定义的 load() 在本段用了就该报。 */
+      const scan = (raw) => {
+        const lines = strip(raw).split('\n');
+        const tops = [];
+        lines.forEach((l, i) => { const m = /^    (?:async )?(?:function|const|let)\s+([A-Za-z_$][\w$]*)/.exec(l); if (m) tops.push({ i, name: m[1] }); });
+        if (!tops.length) return ['找不到顶层段（文件结构变了？先更新本 case 的分段口径）'];
+        // 模块可见名 = 各顶层段名 + preamble（第 7 行 `window.__ModuleLoader__.load({` 这种）里的**声明/参数**名。
+        // 这里必须走 declaredIn 而不是把 preamble 的 token 全收：`load` 只是属性调用名，收进来会让
+        // 整份扫描对 load() 失明（第一版就是这么漏掉用户报的那个 bug 的）。
+        const moduleNames = new Set([...tops.map((x) => x.name), ...declaredIn(lines.slice(0, tops[0].i).join('\n'))]);
+        const bad = [];
+        for (let k = 0; k < tops.length; k++) {
+          const from = tops[k].i, to = k + 1 < tops.length ? tops[k + 1].i : lines.length;
+          const text = lines.slice(from, to).join('\n');
+          const known = new Set([...moduleNames, ...declaredIn(text)]);
+          for (const m of text.matchAll(/(^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
+            const name = m[2];
+            if (KEYWORDS.has(name) || GLOBALS.has(name) || known.has(name)) continue;
+            const tag = `${tops[k].name} 段 L${from + 1}-${to}：${name}()`;
+            if (!bad.includes(tag)) bad.push(tag);
+          }
+        }
+        return bad;
+      };
+      // 自检：能抓到未定义调用（防守卫空转），也不误报已定义/全局/简写方法
+      ok(scan('    function A() {\n      return nopeThing();\n    }\n').some((x) => x.includes('nopeThing')), '扫描自检：能抓到跨段未定义调用');
+      eq(scan('    function A() {\n      const ok2 = (e) => React.useState(e);\n      ok2(1);\n      const o = { apply(ctx) { return ok2(ctx); } };\n      return o;\n    }\n'), [], '扫描自检：局部/全局/简写方法不误报');
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const bad = scan(fs.readFileSync(file, 'utf8'));
+      ok(bad.length === 0, `client.js 各顶层段无未定义调用（点击才炸的 ReferenceError）：\n      ${bad.join('\n      ')}`);
+    },
+  },
 ];
 
 // ---------- 运行器 ----------
