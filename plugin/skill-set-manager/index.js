@@ -14,6 +14,7 @@ import { findProjectRoot } from './lib/core/projectRoot.js';
 import { readBinding, writeBinding } from './lib/core/binding.js';
 import { readManaged } from './lib/core/managed.js';
 import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
+import { providerSkills } from './lib/core/providerSkills.js';
 import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
@@ -97,6 +98,23 @@ export function apply(ctx, config) {
       return { cwd, projectRoot, preset, presetSource, presetWarn, rootDrift: projectRoot !== cwd };
     }
 
+    /** 插件/Preset 提供技能（灰色只读分区）：运行时注入、不在生效区盘上，插件唯一可见
+     *  口径是平台 skills 服务清单（探针事实 probe/skill-set-probe）。服务缺席 → null（不可知）。 */
+    async _providerEntries(projectRoot, { effectiveNames = [], managedEntries = {} } = {}) {
+      if (!projectRoot) return null;
+      try {
+        const skills = this.ctx.get('skills');
+        const resident = sets.loadResident(roots).skills || [];
+        return await providerSkills(
+          { skillsService: skills, projectRoot, managedEntries },
+          { effectiveNames, residentNames: resident },
+        );
+      } catch (e) {
+        this.ctx.logger.warn(`skill-set-manager：插件/Preset 技能枚举不可用: ${e?.message ?? e}`);
+        return null;
+      }
+    }
+
     async state(req) {
       const loc = await this.locate(req);
       const binding = readBinding(loc.projectRoot);
@@ -105,6 +123,10 @@ export function apply(ctx, config) {
       const sc = selfCheck(roots, loc.projectRoot);
       const managed = readManaged(loc.projectRoot);
       const store = await storeOf();
+      // 插件/Preset 分区：排除口径 = 生效清单（常驻 ∪ 集）+ 托管台账 + 常驻名单（库名不排除，见 providerSkills 注释）。
+      const providerEntries = await this._providerEntries(loc.projectRoot, {
+        effectiveNames: eff.names, managedEntries: managed?.entries ?? {},
+      });
       // 索引自愈（review m3）：面板每打开一次该项目即入索引——MVP 期历史绑定项目最迟一次点面板补齐，
       // uninstall/deleteSet 的候选推导自此不再漏项目。仅带会话的定位才入索引，host cwd 兜底行是垃圾（review n5）。
       if (req?.sessionId && loc.projectRoot) { try { await store.put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); } catch {} }
@@ -118,6 +140,7 @@ export function apply(ctx, config) {
         effective: eff,
         resident: sets.loadResident(roots).skills,
         residentForeign: dataPlane.residentForeign(roots), // 灰行判定源：常驻区名单外条目（设计 §6.4）
+        unmanaged: providerEntries, // 灰段数据源：插件/Preset 提供（不受技能集管控）；null = 不可知
         residentTarget: roots.globalResidentDirs[0], // 弹窗「去设置管理」文案指向
         selfCheck: { ok: sc.ok, frozen: sc.frozen, unbound: sc.unbound, missing: sc.missing, extra: sc.extra, foreign: sc.foreign, brokenLinks: sc.brokenLinks, detail: sc.detail },
         managed: managed?.entries ?? {},
@@ -412,10 +435,18 @@ export function apply(ctx, config) {
     async diagnoseRun(req) {
       // 无活动会话时项目面如实置空，不得拿 host 进程 cwd 冒充（review M2）
       const loc = req?.sessionId ? await this.locate(req) : { cwd: null, projectRoot: null };
+      const providerEntries = loc.projectRoot
+        ? await this._providerEntries(loc.projectRoot, {
+            effectiveNames: readBinding(loc.projectRoot)?.setSlug
+              ? sets.effectiveNames(roots, readBinding(loc.projectRoot).setSlug).names : [],
+            managedEntries: readManaged(loc.projectRoot)?.entries ?? {},
+          })
+        : null;
       return diagnose(roots, {
         projectRoot: loc.projectRoot,
         cwd: loc.cwd ?? process.cwd(),
         workspaceScopeInstalled: this._workspaceScopeInstalled(),
+        providerEntries,
       });
     }
 
@@ -639,6 +670,9 @@ export function apply(ctx, config) {
       `当前技能集：${st.set ? `${st.set.name}（${st.set.slug}）` : '未绑定'}`,
       `生效清单（${st.effective.names.length}）：${st.effective.names.join('、') || '（空）'}`,
       `全局常驻（${st.resident.length}）：${st.resident.join('、') || '（无）'}`,
+      ...(st.unmanaged == null ? [] : [
+        `插件/Preset 提供（${st.unmanaged.length}，不受技能集管控，切换技能集不移除）：${st.unmanaged.map((e) => `${e.name}（${e.provider}）`).join('、') || '（无）'}`,
+      ]),
       sc.ok ? '自检：✓ 与盘上一致' : `自检：⚠ ${detailText(sc.detail) || '自算清单与盘上不一致'}`,
     ];
     if (st.sessionOverrideActive) lines.push('临时覆盖：本次会话进行中（会话结束即还原）');

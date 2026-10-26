@@ -24,7 +24,7 @@ function digestOf(dir, fsImpl) {
   ).digest('hex');
 }
 
-export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), workspaceScopeInstalled = false } = {}, { fs: fsImpl = fs } = {}) {
+export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), workspaceScopeInstalled = false, providerEntries } = {}, { fs: fsImpl = fs } = {}) {
   const groups = { partition: [], copies: [], dangling: [], deadLinks: [], structure: [], env: [] };
   const zones = [roots.libraryRoot, roots.userDshRoot, roots.userAgentsRoot, ...roots.customDirs];
   const skillsDirOf = (pr) => path.join(pr, '.dsh', 'skills');
@@ -42,6 +42,18 @@ export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), works
     groups.partition.push(row('info', 'partition-resident',
       `全局常驻（不受管控，所有技能集自动包含，故生效清单可能比技能集大）：${(resident.skills || []).join(', ') || '（无）'}`,
       roots.dshHome, '如需减少：面板「全局常驻」取消勾选'));
+    // §9.1 第三分区（用户疑问 2026-10-26）：插件/Preset 注入的技能不在生效区盘上，插件无法经目录
+    // 感知，由调用方经平台 skills 服务注入 providerEntries；null = 已尝试但服务不可用（如实报，
+    // 不当空集）；undefined = 调用方未提供该口径（旧口径，不新增行，向后兼容）。
+    if (providerEntries !== undefined) {
+      if (providerEntries === null)
+        groups.partition.push(row('info', 'partition-provider-unavailable',
+          '插件/Preset 提供（不受技能集管控）：本次不可枚举（skills 服务不可用）', 'profile', '无需修复：重启 DSH 后重跑诊断'));
+      else
+        groups.partition.push(row('info', 'partition-provider',
+          `插件/Preset 提供（不受技能集管控，切换技能集不移除）：${providerEntries.map((e) => `${e.name}（${e.provider}）`).join(', ') || '（无）'}`,
+          'profile', '停用对应插件 bundle / profile patch 行即移除；同名文件系统技能可覆盖'));
+    }
   }
 
   // §9.2 副本漂移

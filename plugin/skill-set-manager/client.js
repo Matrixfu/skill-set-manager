@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
         settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
         searchPh: '按名称/用途搜索技能…', hitCount: '命中', pendingTag: '待翻译',
         residentRow: '全局常驻 · 已在所有项目生效', foreignRow: '外来常驻 · 其他工具放入 ~/.agents/skills',
+        providerSec: '插件/Preset 提供', providerHint: '插件或 agent preset 注入，不受技能集管控：切换技能集不移除；停用对应插件即消失', providerRow: '插件/Preset 提供 · 不受技能集管控', providerRowGo: '在「设置 → 插件」停用来源插件',
         goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择技能集，之后才可用临时覆盖（仅本会话）', // N6：未绑定时临时覆盖不可用（host 会拒），文案不得引导点击
         tabGlobal: '全局技能集', globalTabHint: '常驻技能在所有项目生效；链接落在下行所示目录（跨 harness 共享，其他工具可见）。外来常驻条目只读。',
         residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果', failedRetryable: '条此前失败 · 点击一并重试',
@@ -96,6 +97,7 @@ window.__ModuleLoader__.load({
         settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
         searchPh: 'Search skills by name or purpose…', hitCount: 'matches', pendingTag: 'untranslated',
         residentRow: 'Global resident · active in every project', foreignRow: 'Foreign resident · from ~/.agents/skills',
+        providerSec: 'Plugin / preset-provided', providerHint: 'Injected by a plugin or agent preset, outside skill-set control: switching sets will not remove them; disable the plugin to hide', providerRow: 'Plugin / preset-provided · not skill-set managed', providerRowGo: 'disable the source plugin in Settings → Plugins',
         goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above first; session override becomes available after binding',
         tabGlobal: 'Global Skills', globalTabHint: 'Resident skills apply to every project; links live in the dir shown below (shared across harnesses). Foreign residents are read-only.',
         residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result', failedRetryable: 'previously failed · click to retry all',
@@ -232,6 +234,9 @@ window.__ModuleLoader__.load({
       const qq = q.trim();
       const corpus = [...(st.library ?? [])];
       for (const n of new Set([...(st.resident ?? []), ...foreignRes])) if (!corpus.some((l) => l.name === n)) corpus.push({ name: n, source: 'resident', description: null, descriptionZh: null });
+      // 插件/Preset 提供也入搜索语料（灰行只读）：搜 archify / office-docx 不再「查无此技能」
+      const providerSet = new Set((st.unmanaged ?? []).map((e) => e.name));
+      for (const e of st.unmanaged ?? []) if (!corpus.some((l) => l.name === e.name)) corpus.push({ name: e.name, source: e.provider, provider: true, description: null, descriptionZh: null });
       const hits = qq ? searchRows(corpus, qq) : [];
       const doSwitch = (slug) => {
         if (st.rootDrift) { setConfirm({ kind: 'switch', slug }); return; } // 仅根漂移需确认（§6.5）
@@ -442,12 +447,12 @@ window.__ModuleLoader__.load({
                     ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0', maxWidth: 'none' }, title: l.description }, l.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
                     : null;
                 const isRes = resident.has(l.name) || foreignRes.has(l.name);
-                if (isRes) return h('div', { key: l.name, className: 'ssm-srow ssm-gray' }, // 灰行只读、无复选框（反目标项）
+                if (isRes || providerSet.has(l.name)) return h('div', { key: l.name, className: 'ssm-srow ssm-gray' }, // 灰行只读、无复选框（反目标项）
                   h('div', { className: 'ssm-row' },
                     h('span', null, l.name),
-                    h('span', { className: 'ssm-n' }, ' ', resident.has(l.name) ? t('residentRow') : t('foreignRow')),
+                    h('span', { className: 'ssm-n' }, ' ', isRes ? (resident.has(l.name) ? t('residentRow') : t('foreignRow')) : t('providerRow')),
                     h('span', { className: 'ssm-grow' }, null),
-                    h('span', { className: 'ssm-n' }, t('goSettings'))), // T0 静态裁定：无编程跳转 → 纯文案
+                    h('span', { className: 'ssm-n' }, isRes ? t('goSettings') : t('providerRowGo'))), // T0 静态裁定：无编程跳转 → 纯文案（插件行指向插件设置）
                   desc);
                 const on = eff.has(l.name);
                 return h('div', { key: l.name, className: 'ssm-srow' },
@@ -561,6 +566,12 @@ window.__ModuleLoader__.load({
         !st && !err ? h('div', { className: 'ssm-empty' }, '…') : null, // 未到位≠空：不得先渲染空态（review m4）
         st && names.length === 0 ? h('div', { className: 'ssm-empty' }, t('rpEmpty')) : null,
         st ? h('div', null, ...names.map(row)) : null,
+        // 插件/Preset 灰段（用户疑问 2026-10-26）：运行时注入、不在生效清单内，只读不可勾；null = 服务不可知不渲染。
+        (st?.unmanaged?.length ?? -1) >= 0 ? h(React.Fragment, null,
+          h('div', { className: 'ssm-sec' }, t('providerSec'), ' ', h('span', { className: 'ssm-n' }, `(${st.unmanaged.length})`)),
+          h('div', { className: 'ssm-hint' }, t('providerHint')),
+          ...st.unmanaged.map((e) => h('div', { key: `p-${e.name}`, className: 'ssm-row ssm-gray', title: e.source ?? undefined },
+            h('span', null, e.name), ' ', h(Tag, { text: e.provider })))) : null,
         h('div', { className: 'ssm-sec' }, t('rpSelf'), ' ', !st ? '—' : sc.ok === false ? h('span', { className: sc.frozen ? 'ssm-warn-inline' : 'ssm-err' }, sc.detail) : h('span', { className: 'ssm-ok' }, '✓')),
         h('div', { className: 'ssm-sec' }, t('rpDiag'), ' ', h('span', { className: 'ssm-n' }, dg ? `${dgCount}` : dgErr ? `⚠ ${t('rpDiagFail')}` : '—')),
         dgErr ? h('div', { className: 'ssm-hint' }, dgErr) : null,

@@ -1796,6 +1796,55 @@ const CASES = [
       ok(bad.length === 0, `client.js 各顶层段无未定义调用（点击才炸的 ReferenceError）：\n      ${bad.join('\n      ')}`);
     },
   },
+  {
+    id: 'provider-skill',
+    title: '插件/Preset 提供分区：fake skills 服务过滤口径 + 诊断第三分区行（用户疑问 2026-10-26）',
+    async run(f) {
+      await withRoots(f);
+      const { providerSkills } = await core('providerSkills');
+      const fake = {
+        list: async () => [
+          { name: 'archify', provider: 'archify-plugin', source: 'archify-plugin' },
+          { name: 'office-docx', provider: 'skill-office', source: 'bundled' },
+          { name: 'alpha', provider: 'filesystem', source: 'workspace' }, // 生效区文件系统技能：必须排除
+          { name: 'runtimey', provider: 'runtime', source: 'runtime' }, // 运行期注册：不算插件注入，排除
+          { name: 'ghost', provider: 'skill-office' }, // 无 source：回落 provider 口径
+        ],
+      };
+      const emptyService = { list: async () => [] };
+      // 排除口径 = 生效清单 ∪ 托管台账 ∪ 常驻名单；provider=filesystem/runtime 不列；库名不排除
+      let got = await providerSkills(
+        { skillsService: fake, projectRoot: f.projectA, managedEntries: { managedone: { kind: 'junction' } } },
+        { effectiveNames: ['alpha'], residentNames: [] },
+      );
+      eq(got.map((e) => e.name), ['archify', 'ghost', 'office-docx'], '只列插件/Preset 注入且不在生效/台账里的技能（ghost 无 source 也列出）');
+      eq(got.map((e) => e.provider), ['archify-plugin', 'skill-office', 'skill-office'], '提供者名透出（修复动作按它指向；无 source 回落 provider）');
+      got = await providerSkills(
+        { skillsService: fake, projectRoot: f.projectA, managedEntries: {} },
+        { effectiveNames: [], residentNames: ['ghost'] },
+      );
+      eq(got.map((e) => e.name), ['archify', 'office-docx'], '常驻名单命中同样排除（ghost 在名单 → 不列）');
+      eq(await providerSkills({ skillsService: null, projectRoot: f.projectA }), null, '服务缺席 → null（不可知 ≠ 空集）');
+      eq(await providerSkills({ skillsService: emptyService, projectRoot: null }), null, '无项目根 → null');
+      // 诊断 §9.1 第三分区行：有数据列名单，null 如实报不可枚举
+      const dg = await core('diagnose');
+      const { writeBinding } = await core('binding');
+      const { saveSet } = await core('sets');
+      await saveSet(f.roots, { slug: 'pv', name: 'PV', skills: [] });
+      writeBinding(f.projectA, 'pv');
+      const d1 = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA, providerEntries: got.filter((e) => e.name === 'archify') });
+      const part1 = d1.groups.partition.map((r) => String(r.what)).join('\n');
+      ok(part1.includes('插件/Preset 提供') && part1.includes('archify（archify-plugin）'), '分区行列出注入技能与提供者');
+      const d2 = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA, providerEntries: null });
+      ok(d2.groups.partition.some((r) => String(r.what).includes('不可枚举')), '服务不可用时如实报，不冒充空集');
+      const d0 = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA, providerEntries: [] });
+      const part0 = d0.groups.partition.map((r) => String(r.what)).join('\n');
+      ok(part0.includes('插件/Preset 提供') && part0.includes('（无）'), '空集如实报（无）');
+      // 旧调用口径不传 providerEntries → 行为与从前一致（向后兼容）
+      const dOld = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA });
+      ok(!dOld.groups.partition.map((r) => String(r.what)).join('\n').includes('插件/Preset'), '不传参数时不新增分区行');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------
