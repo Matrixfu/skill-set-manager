@@ -179,6 +179,29 @@ const CASES = [
     },
   },
   {
+    id: 'edit-members', title: '编辑成员：saveSet 改已绑定集成员 → 重绑收敛（摘旧加新、台账无残留、自检绿）',
+    async run(f) {
+      await withRoots(f);
+      for (const n of ['em-alpha', 'em-beta', 'em-gamma']) writeSkill(f.library, n);
+      const s = await core('sets');
+      await s.saveSet(f.roots, { slug: 'em-set', name: '成员编辑集', description: 'desc-keep', skills: ['em-alpha', 'em-beta'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
+      const { readManaged } = await core('managed');
+      await writeBinding(f.projectA, 'em-set');
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'em-set'));
+      setEq(skillDirNames(f.projectA), ['em-alpha', 'em-beta'], '初始绑定：条目 = 集');
+      // 面板「编辑成员→保存」的编排：saveSet（同 slug、回传原 name/description，γ 勾上 α 取消）→ 当前绑定集再 bind 收敛
+      await s.saveSet(f.roots, { slug: 'em-set', name: '成员编辑集', description: 'desc-keep', skills: ['em-beta', 'em-gamma'] });
+      eq((await s.loadSet(f.roots, 'em-set')).description, 'desc-keep', 'saveSet 保留 description（UI 回传原值）');
+      await writeBinding(f.projectA, 'em-set');
+      await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'em-set'));
+      setEq(skillDirNames(f.projectA), ['em-beta', 'em-gamma'], '成员编辑后收敛：取消勾选摘除、勾选加入、保留项不动');
+      setEq(Object.keys((await readManaged(f.projectA)).entries), ['em-beta', 'em-gamma'], '托管台账 = 新成员（旧条目无残留）');
+      eq(selfCheck(f.roots, f.projectA).ok, true, '编辑成员后自检绿（不得把自家收敛报成异常）');
+    },
+  },
+  {
     id: '3', title: '常驻技能被所有技能集自动包含（§17#3，数据层；catalog 口径见 --assert-catalog）',
     async run(f) {
       await withRoots(f);
@@ -841,6 +864,43 @@ const CASES = [
       await p.applyUndo(store, f.roots, f.projectA);
       setEq(skillDirNames(f.projectA), ['lib-a', 'lib-b'], '撤销回到上一份生效清单快照');
       eq((await store.keys('undo')).length, 0, '撤销入口一次性消费');
+    },
+  },
+  {
+    id: 'override-merge', title: '连续临时覆盖：覆盖记录按净差累计（第二次操作不得丢第一次记录），自检不误报“多出”',
+    async run(f) {
+      await withRoots(f);
+      for (const n of ['ov-a', 'ov-b', 'ov-c']) writeSkill(f.library, n);
+      const s = await core('sets'); await s.saveSet(f.roots, { slug: 'ov-set', name: 'OV', skills: ['ov-a', 'ov-b'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
+      const { readManaged } = await core('managed');
+      const { makeFallbackStore } = await core('storage');
+      const p = await core('pending');
+      await writeBinding(f.projectA, 'ov-set'); await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'ov-set'));
+      const store = makeFallbackStore(path.join(f.base, 'store'));
+      // 用户报的场景：先勾选加 c，再取消勾选摘 b——第二次操作不得把第一次的 added 抹掉
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ov-c'], sessionId: 's1' });
+      await p.startOverride(store, f.roots, f.projectA, { remove: ['ov-b'], sessionId: 's1' });
+      setEq(skillDirNames(f.projectA), ['ov-a', 'ov-c'], '盘上：c 在、b 摘');
+      const mg1 = await readManaged(f.projectA);
+      setEq(mg1.sessionOverride.added, ['ov-c'], '第二次覆盖不得丢第一次的新增记录');
+      setEq(mg1.sessionOverride.removed, ['ov-b'], '第二次的移除记录生效');
+      eq(selfCheck(f.roots, f.projectA).ok, true, '自检绿（c 有账可依，不得报“多出”）');
+      // 把摘掉的 b 再加回：removed 里的 b 净归零
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ov-b'], sessionId: 's1' });
+      const mg2 = await readManaged(f.projectA);
+      setEq(mg2.sessionOverride.added, ['ov-c'], '加回基线内的 b 不进 added');
+      setEq(mg2.sessionOverride.removed, [], '加回后 removed 清掉 b');
+      // 把加过的 c 再摘掉：c 从 added 净归零，也不进 removed（不在集里谈不上“移除”）
+      await p.startOverride(store, f.roots, f.projectA, { remove: ['ov-c'], sessionId: 's1' });
+      const mg3 = await readManaged(f.projectA);
+      setEq(mg3.sessionOverride.added, [], '摘掉加过的 c：added 归零');
+      setEq(mg3.sessionOverride.removed, [], '摘掉 c 不进 removed');
+      setEq(skillDirNames(f.projectA), ['ov-a', 'ov-b'], '盘上回到集基线');
+      eq(selfCheck(f.roots, f.projectA).ok, true, '净归位后自检绿');
+      await p.endOverride(store, f.roots, f.projectA);
+      setEq(skillDirNames(f.projectA), ['ov-a', 'ov-b'], '结束覆盖收敛回绑定态');
     },
   },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----

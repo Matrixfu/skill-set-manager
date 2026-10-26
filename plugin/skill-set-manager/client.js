@@ -1,6 +1,7 @@
 /**
- * skill-set-manager client 半：两个入口（composer 工具行左缘 + 侧边栏底部，§12 P0）共用
- * 同一个 shell.overlay 面板；操作一律经 host 半（Remote 面优先、同源 fetch 兜底）——无第二实现（#15）。
+ * skill-set-manager client 半：单一入口（composer 工具行左缘；§12 的侧边栏入口经用户决定移除，
+ * 会话绑定/状态预拉本就在 composer 半）打开同一个 shell.overlay 面板；
+ * 操作一律经 host 半（Remote 面优先、同源 fetch 兜底）——无第二实现（#15）。
  * 正常切换不设模态（§6.5），仅「项目根 ≠ 会话目录」时经 overlay 确认；撤销入口在面板内。
  */
 window.__ModuleLoader__.load({
@@ -49,6 +50,8 @@ window.__ModuleLoader__.load({
         importDefaultHint: '每个缺失技能选一项；不选 = 忽略（插件不自动联网安装）', importApplied: '导入完成',
         claimGo: '认领来源', claimEdit: '改认领', claimSourcePh: '来源 owner/repo[/subpath]', claimCommitPh: 'commit（可空）',
         claimUndo: '撤认领', claimHint: '认领 = 以当前盘上内容为基线写 manifest（此后本地改动可被升级识别并跳过）',
+        editMembers: '成员', editTitle: '编辑成员', saveBtn: '保存',
+        memberHint: '勾选 = 该集包含，保存即写回；当前绑定集会立即重新生成生效清单（会话临时覆盖保留）', memberMissing: '不在库',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -88,6 +91,8 @@ window.__ModuleLoader__.load({
         importDefaultHint: 'Pick one per missing skill; unpicked = ignore (no automatic network install)', importApplied: 'Import done',
         claimGo: 'Claim source', claimEdit: 'Re-claim', claimSourcePh: 'source owner/repo[/subpath]', claimCommitPh: 'commit (optional)',
         claimUndo: 'Unclaim', claimHint: 'Claiming writes a manifest with the current files as baseline (later local edits are then detected and skipped on update)',
+        editMembers: 'Members', editTitle: 'Edit members', saveBtn: 'Save',
+        memberHint: 'Checked = in this set; Save writes it back. The bound set rebuilds its effective list immediately (session overrides stay)', memberMissing: 'not in library',
       },
     };
 
@@ -149,6 +154,7 @@ window.__ModuleLoader__.load({
       const [renameDraft, setRenameDraft] = React.useState('');
       const [io, setIo] = React.useState(null); // {mode:'export'|'import', text, copied?}
       const [confirmUnbind, setConfirmUnbind] = React.useState(false);
+      const [edit, setEdit] = React.useState(null); // {slug, picked:{name:true}}——编辑成员表单（§5#2）
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -165,7 +171,9 @@ window.__ModuleLoader__.load({
         finally { setBusy(false); setConfirm(null); await reload(); }
       };
       const st = state ?? {};
-      const eff = new Set(st.effective?.names ?? []);
+      // 「已在项目」口径 = JSON 生效清单 ∪ 托管台账：临时覆盖加的技能只进台账、不进 state.effective
+      // 的 JSON 口径，加完必须即从候选区撤回（受管区即显示为选中勾选），否则复选框永远显未勾（用户报）。
+      const eff = new Set([...(st.effective?.names ?? []), ...Object.keys(st.managed ?? {})]);
       const resident = new Set(st.resident ?? []);
       const managed = Object.keys(st.managed ?? {});
       const doSwitch = (slug) => {
@@ -203,20 +211,41 @@ window.__ModuleLoader__.load({
           : null,
         h('div', { className: 'ssm-sec' }, t('sets')),
         (st.sets ?? []).length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
-        ...(st.sets ?? []).map((s) => h('div', { key: s.slug, className: 'ssm-row' + (st.binding?.setSlug === s.slug ? ' ssm-on' : '') },
-          h('button', { className: 'ssm-pick', disabled: busy || st.binding?.setSlug === s.slug, onClick: () => doSwitch(s.slug) },
-            h('span', null, s.name), h('span', { className: 'ssm-n' }, `${(s.skills ?? []).length} ${t('skillsCount')}`),
-            st.binding?.setSlug === s.slug ? h('span', { className: 'ssm-cur-tag' }, t('current')) : null),
-          h('span', { className: 'ssm-grow' }, null),
-          h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'copySet', { slug: s.slug })) }, t('copy')),
-          h('button', { disabled: busy, onClick: () => { setRenaming(s.slug); setRenameDraft(s.name); } }, t('rename')),
-          h('button', { disabled: busy, onClick: async () => { try { const j = await call(ctx, 'exportSet', { slug: s.slug }); setIo({ mode: 'export', text: JSON.stringify(j, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, t('exportJson')),
-          h('button', { disabled: busy, onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del')),
+        ...(st.sets ?? []).map((s) => h(React.Fragment, { key: s.slug },
+          h('div', { className: 'ssm-row' + (st.binding?.setSlug === s.slug ? ' ssm-on' : '') },
+            h('button', { className: 'ssm-pick', disabled: busy || st.binding?.setSlug === s.slug, onClick: () => doSwitch(s.slug) },
+              h('span', null, s.name), h('span', { className: 'ssm-n' }, `${(s.skills ?? []).length} ${t('skillsCount')}`),
+              st.binding?.setSlug === s.slug ? h('span', { className: 'ssm-cur-tag' }, t('current')) : null),
+            h('span', { className: 'ssm-grow' }, null),
+            h('button', { disabled: busy, onClick: () => setEdit({ slug: s.slug, picked: Object.fromEntries((s.skills ?? []).map((n) => [n, true])) }) }, t('editMembers')),
+            h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'copySet', { slug: s.slug })) }, t('copy')),
+            h('button', { disabled: busy, onClick: () => { setRenaming(s.slug); setRenameDraft(s.name); } }, t('rename')),
+            h('button', { disabled: busy, onClick: async () => { try { const j = await call(ctx, 'exportSet', { slug: s.slug }); setIo({ mode: 'export', text: JSON.stringify(j, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, t('exportJson')),
+            h('button', { disabled: busy, onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del'))),
           renaming === s.slug
             ? h('div', { className: 'ssm-row' },
                 h('input', { className: 'ssm-input', autoFocus: true, value: renameDraft, disabled: busy, onChange: (e) => setRenameDraft(e.target.value) }),
                 h('button', { disabled: busy || !renameDraft.trim() || renameDraft.trim() === s.name, onClick: () => run(() => call(ctx, 'renameSet', { slug: s.slug, name: renameDraft.trim() })).then(() => setRenaming(null)) }, '✓'),
                 h('button', { disabled: busy, onClick: () => setRenaming(null) }, '×'))
+            : null,
+          // 编辑成员表单（§5#2「从技能库勾选技能加入技能集」）：saveSet 写回；当前绑定集随即 bind 收敛
+          // ——该路径由 verify case edit-members 固化（摘旧加新、台账无残留、自检绿）。
+          edit?.slug === s.slug
+            ? h('div', { className: 'ssm-io' },
+                h('div', { className: 'ssm-sec' }, t('editTitle'), ' ', s.name),
+                h('div', { className: 'ssm-chips' },
+                  ...[...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])].sort()
+                    .map((n) => h('label', { key: n, className: 'ssm-chip' + (edit.picked[n] ? ' ssm-on' : '') },
+                      h('input', { type: 'checkbox', checked: !!edit.picked[n], disabled: busy, onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [n]: !edit.picked[n] } }) }), ' ', n,
+                      (st.library ?? []).some((l) => l.name === n) ? null : h('span', { className: 'ssm-warn-inline' }, ` ${t('memberMissing')}`)))),
+                h('div', { className: 'ssm-hint' }, t('memberHint')),
+                h('div', { className: 'ssm-row' },
+                  h('button', { disabled: busy, onClick: () => run(async () => {
+                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: s.description ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n]) } });
+                    if (st.binding?.setSlug === s.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 立即收敛生效清单，不留「改了但没生效」窗口
+                    setEdit(null);
+                  }) }, t('saveBtn')),
+                  h('button', { disabled: busy, onClick: () => setEdit(null) }, '×')))
             : null)),
         h('div', { className: 'ssm-row' },
           h('input', { className: 'ssm-input', placeholder: t('newName'), value: draft, onChange: (e) => setDraft(e.target.value) }),
@@ -350,14 +379,6 @@ window.__ModuleLoader__.load({
       return h('button', { className: 'ssm-chip-btn', title: t('panel'), onClick: () => bus.setOpen(!b.open) },
         h(Dot, { st: b.state }), t('chip'), h(Name, { st: b.state }),
         b.state?.selfCheck && !b.state.selfCheck.ok && !b.state.selfCheck.unbound ? h('span', { className: 'ssm-badge' }, '!') : null);
-    }
-
-    function SidebarChip({ ctx, t, wide }) {
-      const b = useBus();
-      const badge = b.state?.selfCheck && !b.state.selfCheck.ok && !b.state.selfCheck.unbound;
-      return h('button', { className: 'ssm-chip-btn', title: t('panel'), onClick: () => bus.setOpen(true) },
-        h(Dot, { st: b.state }),
-        wide === false ? (badge ? h('span', { className: 'ssm-badge' }, '!') : null) : h(React.Fragment, null, t('chip'), h(Name, { st: b.state }), badge ? h('span', { className: 'ssm-badge' }, '!') : null));
     }
 
     /**
@@ -605,36 +626,36 @@ window.__ModuleLoader__.load({
 
     const CSS = `
 .ssm-chip-btn{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;padding:3px 7px;border-radius:6px;cursor:pointer}
-.ssm-chip-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.ssm-chip-btn:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary)}
 .ssm-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
-.ssm-dot-ok{background:var(--dsw-alias-brand-primary)}.ssm-dot-red{background:var(--dsw-alias-status-error,#e5484d)}.ssm-dot-idle{background:var(--dsw-alias-label-secondary)}
+.ssm-dot-ok{background:var(--dsw-alias-state-success-primary,#22c55e)}.ssm-dot-red{background:var(--dsw-alias-state-error-primary,#e5484d)}.ssm-dot-idle{background:var(--dsw-alias-label-secondary)}
 .ssm-cur{color:var(--dsw-alias-label-primary);font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ssm-badge{min-width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-status-error,#e5484d);color:#fff;font-size:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
+.ssm-badge{min-width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-state-error-primary,#e5484d);color:#fff;font-size:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
 .ssm-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center;padding:0 12px 12px;pointer-events:auto}
 .ssm-panel{width:min(620px,96vw);max-height:72vh;overflow:auto;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
 .ssm-head{display:flex;align-items:center;gap:8px}
 .ssm-x{background:0;border:0;color:inherit;font-size:15px;cursor:pointer;padding:2px 6px}
 .ssm-grow{flex:1}
 .ssm-root{font-size:11px;color:var(--dsw-alias-label-secondary);word-break:break-all}
-.ssm-warn-inline{color:var(--dsw-alias-status-warning,#f5a623)}
-.ssm-warn,.ssm-err{font-size:11px;padding:4px 6px;border-radius:6px;background:color-mix(in srgb,var(--dsw-alias-status-warning,#f5a623) 18%,transparent)}
-.ssm-err{background:color-mix(in srgb,var(--dsw-alias-status-error,#e5484d) 16%,transparent)}
+.ssm-warn-inline{color:var(--dsw-alias-state-warn-primary,#f5a623)}
+.ssm-warn,.ssm-err{font-size:11px;padding:4px 6px;border-radius:6px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f5a623) 18%,transparent)}
+.ssm-err{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 16%,transparent)}
 .ssm-sec{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px;display:flex;gap:6px;align-items:center}
 .ssm-hint{font-size:10px;color:var(--dsw-alias-label-secondary)}
 .ssm-row{display:flex;align-items:center;gap:4px;font-size:12px}
 .ssm-pick{flex:1;display:flex;align-items:center;gap:6px;background:0;border:0;color:var(--dsw-alias-label-primary);cursor:pointer;padding:4px 6px;border-radius:6px;text-align:left;min-width:0}
-.ssm-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ssm-pick:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)}
 .ssm-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
 .ssm-n{color:var(--dsw-alias-label-secondary);font-size:11px}
 .ssm-cur-tag{font-size:10px;color:var(--dsw-alias-brand-primary)}
 .ssm-row button:not(.ssm-pick){background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
-.ssm-row button:not(.ssm-pick):hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ssm-row button:not(.ssm-pick):hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)}
 .ssm-input{flex:1;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 7px;min-width:0}
 .ssm-io{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .ssm-textarea{width:100%;box-sizing:border-box;resize:vertical;font:11px/1.5 ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px}
-.ssm-ok{font-size:11px;color:var(--dsw-alias-accent-default)}
+.ssm-ok{font-size:11px;color:var(--dsw-alias-state-success-primary,#22c55e)}
 .ssm-confirm{font-size:11px;padding:5px 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
+.ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 .ssm-chips{display:flex;flex-wrap:wrap;gap:4px;font-size:11px}
 .ssm-chips .ssm-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;cursor:pointer}
 .ssm-chips .ssm-on{border-color:var(--dsw-alias-brand-primary)}
@@ -646,18 +667,18 @@ window.__ModuleLoader__.load({
 .ssm-tab-on{color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}
 .ssm-srow{display:flex;flex-direction:column;gap:3px;padding:5px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
 .ssm-tag{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);flex:none}
-.ssm-tag-warn{color:var(--dsw-alias-status-warning,#f5a623);border-color:currentColor}
+.ssm-tag-warn{color:var(--dsw-alias-state-warn-primary,#f5a623);border-color:currentColor}
 .ssm-diag-row{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;flex-wrap:wrap}
 .ssm-lvl{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-label-secondary)}
-.ssm-lvl-warn{background:var(--dsw-alias-status-warning,#f5a623)}
-.ssm-lvl-error{background:var(--dsw-alias-status-error,#e5484d)}
+.ssm-lvl-warn{background:var(--dsw-alias-state-warn-primary,#f5a623)}
+.ssm-lvl-error{background:var(--dsw-alias-state-error-primary,#e5484d)}
 .ssm-lvl-info{background:var(--dsw-alias-brand-primary)}
 .ssm-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
 .ssm-click{cursor:pointer}
-.ssm-click:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));border-radius:6px}
+.ssm-click:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-radius:6px}
 .ssm-settings .ssm-row button{background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
-.ssm-settings .ssm-row button:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
+.ssm-settings .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)}
+.ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 `;
 
     return {
@@ -716,9 +737,6 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
           name: 'conversation.input.left', id: PKG, order: 30, label: () => t('chip'),
         }, (props) => h(ComposerChip, { ctx, t, sessionId: props?.sessionId })));
-        ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-          name: 'sidebar.footer.action', id: PKG, order: 30, label: () => t('chip'),
-        }, (props) => h(SidebarChip, { ctx, t, wide: props?.wide })));
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay', id: PKG, order: 30,
         }, () => h(OverlayHost, { ctx, t, bs: ctx.get('betterSidebar') })));

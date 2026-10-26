@@ -13,6 +13,25 @@ import { loadSet, RESIDENT_SLUG } from './sets.js';
 import { resolveSkillTargets } from './resolver.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
 
+/**
+ * 净覆盖口径：台账 ∖ 集 = added；集 ∖ 台账 = removed。每次 startOverride 全量重算写回，
+ * 连续覆盖自然累计合并（用户报：先加 c 再摘 b，第二次把记录整个替换成 {added:[],removed:[b]}，
+ * c 失去归属 → 自检误报「多出」红标）；对历史丢记录的状态也起自纠作用。
+ * 冻结（集已删）：基线未知无法算净差——退回「前记录 ∪ 本次」累计，冻结还原分支据 added 精确回收（review M9）。
+ */
+function netOverride(roots, setSlug, entries, prev, { addedThisCall = [], removedThisCall = [] } = {}) {
+  const resident = !setSlug || setSlug === RESIDENT_SLUG;
+  const setDoc = resident ? null : loadSet(roots, setSlug);
+  if (!resident && !setDoc)
+    return {
+      added: [...new Set([...(prev?.added ?? []), ...addedThisCall])],
+      removed: [...new Set([...(prev?.removed ?? []), ...removedThisCall])],
+    };
+  const base = new Set(setDoc?.skills ?? []); // 常驻绑定：项目目录基线本就为空（§5.3）
+  const cur = new Set(Object.keys(entries));
+  return { added: [...cur].filter((n) => !base.has(n)), removed: [...base].filter((n) => !cur.has(n)) };
+}
+
 export async function startOverride(store, roots, projectRoot, { add = [], remove = [], sessionId = null } = {}, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl });
   if (!managed) throw new Error('临时覆盖要求该项目已绑定技能集（无托管清单）');
@@ -42,7 +61,7 @@ export async function startOverride(store, roots, projectRoot, { add = [], remov
     }
   }
   // 先写标记后动目录的反序风险取「先落标记」：标记在 = 可还原；目录动了没标记 = 不可还原
-  writeManaged(projectRoot, { setSlug: managed.setSlug, entries, sessionOverride: { added, removed } }, { fs: fsImpl });
+  writeManaged(projectRoot, { setSlug: managed.setSlug, entries, sessionOverride: netOverride(roots, managed.setSlug, entries, managed.sessionOverride, { addedThisCall: added, removedThisCall: removed }) }, { fs: fsImpl });
   await store.put('pending', projectKey(projectRoot), rec(added, removed));
   return { ...snapshot, missingAdd };
 }
