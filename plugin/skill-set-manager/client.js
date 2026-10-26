@@ -31,7 +31,8 @@ window.__ModuleLoader__.load({
         uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
         installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
         migrateTitle: '旧通用区迁移（~/.dsh/skills，一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
-        migrateMoves: '将移动', migrateKeep: '同名保留',
+        migrateMoves: '将移动', migrateKeep: '保留不搬',
+        migrateReasonExists: '库同名', migrateReasonLink: '外部链接', migrateReasonManifest: '他人记账', migrateReasonResident: '已是常驻链接',
         migrateAgentsTitle: '跨 harness 通用区迁移（~/.agents/skills，一次性）', migrateAgentsGo: '预览并迁移',
         migrateAgentsHint: '把与其他 harness 共用的通用区技能移入技能库；只移无 manifest 的纯目录，其他工具的条目与同名保留不动，可一键回滚。',
         diagRun: '运行诊断', fixReclaim: '回收失效链接', fixRebuild: '按当前集重建',
@@ -82,7 +83,8 @@ window.__ModuleLoader__.load({
         uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
         installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
         migrateTitle: 'Migrate legacy shared area (~/.dsh/skills, one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
-        migrateMoves: 'Will move', migrateKeep: 'Kept (name clash)',
+        migrateMoves: 'Will move', migrateKeep: 'Kept',
+        migrateReasonExists: 'name clash', migrateReasonLink: 'external link', migrateReasonManifest: 'other tool', migrateReasonResident: 'already resident',
         migrateAgentsTitle: 'Migrate cross-harness skills (~/.agents/skills, one-time)', migrateAgentsGo: 'Preview & migrate',
         migrateAgentsHint: 'Move skills from the shared cross-harness dir into the library; only plain dirs without a manifest move — other tools’ entries and same-name collisions stay put, undoable.',
         diagRun: 'Run diagnose', fixReclaim: 'Reclaim dead links', fixRebuild: 'Rebuild from set',
@@ -577,6 +579,15 @@ window.__ModuleLoader__.load({
      * 设置页（§10.1.4 settings.section：注册仅 id/order/label，ownerProps 只给 close；
      * 三页签自绘）。数据全部走同一 host Remote 面（call 兜底 fetch）——无第二实现（#15）。
      */
+    /** 保留理由 → 人话：resident = 插件自家常驻链（不是同名冲突，用户报告 2026-10-26）；
+     *  未知 reason 原样显示，避免新版 core 加了分类而字典缺键时 UI 空白。 */
+    const keepReasonText = (t, reason) => {
+      const r = String(reason ?? '');
+      const key = 'migrateReason' + r.charAt(0).toUpperCase() + r.slice(1);
+      const v = t(key);
+      return v === key ? r : v;
+    };
+
     function SettingsSection({ ctx, t }) {
       const [tab, setTab] = React.useState('library');
       const [lib, setLib] = React.useState([]);
@@ -814,8 +825,9 @@ window.__ModuleLoader__.load({
             !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsHint')) : null),
           migA?.preview
             ? h('div', { className: 'ssm-hint' },
-                `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${k.reason})`).join(', ') || t('none')}`,
-                ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-warn-inline' }, w)))
+                `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${keepReasonText(t, k.reason)})`).join(', ') || t('none')}`,
+                ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-warn-inline' }, w)),
+                ...(migA.preview.notes ?? []).map((n, i) => h('div', { key: 'mn' + i, className: 'ssm-hint' }, n)))
             : null,
           h('div', { className: 'ssm-sec' }, t('migrateTitle')),
           h('div', { className: 'ssm-row' },

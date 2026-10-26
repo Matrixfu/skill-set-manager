@@ -12,6 +12,8 @@
  *   node scripts/verify.mjs --list-cases
  *
  * 口径: 退出码 0 = 全部 active case 绿；任何 FAIL → 1。SKIP（pending-scope / live）不算失败但会列出。
+ * ⚠ 必须在 DSH 文件沙箱外跑：沙箱把 junction 虚拟化成普通目录（readlink 报 EINVAL、realpath 原地返回），
+ *   link/junction 类 case（resident-global、migrate-agents、copy-fallback…）会**假红**（实锤 2026-10-26）。
  * 范围裁定（待用户确认）: #10（卸载→回收站→恢复）与 #11（六类诊断页）验收 P1 功能 → 标 pending-scope；
  *   其检测原语（悬空引用/外来条目/非 kebab/嵌套）由 #dangling/#foreign 等 case 在 core 层覆盖。
  */
@@ -1093,10 +1095,14 @@ const CASES = [
       fs.writeFileSync(path.join(foreign, '.manifest.json'), JSON.stringify({ source: 'github:some/one' }));
       const ext = writeSkill(path.join(f.base, 'ext-src'), 'ag-ext'); // 外部真身 + 外来 junction（链接不搬真身）
       makeEntry(ext, path.join(f.userAgentsSkills, 'ag-ext'));
+      const libRes = writeSkill(f.library, 'ag-res'); // 迁移完成态：库有本体 + agents 区是链回库的常驻 junction
+      makeEntry(libRes, path.join(f.userAgentsSkills, 'ag-res'));
       const pv = m.previewAgents(f.roots);
       setEq(pv.moves.map((x) => x.name), ['ag-one', 'ag-two'], '只列无 manifest 纯目录');
       ok(pv.keep.some((k) => k.name === 'ag-foreign' && k.reason === 'manifest'), '带 manifest 他人条目 → keep');
       ok(pv.keep.some((k) => k.name === 'ag-ext' && k.reason === 'link'), 'junction 链接 → keep 不搬');
+      ok(pv.keep.some((k) => k.name === 'ag-res' && k.reason === 'resident'), '链回库的常驻 junction → resident（不再误报「库同名」）');
+      ok(!pv.moves.some((x) => x.name === 'ag-res'), '常驻链接不入 moves');
       ok(pv.warnings.some((w) => w.includes('只剩常驻')), '披露「其他 harness 只剩常驻」');
       const L = { data: null };
       const ledger = { load: async () => L.data, save: async (d) => { L.data = JSON.parse(JSON.stringify(d)); } };
@@ -1121,6 +1127,12 @@ const CASES = [
       L3.data = null; // 模拟插件重装（fresh ledger）+ agents 区只剩 keep 条目 = 空预览
       const ap4 = await m.applyAgents(f.roots, { ledger: ledger3 });
       eq(ap4.moved.length, 0, '空预览 + 空 ledger apply 不崩（M3：曾 null.moved TypeError）');
+      // 迁移完成态预览（用户报告 2026-10-26）：0 移动不再弹「只剩常驻」告警，三类保留各归其位 + 中性说明
+      const pv2 = m.previewAgents(f.roots);
+      eq(pv2.moves.length, 0, '已迁完 = 空预览');
+      eq(pv2.keep.map((k) => `${k.name}:${k.reason}`).sort(), ['ag-ext:link', 'ag-foreign:manifest', 'ag-res:resident'], '保留分类：外部链接/他人记账/已是常驻');
+      ok(pv2.warnings.every((w) => !w.includes('只剩常驻')), '空预览不再弹「只剩常驻」告警');
+      ok((pv2.notes ?? []).some((n) => n.includes('已是迁移后状态')), '空预览给中性说明');
       // 旧向导 undo 不受 claimed 逻辑影响：legacy ledger 无 claimed 字段
       const L2 = { data: { moved: [{ name: 'legacy-x', from: path.join(f.userDsh, 'legacy-x'), to: path.join(f.library, 'legacy-x') }] } };
       writeSkill(f.library, 'legacy-x');

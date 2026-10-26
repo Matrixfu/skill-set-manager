@@ -42,6 +42,26 @@ export function makeEntry(target, linkPath, { fs: fsImpl = fs } = {}) {
 }
 
 /**
+ * 链接点是否指向 root 之内（含 root 自身）：失效链、越界、读不到真身一律 false。
+ * 调用方须先经 entryKind 确认是链接（普通目录本就落在 root 内时也会返回 true）。
+ * 真身取 readlinkSync：一步即得、不跟随链中链，也不受 junction/symlink 类型差异影响；
+ * 相对目标按链接父目录解析，win32 盘符/大小写 resolve+lowercase 归一。
+ * 注意：DSH 文件沙箱会把 junction 虚拟化成普通目录（readlink 报 EINVAL、realpath 原地返回），
+ * 此时退化为 false（按外部链接处理）——link 类验收必须在沙箱外跑 scripts/verify.mjs（实锤 2026-10-26）。
+ */
+export function linkPointsInto(linkPath, root, { fs: fsImpl = fs } = {}) {
+  const norm = (p) => {
+    const r = path.resolve(p);
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  };
+  try {
+    const t = norm(path.resolve(path.dirname(linkPath), fsImpl.readlinkSync(linkPath)));
+    const r = norm(root);
+    return t === r || t.startsWith(r + path.sep);
+  } catch { return false; }
+}
+
+/**
  * 只删条目自身，永不跟随删本体。kind 缺省时按 entryKind 自判；
  * stat 失败但父目录 Dirent 显示仍在（死 junction/死 symlink 挂角）→ 按链摘除，
  * 否则外删条目永远删不掉、重建永远 EEXIST（review M1）。

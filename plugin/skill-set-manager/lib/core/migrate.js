@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { copyDirTree } from './github.js';
 import { syncResident } from './resident.js';
-import { entryKind, removeEntry } from './linkx.js';
+import { entryKind, removeEntry, linkPointsInto } from './linkx.js';
 import { claimSource, readManifest } from './manifest.js';
 
 const hasSkillMd = (d, fsImpl) => { try { fsImpl.statSync(path.join(d, 'SKILL.md')); return true; } catch { return false; } };
@@ -34,7 +34,7 @@ export function preview(roots, { fromDir = roots.userDshRoot } = {}, { fs: fsImp
     const to = path.join(roots.libraryRoot, name);
     let exists = false;
     try { fsImpl.statSync(to); exists = true; } catch {}
-    if (exists) { keep.push({ name, reason: 'exists' }); continue; }
+    if (exists) { keep.push({ name, reason: 'exists', from }); continue; }
     moves.push({ name, from, to });
   }
   const warnings = ['旧通用区（~/.dsh/skills）中的技能将整体移入技能库；移空后，其他 harness 将只剩常驻技能（§8.2）。跨 harness 通用区（~/.agents/skills）不在本向导范围——请使用「跨 harness 通用区迁移」（同页上方）。'];
@@ -93,6 +93,9 @@ export async function undo(roots, { ledger }, { fs: fsImpl = fs } = {}) {
 /**
  * P3 agents 存量迁移（设计 §5.7/§6.6）：只移「无 .manifest.json、非链接、库无同名」的 agents 区纯目录。
  * 带 manifest = 他人记账（ADR-0003 不动）；链接（自家常驻/外部）不搬真身。
+ * 保留理由分三类（用户报告 2026-10-26：迁完后预览把 47 条自建常驻链全报成「同名保留(exists)」，
+ * 像迁移失败）：resident = 链回本库的常驻链接（已是迁移后状态）｜link = 外部真身的链接｜manifest = 他人记账。
+ * 0 移动时「只剩常驻」是**待迁移动作**的预告，不该继续弹：挪进 notes 做中性说明。
  */
 export function previewAgents(roots, { fs: fsImpl = fs } = {}) {
   const pv = preview(roots, { fromDir: roots.userAgentsRoot }, { fs: fsImpl });
@@ -104,10 +107,22 @@ export function previewAgents(roots, { fs: fsImpl = fs } = {}) {
     if (readManifest(mv.from, { fs: fsImpl })) { kept.push({ name: mv.name, reason: 'manifest' }); continue; }
     moves.push(mv);
   }
+  const keep = pv.keep.map((k) => { // 库同名先分辨：链回库的是自家常驻链，不是他人同名条目
+    const from = k.from ?? path.join(roots.userAgentsRoot, k.name);
+    const kind = entryKind(from, { fs: fsImpl });
+    if (kind !== 'junction' && kind !== 'symlink') return { name: k.name, reason: k.reason };
+    return { name: k.name, reason: linkPointsInto(from, roots.libraryRoot, { fs: fsImpl }) ? 'resident' : 'link' };
+  });
+  const all = [...keep, ...kept];
+  const resident = all.filter((k) => k.reason === 'resident').length;
+  const pending = moves.length > 0;
   return {
     moves,
-    keep: [...pv.keep, ...kept],
-    warnings: ['跨 harness 通用区（~/.agents/skills）中的技能将移入技能库并登记为本地技能（source unknown）；移动后，其他 harness 将只剩常驻技能（P3，设计 §5.7）。'],
+    keep: all,
+    warnings: pending ? ['跨 harness 通用区（~/.agents/skills）中的技能将移入技能库并登记为本地技能（source unknown）；移动后，其他 harness 将只剩常驻技能（P3，设计 §5.7）。'] : [],
+    notes: pending ? [] : [all.length
+      ? `已是迁移后状态：跨 harness 通用区常驻链接 ${resident} 项、保留不搬 ${all.length - resident} 项（他人条目/同名冲突），无需再迁移。`
+      : '跨 harness 通用区（~/.agents/skills）没有待迁移的条目。'],
   };
 }
 
