@@ -903,6 +903,60 @@ const CASES = [
       setEq(skillDirNames(f.projectA), ['ov-a', 'ov-b'], '结束覆盖收敛回绑定态');
     },
   },
+  {
+    id: 'translations-core', title: 'P3-T1 翻译缓存核心：折叠块 description 读取+稳定哈希、reconcile 对账/失效/GC、decorate 三字段',
+    async run(f) {
+      await withRoots(f);
+      const tr = await core('translations');
+      // (1) readDescription：折叠块多行 → 单行 + 稳定哈希；无 frontmatter/无目录 → null
+      const dir1 = writeSkill(f.library, 'tr-fold');
+      fs.writeFileSync(path.join(dir1, 'SKILL.md'), '---\nname: tr-fold\ndescription: >\n  Use when receiving code review feedback,\n  after completing a task.\n---\n\nbody\n');
+      const r1 = tr.readDescription(dir1);
+      eq(r1.text, 'Use when receiving code review feedback, after completing a task.', '折叠块展开为单行');
+      eq(r1.hash, sha256(Buffer.from(r1.text.trim())), '哈希 = sha256(text.trim()) 带前缀');
+      eq(tr.readDescription(dir1).hash, r1.hash, '哈希稳定');
+      const dir2 = writeSkill(f.library, 'tr-nofm');
+      fs.writeFileSync(path.join(dir2, 'SKILL.md'), 'no frontmatter here\n');
+      eq(tr.readDescription(dir2), { text: null, hash: null }, '无 frontmatter → null');
+      eq(tr.readDescription(path.join(f.library, 'ghost')), { text: null, hash: null }, '无目录 → null');
+      // (2) reconcile：新名 pending、同哈希不动、改哈希重置、库消失 GC
+      const r0 = tr.reconcile({}, [{ name: 'tr-fold', hash: r1.hash, en: r1.text }]);
+      eq(r0.pending, ['tr-fold'], '新名字 → pending');
+      eq(r0.cache['tr-fold'].en, r1.text, 'en 快照入缓存');
+      eq(r0.cache['tr-fold'].status, 'pending', '新条目状态 pending');
+      let cache = tr.setTranslated(r0.cache, 'tr-fold', { srcHash: r1.hash, en: r1.text, zh: '收到代码审查反馈时使用', status: 'ok' });
+      eq(cache['tr-fold'].zh, '收到代码审查反馈时使用', 'setTranslated 写入 zh');
+      eq(cache['tr-fold'].status, 'ok', 'setTranslated 写状态');
+      let r = tr.reconcile(cache, [{ name: 'tr-fold', hash: r1.hash, en: r1.text }]);
+      eq(r.pending, [], '同哈希 → 不重翻');
+      eq(r.cache['tr-fold'].status, 'ok', 'ok 保持');
+      const newHash = sha256(Buffer.from('changed text'));
+      r = tr.reconcile(r.cache, [{ name: 'tr-fold', hash: newHash, en: 'changed text' }]);
+      eq(r.pending, ['tr-fold'], '改哈希 → 重置 pending');
+      eq(r.cache['tr-fold'].status, 'pending', '状态回 pending');
+      r = tr.reconcile(r.cache, []);
+      eq(Object.keys(r.cache), [], '库里消失 → 条目删除（GC 即在 reconcile）');
+      r = tr.reconcile({}, [{ name: 'tr-empty', hash: null, en: null }]);
+      eq(r.pending, [], '无描述文本 → 不入队');
+      eq(Object.keys(r.cache), [], '无描述文本 → 不建条目');
+      // (3) decorate：三字段口径
+      const libRows = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+      const d = tr.decorate(libRows, {
+        a: { srcHash: 'h', en: 'en a', zh: '中文甲', status: 'ok' },
+        b: { srcHash: 'h', en: 'en b', zh: 'x', status: 'failed' },
+      });
+      eq(d[0].description, 'en a', 'description = en 快照');
+      eq(d[0].descriptionZh, '中文甲', 'ok → zh');
+      eq(d[0].descriptionStatus, 'ok', '状态 ok');
+      eq(d[1].descriptionZh, null, 'failed → descriptionZh=null');
+      eq(d[1].descriptionStatus, 'failed', '状态 failed 透出');
+      eq(d[2].description, null, '无缓存 → description null');
+      eq(d[2].descriptionStatus, 'none', '无缓存 → none');
+      eq(libRows[0].description, undefined, 'decorate 不污染原行');
+      eq(d.length, 3, 'decorate 行数不变');
+      eq(tr.CACHE_KEY, 'translations', '缓存 key 常量');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',
