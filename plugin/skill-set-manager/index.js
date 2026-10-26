@@ -54,7 +54,7 @@ export function apply(ctx, config) {
     'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
-    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'unbind', 'claimSource',
+    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource',
   ];
 
   class SkillSetManagerRemote extends TypertRemoteService {
@@ -445,6 +445,27 @@ export function apply(ctx, config) {
 
     async migrateUndo() {
       return migrate.undo(roots, { ledger: this._migrateLedger() });
+    }
+
+    // ---- P3：~/.agents/skills 存量迁移（设计 §5.7/§6.6；ledger 独立域，不与旧向导互踩） ----
+
+    _migrateAgentsLedger() {
+      return {
+        load: async () => (await storeOf()).get('migrate-agents', 'ledger'),
+        save: async (data) => { await (await storeOf()).put('migrate-agents', 'ledger', data); },
+      };
+    }
+
+    async migrateAgentsPreview() {
+      return migrate.previewAgents(roots);
+    }
+
+    async migrateAgentsApply() {
+      return migrate.applyAgents(roots, { ledger: this._migrateAgentsLedger() });
+    }
+
+    async migrateAgentsUndo() {
+      return migrate.undoAgents(roots, { ledger: this._migrateAgentsLedger() });
     }
 
     /** 解绑（面板缺口）：回收托管条目 + 删 binding/managed；gitignore 行保留。 */

@@ -1046,6 +1046,46 @@ const CASES = [
       ok(entryKind(path.join(f.userDsh, 'pa')) === 'junction', '开关开时链接保留');
     },
   },
+  {
+    id: 'migrate-agents', title: 'P3-T5 agents 存量迁移：只列无 manifest 纯目录、入库认领 unknown、undo 删认领复原、ledger 独立',
+    async run(f) {
+      await withRoots(f);
+      const m = await core('migrate');
+      const { readManifest } = await core('manifest');
+      const { entryKind, makeEntry } = await core('linkx');
+      writeSkill(f.userAgentsSkills, 'ag-one'); writeSkill(f.userAgentsSkills, 'ag-two');
+      const foreign = writeSkill(f.userAgentsSkills, 'ag-foreign');
+      fs.writeFileSync(path.join(foreign, '.manifest.json'), JSON.stringify({ source: 'github:some/one' }));
+      const ext = writeSkill(path.join(f.base, 'ext-src'), 'ag-ext'); // 外部真身 + 外来 junction（链接不搬真身）
+      makeEntry(ext, path.join(f.userAgentsSkills, 'ag-ext'));
+      const pv = m.previewAgents(f.roots);
+      setEq(pv.moves.map((x) => x.name), ['ag-one', 'ag-two'], '只列无 manifest 纯目录');
+      ok(pv.keep.some((k) => k.name === 'ag-foreign' && k.reason === 'manifest'), '带 manifest 他人条目 → keep');
+      ok(pv.keep.some((k) => k.name === 'ag-ext' && k.reason === 'link'), 'junction 链接 → keep 不搬');
+      ok(pv.warnings.some((w) => w.includes('只剩常驻')), '披露「其他 harness 只剩常驻」');
+      const L = { data: null };
+      const ledger = { load: async () => L.data, save: async (d) => { L.data = JSON.parse(JSON.stringify(d)); } };
+      const ap = await m.applyAgents(f.roots, { ledger });
+      ok(ap.moved.includes('ag-one') && ap.moved.includes('ag-two'), 'apply 返回 moved');
+      ok(fs.existsSync(path.join(f.library, 'ag-one', 'SKILL.md')), '入库');
+      eq(readManifest(path.join(f.library, 'ag-one'))?.source, 'unknown', '入库认领 source unknown');
+      ok(fs.existsSync(path.join(f.userAgentsSkills, 'ag-foreign')), 'agents 区他人条目不动');
+      eq(entryKind(path.join(f.userAgentsSkills, 'ag-ext')), 'junction', '外来链接不动');
+      ok(L.data.moved.every((x) => x.claimed), 'ledger 标 claimed（undo 据此删认领）');
+      const un = await m.undoAgents(f.roots, { ledger });
+      setEq(un.restored, ['ag-one', 'ag-two'], '逆序复原');
+      ok(fs.existsSync(path.join(f.userAgentsSkills, 'ag-one', 'SKILL.md')), '回移 agents 区');
+      eq(readManifest(path.join(f.userAgentsSkills, 'ag-one')), null, '复原后删认领 manifest（不留 foreign 假象）');
+      ok(!fs.existsSync(path.join(f.library, 'ag-one')), '库侧移除');
+      eq(JSON.stringify(L.data.moved), JSON.stringify([]), 'ledger 清空');
+      // 旧向导 undo 不受 claimed 逻辑影响：legacy ledger 无 claimed 字段
+      const L2 = { data: { moved: [{ name: 'legacy-x', from: path.join(f.userDsh, 'legacy-x'), to: path.join(f.library, 'legacy-x') }] } };
+      writeSkill(f.library, 'legacy-x');
+      const ledger2 = { load: async () => L2.data, save: async (d) => { L2.data = JSON.parse(JSON.stringify(d)); } };
+      const un2 = await m.undo(f.roots, { ledger: ledger2 });
+      setEq(un2.restored, ['legacy-x'], 'legacy undo 照常复原');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',

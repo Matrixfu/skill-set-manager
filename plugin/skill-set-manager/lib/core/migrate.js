@@ -8,6 +8,7 @@ import path from 'node:path';
 import { copyDirTree } from './github.js';
 import { syncResident } from './resident.js';
 import { entryKind, removeEntry } from './linkx.js';
+import { claimSource, readManifest } from './manifest.js';
 
 const hasSkillMd = (d, fsImpl) => { try { fsImpl.statSync(path.join(d, 'SKILL.md')); return true; } catch { return false; } };
 
@@ -75,7 +76,11 @@ export async function undo(roots, { ledger }, { fs: fsImpl = fs } = {}) {
         const kFrom = entryKind(item.from, { fs: fsImpl });
         if (kFrom === 'junction' || kFrom === 'symlink') removeEntry(item.from, kFrom, { fs: fsImpl });
         if (fsImpl.existsSync(item.from)) warnings.push(`原位已存在同名目录，跳过 "${item.name}"`);
-        else { moveDir(item.to, item.from, fsImpl); restored.push(item.name); }
+        else {
+          moveDir(item.to, item.from, fsImpl);
+          if (item.claimed) { try { fsImpl.rmSync(path.join(item.from, '.manifest.json'), { force: true }); } catch {} } // agents 迁移的认领随回滚撤销（不留 foreign 假象）
+          restored.push(item.name);
+        }
       }
     } catch (e) { warnings.push(`${item.name}: ${e?.message ?? e}`); }
     data.moved = data.moved.filter((x) => x.name !== item.name);
@@ -83,4 +88,43 @@ export async function undo(roots, { ledger }, { fs: fsImpl = fs } = {}) {
   }
   const w2 = await syncResident(roots, { fs: fsImpl });
   return { restored, warnings: [...warnings, ...(w2?.warnings ?? [])] };
+}
+
+/**
+ * P3 agents 存量迁移（设计 §5.7/§6.6）：只移「无 .manifest.json、非链接、库无同名」的 agents 区纯目录。
+ * 带 manifest = 他人记账（ADR-0003 不动）；链接（自家常驻/外部）不搬真身。
+ */
+export function previewAgents(roots, { fs: fsImpl = fs } = {}) {
+  const pv = preview(roots, { fromDir: roots.userAgentsRoot }, { fs: fsImpl });
+  const moves = [];
+  const kept = [];
+  for (const mv of pv.moves) {
+    const k = entryKind(mv.from, { fs: fsImpl });
+    if (k !== 'dir') { kept.push({ name: mv.name, reason: 'link' }); continue; }
+    if (readManifest(mv.from, { fs: fsImpl })) { kept.push({ name: mv.name, reason: 'manifest' }); continue; }
+    moves.push(mv);
+  }
+  return {
+    moves,
+    keep: [...pv.keep, ...kept],
+    warnings: ['跨 harness 通用区（~/.agents/skills）中的技能将移入技能库并登记为本地技能（source unknown）；移动后，其他 harness 将只剩常驻技能（P3，设计 §5.7）。'],
+  };
+}
+
+/** 执行 + 逐项认领 source:'unknown'（盘上内容即基线，§8.1），ledger 条目标 claimed 供 undo 删认领。 */
+export async function applyAgents(roots, { ledger }, { fs: fsImpl = fs } = {}) {
+  const pv = previewAgents(roots, { fs: fsImpl });
+  const res = await apply(roots, { moves: pv.moves, ledger }, { fs: fsImpl });
+  const data = await ledger.load();
+  for (const item of data.moved) {
+    if (item.claimed) continue;
+    try { claimSource(roots, { name: item.name, source: 'unknown' }, { fs: fsImpl }); item.claimed = true; } catch {}
+  }
+  await ledger.save(data);
+  return { ...res, kept: pv.keep.map((k) => k.name) };
+}
+
+/** 回滚：复用 undo（claimed 条目回移后删认领 manifest）。 */
+export async function undoAgents(roots, { ledger }, { fs: fsImpl = fs } = {}) {
+  return undo(roots, { ledger }, { fs: fsImpl });
 }
