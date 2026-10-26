@@ -23,6 +23,27 @@ export function parseSingleReply(text) {
     .trim();
 }
 
+/**
+ * rc.3 形状容错（崩溃复盘 2026-10-26：provider 以对象进 llm 面 → "[object Object]" NO_ADAPTER 崩 host）：
+ * 元素可能是字符串或 {id}/{name} 对象，统一收成非空字符串或 null。
+ */
+export function refId(x) {
+  if (typeof x === 'string') return x.trim() || null;
+  if (x && typeof x === 'object') {
+    const v = x.id ?? x.name ?? x.value;
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  }
+  return null;
+}
+
+/** currentSelection()/手选对 → {provider,model} 字符串对；任一侧收不出即 null（调用方降级无 LLM，绝不带对象进 stream）。 */
+export function normalizeSel(sel) {
+  if (!sel || typeof sel !== 'object') return null;
+  const provider = refId(sel.provider ?? sel.providerId);
+  const model = refId(sel.model ?? sel.modelId);
+  return provider && model ? { provider, model } : null;
+}
+
 export async function runBatch({ items, callLlm, callMt, concurrency = 2, limit = 50 }) {
   const all = Array.isArray(items) ? items : [];
   const batch = all.slice(0, limit);

@@ -18,7 +18,7 @@ import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
-import { syncResident, pruneLegacyResidentLinks } from './lib/core/resident.js';
+import { syncResident, pruneLegacyResidentLinks, dropResidentName } from './lib/core/resident.js';
 import os from 'node:os';
 import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
 import { resolveRepoSource } from './lib/core/source.js';
@@ -29,7 +29,7 @@ import { diagnose } from './lib/core/diagnose.js';
 import * as migrate from './lib/core/migrate.js';
 import { decorate } from './lib/core/translations.js';
 import * as dataPlane from './lib/core/dataPlane.js';
-import { buildLlmPrompt } from './lib/core/translateExec.js';
+import { buildLlmPrompt, refId, normalizeSel } from './lib/core/translateExec.js';
 
 /** 行级配置（cordis.patch.yml 的 config 块；用户 patch 层升级存活）。 */
 export const Config = z.object({
@@ -52,6 +52,7 @@ export function apply(ctx, config) {
   });
   let storePromise;
   const storeOf = () => (storePromise ??= openDomain(ctx, { fallbackDir: roots.dshHome }));
+  const trInflight = new Set(); // M1 互斥（终审 2026-10-26）：autoTranslate 后台批与手动 translateRun 不叠加同条目重复出网
 
   // Remote 命名空间 = 操作唯一实现（§14）；fetch 兜底通道共用同一清单。
   const REMOTE_METHODS = [
@@ -373,6 +374,10 @@ export function apply(ctx, config) {
 
     async uninstallSkill(req) {
       const res = await lifecycle.uninstallSkill(roots, { name: req.name, bindings: await this._candidateProjects() });
+      // M4（终审 2026-10-26）：卸载常驻技能 → 常驻名单同步剔除 + 回收链接（否则幽灵名灰行失真、启动 syncResident 反复告警）。
+      try {
+        if (dropResidentName(roots, req.name)) await syncResident(roots);
+      } catch (e) { ctx.logger.warn(`skill-set-manager 常驻名单剔除失败: ${e?.message ?? e}`); }
       return res;
     }
 
@@ -488,34 +493,63 @@ export function apply(ctx, config) {
 
     // ---- P3：翻译数据面（设计 §6.1/§5.8——llm 主路由，translator 在场才兜底） ----
 
+    /** 待翻清单（M2 终审 2026-10-26）：pending + failed 都返回——failed 同哈希不自愈但 UI 须有重试入口（AC#2）。 */
     async translatePending() {
       const store = await storeOf();
       const r = await dataPlane.reconcileLibrary(roots, store);
-      return { pending: r.pending.map((name) => ({ name, en: r.cache[name]?.en ?? null })), autoTranslate: config.autoTranslate };
+      const failed = Object.keys(r.cache).filter((name) => r.cache[name]?.status === 'failed' && r.cache[name]?.en).sort();
+      return {
+        pending: r.pending.map((name) => ({ name, en: r.cache[name]?.en ?? null })),
+        failed: failed.map((name) => ({ name, en: r.cache[name]?.en ?? null })),
+        autoTranslate: config.autoTranslate,
+      };
     }
 
-    /** 模型面（T0 探针形状）：current = agentDefaultModel 当前选择；options = listProviders+listModels({providerId})。 */
+    /**
+     * 模型面（rc.3 探针实锤 2026-10-26：listModels 改位置字符串参数，对象参数被整体 stringify 成
+     * "[object Object]" 炸 NO_ADAPTER；rc.2 则是 {providerId} 对象参数——双签名兼容）。
+     * 全部调用 await Promise.resolve 收 rejection、逐 provider 隔离、refId 归一，绝不逃到 Remote 面。
+     */
     async translateModels() {
       let current = null;
       const options = [];
       const llm = ctx.get('llm');
-      try { current = ctx.get('agentDefaultModel')?.currentSelection?.() ?? null; } catch {}
+      const listModels = async (pid) => {
+        try { return await Promise.resolve(llm.listModels(pid)); } // rc.3：位置字符串参数
+        catch (e1) {
+          try { return await Promise.resolve(llm.listModels({ providerId: pid })); } // rc.2：对象参数
+          catch { throw e1; }
+        }
+      };
+      try { current = normalizeSel(await Promise.resolve(ctx.get('agentDefaultModel')?.currentSelection?.() ?? null)); } catch (e) { ctx.logger.warn(`skill-set-manager 当前模型读取失败: ${e?.message ?? e}`); }
       try {
-        for (const p of llm?.listProviders?.() ?? []) {
-          for (const m of llm?.listModels?.({ providerId: p.id }) ?? []) options.push({ provider: p.id, model: m.id, label: `${p.name ?? p.id} · ${m.name ?? m.id}` });
+        const provs = await Promise.resolve(llm?.listProviders?.() ?? []);
+        for (const p of Array.isArray(provs) ? provs : []) {
+          const pid = refId(p);
+          if (!pid) continue;
+          const pname = typeof p?.name === 'string' && p.name.trim() ? p.name.trim() : pid;
+          let models = [];
+          try { models = await listModels(pid); } catch (e) { ctx.logger.warn(`skill-set-manager provider ${pid} 模型列表跳过: ${e?.message ?? e}`); continue; } // 单 provider 失败只损失该 provider
+          for (const m of Array.isArray(models) ? models : []) {
+            const mid = refId(m);
+            if (!mid) continue;
+            const mname = typeof m?.name === 'string' && m.name.trim() ? m.name.trim() : mid;
+            options.push({ provider: pid, model: mid, label: `${pname} · ${mname}` });
+          }
         }
       } catch (e) { ctx.logger.warn(`skill-set-manager 模型列表失败: ${e?.message ?? e}`); }
       return { current, options };
     }
 
-    /** llm 单条调用：content 分块数组 + 只拼非 reasoning delta（T0 探针实定形状）。 */
+    /** llm 单条调用：归一后 provider/model 必须是字符串（rc.3 教训：对象进 stream 即崩）；只拼非 reasoning delta。 */
     _callLlmTranslate(sel) {
       const llm = ctx.get('llm');
-      if (!llm || !sel?.provider || !sel?.model) return null;
+      const s = normalizeSel(sel);
+      if (!llm || !s) return null;
       return async (en) => {
         let cur = null;
         let text = '';
-        for await (const ev of llm.stream({ provider: sel.provider, model: sel.model, messages: [{ role: 'user', content: [{ type: 'text', text: buildLlmPrompt([en]) }] }] })) {
+        for await (const ev of llm.stream({ provider: s.provider, model: s.model, messages: [{ role: 'user', content: [{ type: 'text', text: buildLlmPrompt([en]) }] }] })) {
           if (ev.type === 'block-start') cur = ev.blockType ?? null;
           else if (typeof ev.type === 'string' && ev.type.endsWith('-delta') && cur !== 'reasoning' && typeof ev.text === 'string') text += ev.text;
           else if (ev.type === 'finish' && ev.reason && ev.reason !== 'stop' && !text) throw new Error(`llm finish: ${ev.reason}`);
@@ -534,15 +568,31 @@ export function apply(ctx, config) {
     }
 
     async _translate(names, { provider = null, model = null } = {}) {
-      const store = await storeOf();
-      let sel = null;
-      try { sel = provider && model ? { provider, model } : (ctx.get('agentDefaultModel')?.currentSelection?.() ?? null); } catch {}
-      const r = await dataPlane.translateRunCore({ roots, store, names, callLlm: this._callLlmTranslate(sel), callMt: this._callMtTranslate() });
-      return { done: r.done, failed: r.failed, skipped: r.skipped };
+      const all = Array.isArray(names) ? names : [];
+      const fresh = all.filter((n) => !trInflight.has(n)); // M1 互斥：已在翻的条目跳过（手动批与 autoTranslate 后台批可叠加时不重复出网）
+      const skipped = all.length - fresh.length;
+      if (!fresh.length) return { done: [], failed: [], skipped };
+      fresh.forEach((n) => trInflight.add(n));
+      try {
+        const store = await storeOf();
+        let sel = null;
+        try { sel = normalizeSel(provider && model ? { provider, model } : (await Promise.resolve(ctx.get('agentDefaultModel')?.currentSelection?.() ?? null))); } catch (e) { ctx.logger.warn(`skill-set-manager 翻译模型选择失败: ${e?.message ?? e}`); }
+        const r = await dataPlane.translateRunCore({ roots, store, names: fresh, callLlm: this._callLlmTranslate(sel), callMt: this._callMtTranslate() });
+        return { done: r.done, failed: r.failed, skipped: r.skipped + skipped };
+      } finally {
+        fresh.forEach((n) => trInflight.delete(n));
+      }
     }
 
     async translateRun(req) {
-      return this._translate(Array.isArray(req?.names) ? req.names : [], { provider: req?.provider ?? null, model: req?.model ?? null });
+      // 兜底：RPC 内任何未预期抛出不得逃到 Remote 面（2026-10-26 实锤：NO_ADAPTER 同步抛经
+      // webServer 兜底通道成为 unhandled rejection，直接崩 host 进程）。
+      try {
+        return await this._translate(Array.isArray(req?.names) ? req.names : [], { provider: req?.provider ?? null, model: req?.model ?? null });
+      } catch (e) {
+        ctx.logger.warn(`skill-set-manager 批量翻译失败: ${e?.message ?? e}`);
+        return { done: [], failed: (Array.isArray(req?.names) ? req.names : []).map((name) => ({ name, error: String(e?.message ?? e) })), skipped: 0 };
+      }
     }
 
     /** 解绑（面板缺口）：回收托管条目 + 删 binding/managed；gitignore 行保留。 */

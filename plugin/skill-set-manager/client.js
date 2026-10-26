@@ -15,7 +15,6 @@ window.__ModuleLoader__.load({
       zh: {
         chip: '技能集', panel: '技能集管理器', close: '关闭', sets: '技能集', projectRoot: '项目根',
         rootDrift: '（≠ 会话目录——切换影响该仓库全部会话）', resident: '全局常驻（不受管控）',
-        residentHint: '常驻 = 从库链入全局生效区，所有项目自动包含；生效清单比技能集大属正常',
         managedSec: '技能集提供（受管）', override: '临时覆盖', overrideOn: '临时覆盖中', endOverride: '结束覆盖',
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
@@ -23,7 +22,7 @@ window.__ModuleLoader__.load({
         regen: '重新生成', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
-        residentPick: '勾选常驻', noSession: '先在对话页打开一个会话',
+        noSession: '先在对话页打开一个会话',
         settingsLabel: '技能集管理器', tabLibrary: '库', tabOps: '安装与更新', tabDiag: '诊断',
         filterPh: '按名称/来源过滤', managedTag: '受管', unmanagedTag: '未登记', modifiedTag: '本地改动',
         backupsTitle: '回收站', restoreGo: '恢复', checkUp: '检查更新', applyUp: '应用更新',
@@ -33,7 +32,6 @@ window.__ModuleLoader__.load({
         migrateTitle: '通用生效区迁移（一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
         migrateMoves: '将移动', migrateKeep: '同名保留',
         migrateAgentsTitle: '跨 harness 通用区迁移（~/.agents/skills，一次性）', migrateAgentsGo: '预览并迁移',
-        migrateAgentsWarn: '移动后，其他 harness 将只剩常驻技能；被移技能随后在技能库中登记为本地技能。',
         diagRun: '运行诊断', fixReclaim: '回收失效链接', fixRebuild: '按当前集重建',
         diagPartition: '分区说明', diagCopies: '副本漂移', diagDangling: '悬空引用',
         diagDeadLinks: '失效链接', diagStructure: '结构问题', diagEnv: '环境',
@@ -43,9 +41,9 @@ window.__ModuleLoader__.load({
         settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
         searchPh: '按名称/用途搜索技能…', hitCount: '命中', pendingTag: '待翻译',
         residentRow: '全局常驻 · 已在所有项目生效', foreignRow: '外来常驻 · 其他工具放入 ~/.agents/skills',
-        goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择，或用临时覆盖（仅本会话）',
+        goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择技能集，之后才可用临时覆盖（仅本会话）', // N6：未绑定时临时覆盖不可用（host 会拒），文案不得引导点击
         tabGlobal: '全局技能集', globalTabHint: '常驻技能在所有项目生效；链接落在下行所示目录（跨 harness 共享，其他工具可见）。外来常驻条目只读。',
-        residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果',
+        residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果', failedRetryable: '条此前失败 · 点击一并重试',
         modelSelect: '翻译模型（默认 = 当前会话模型）', currentModel: '当前模型（默认）',
         autoTranslateHint: '自动翻译默认关（零出网）；关闭时用手动批量按钮。中文写缓存、不改技能原文。',
         tabTitle: '技能集详情', tabDesc: '完整生效清单、状态分区与诊断摘要', openRight: '在右栏打开技能集详情',
@@ -65,7 +63,6 @@ window.__ModuleLoader__.load({
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
         rootDrift: '(≠ session dir — switching affects every session in this repo)', resident: 'Global resident (unmanaged)',
-        residentHint: 'Resident = linked from library into the global effective zone; every project includes them automatically',
         managedSec: 'Set-provided (managed)', override: 'Session override', overrideOn: 'Override active', endOverride: 'End override',
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
@@ -73,7 +70,7 @@ window.__ModuleLoader__.load({
         regen: 'Regenerate', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
-        residentPick: 'Toggle resident', noSession: 'Open a conversation session first',
+        noSession: 'Open a conversation session first',
         settingsLabel: 'Skill Sets', tabLibrary: 'Library', tabOps: 'Install & update', tabDiag: 'Diagnose',
         filterPh: 'Filter by name/source', managedTag: 'managed', unmanagedTag: 'untracked', modifiedTag: 'locally modified',
         backupsTitle: 'Trash', restoreGo: 'Restore', checkUp: 'Check update', applyUp: 'Apply update',
@@ -83,7 +80,6 @@ window.__ModuleLoader__.load({
         migrateTitle: 'Migrate common skills (one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
         migrateMoves: 'Will move', migrateKeep: 'Kept (name clash)',
         migrateAgentsTitle: 'Migrate cross-harness skills (~/.agents/skills, one-time)', migrateAgentsGo: 'Preview & migrate',
-        migrateAgentsWarn: 'Other harnesses will keep only resident skills; moved skills are registered as local library skills.',
         diagRun: 'Run diagnose', fixReclaim: 'Reclaim dead links', fixRebuild: 'Rebuild from set',
         diagPartition: 'Partition', diagCopies: 'Copy drift', diagDangling: 'Dangling refs',
         diagDeadLinks: 'Dead links', diagStructure: 'Structure', diagEnv: 'Environment',
@@ -93,9 +89,9 @@ window.__ModuleLoader__.load({
         settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
         searchPh: 'Search skills by name or purpose…', hitCount: 'matches', pendingTag: 'untranslated',
         residentRow: 'Global resident · active in every project', foreignRow: 'Foreign resident · from ~/.agents/skills',
-        goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above, or use session override',
+        goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above first; session override becomes available after binding',
         tabGlobal: 'Global Skills', globalTabHint: 'Resident skills apply to every project; links live in the dir shown below (shared across harnesses). Foreign residents are read-only.',
-        residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result',
+        residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result', failedRetryable: 'previously failed · click to retry all',
         modelSelect: 'Translate model (default = current model)', currentModel: 'Current model (default)',
         autoTranslateHint: 'Auto-translate is off by default (no outbound traffic); use the batch button any time. Translations are cached; originals untouched.',
         tabTitle: 'Skill set detail', tabDesc: 'Full effective list, status partition and diagnose summary', openRight: 'Open skill set detail in right sidebar',
@@ -609,14 +605,20 @@ window.__ModuleLoader__.load({
           h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('filterPh'), value: filter, onChange: (e) => setFilter(e.target.value) }),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
           h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
-            tr?.pending?.length
+            h('button', { disabled: !!busy, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], failed: p.failed ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
+            (tr?.pending?.length || tr?.failed?.length)
               ? h(React.Fragment, null,
                   h('select', { className: 'ssm-input', style: { maxWidth: 280 }, disabled: !!busy, title: t('modelSelect'), value: tr.model, onChange: (e) => setTr({ ...tr, model: e.target.value }) },
                     h('option', { value: '' }, t('currentModel')),
-                    ...(tr.models?.options ?? []).map((o) => h('option', { key: `${o.provider}/${o.model}`, value: `${o.provider}|${o.model}` }, o.label))),
-                  h('button', { disabled: !!busy, onClick: () => run('trR', async () => { const [provider, model] = tr.model ? tr.model.split('|') : [null, null]; const r = await call(ctx, 'translateRun', { names: tr.pending.map((p) => p.name), provider, model }); setTr({ ...tr, result: r }); await load(); }) }, `${t('translateGo')}(${tr.pending.length})`))
-              : null),
+                    ...(tr.models?.options ?? []).map((o, i) => h('option', { key: `${o.provider}/${o.model}`, value: String(i) }, o.label))), // N7：value 用下标，免 provider/model 含 | 时碎裂
+                  tr.failed?.length ? h('span', { className: 'ssm-hint' }, `${tr.failed.length} ${t('failedRetryable')}`) : null,
+                  h('button', { disabled: !!busy, onClick: () => run('trR', async () => {
+                    const o = tr.model !== '' ? (tr.models?.options ?? [])[Number(tr.model)] ?? null : null; // M2：pending ∪ failed 一并（failed 同哈希不自愈，此处即重试入口，AC#2）
+                    const names = [...(tr.pending ?? []).map((p) => p.name), ...(tr.failed ?? []).map((f) => f.name)];
+                    const r = await call(ctx, 'translateRun', { names, provider: o?.provider ?? null, model: o?.model ?? null });
+                    setTr({ ...tr, result: r }); await load();
+                  }) }, `${t('translateGo')}(${(tr.pending?.length ?? 0) + (tr.failed?.length ?? 0)})`))
+                : null),
           tr?.result
             ? h('div', { className: 'ssm-hint' }, `${t('translateDone')}: ✓${(tr.result.done ?? []).length} ×${(tr.result.failed ?? []).length}${tr.result.skipped ? ` ⏭${tr.result.skipped}` : ''}`,
                 ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-warn-inline' }, `${f.name}: ${f.error ?? ''}`)))
@@ -625,7 +627,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-row' },
             h('button', { disabled: !!busy, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
             migA?.applied ? h('button', { disabled: !!busy, onClick: () => run('migAU', async () => { await call(ctx, 'migrateAgentsUndo', {}); setMigA(null); await load(); }) }, t('migrateUndo')) : null,
-            migA && !migA.applied ? h('button', { disabled: !!busy, onClick: () => run('migAA', async () => { await call(ctx, 'migrateAgentsApply', {}); setMigA({ preview: null, applied: true }); await load(); }) }, t('migrateApply')) : null,
+            migA && !migA.applied ? h('button', { disabled: !!busy || !(migA.preview?.moves?.length), onClick: () => run('migAA', async () => { await call(ctx, 'migrateAgentsApply', {}); setMigA({ preview: null, applied: true }); await load(); }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
             !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsTitle')) : null),
           migA?.preview
             ? h('div', { className: 'ssm-hint' },
@@ -719,12 +721,10 @@ window.__ModuleLoader__.load({
             h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: gOnly, disabled: !!busy, onChange: (e) => setGOnly(e.target.checked) }), ' ', t('residentOnly'))),
           grows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
           ...grows.map((r) => {
-            if (r.foreign) return h('div', { key: r.name, className: 'ssm-srow ssm-gray' },
+            if (r.foreign) return h('div', { key: r.name, className: 'ssm-srow ssm-gray' }, // N5：已在设置页内，不再挂「去设置管理」文案
               h('div', { className: 'ssm-row' },
                 h('span', { className: 'ssm-cur' }, r.name),
-                h(Tag, { text: t('foreignRow'), warn: true }),
-                h('span', { className: 'ssm-grow' }, null),
-                h('span', { className: 'ssm-n' }, t('goSettings'))));
+                h(Tag, { text: t('foreignRow'), warn: true })));
             const on = resident.includes(r.name);
             return h('div', { key: r.name, className: 'ssm-srow' },
               h('div', { className: 'ssm-row' },

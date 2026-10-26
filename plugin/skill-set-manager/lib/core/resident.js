@@ -7,6 +7,18 @@ import path from 'node:path';
 import { loadResident, saveResident } from './sets.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
 
+/**
+ * M4（终审 2026-10-26）：卸载常驻技能时从常驻名单剔除该名（调用方随后 syncResident 回收链接）。
+ * 否则名单幽灵名在 P3 弹窗语料里以灰行显示「已在所有项目生效」而实无库体无链接，文案失真。
+ * 命中返回 true；名单外返回 false（幂等）。
+ */
+export function dropResidentName(roots, name) {
+  const doc = loadResident(roots);
+  if (!doc.skills.includes(name)) return false;
+  saveResident(roots, doc.skills.filter((s) => s !== name), { links: doc.links });
+  return true;
+}
+
 /** 按 resident.json  desired 状态同步全部 globalResidentDirs；返回 { linked, warnings }。 */
 export async function syncResident(roots, { fs: fsImpl = fs } = {}) {
   const doc = loadResident(roots);
@@ -54,12 +66,14 @@ export async function pruneLegacyResidentLinks(roots, { fs: fsImpl = fs } = {}) 
   const warnings = [];
   for (const dir of Object.keys(links)) {
     if (keep.has(dir)) continue;
+    const failed = {};
     for (const [name, rec] of Object.entries(links[dir] ?? {})) {
       try { removeEntry(path.join(dir, name), rec?.kind, { fs: fsImpl }); }
-      catch (e) { warnings.push(`${dir}/${name}: ${e?.message ?? e}`); continue; }
+      catch (e) { warnings.push(`${dir}/${name}: ${e?.message ?? e}`); failed[name] = rec; continue; } // N1（终审 2026-10-26）：失败项保留台账，下次启动重试（防旧链永驻被扫描区）
       pruned.push({ dir, name });
     }
-    delete links[dir];
+    if (Object.keys(failed).length) links[dir] = failed;
+    else delete links[dir];
   }
   saveResident(roots, doc.skills, { links });
   return { pruned, warnings };

@@ -1044,6 +1044,27 @@ const CASES = [
       const pr3 = await pruneLegacyResidentLinks(f.roots);
       eq(pr3.pruned.length, 0, '在区链接不被回收');
       ok(entryKind(path.join(f.userDsh, 'pa')) === 'junction', '开关开时链接保留');
+      // M4（终审 2026-10-26）：卸载常驻技能 → 名单剔除 + syncResident 回收链接（防幽灵名灰行失真）
+      await withRoots(f); // 回默认 roots（常驻区 = agents）
+      const rs = await core('resident');
+      writeSkill(f.library, 'ghost-x');
+      saveResident(f.roots, ['ghost-x']);
+      await rs.syncResident(f.roots);
+      ok(fs.existsSync(path.join(f.userAgentsSkills, 'ghost-x')), '常驻链接建立');
+      ok(rs.dropResidentName(f.roots, 'ghost-x'), 'drop 命中返回 true');
+      eq(loadResident(f.roots).skills.includes('ghost-x'), false, '名单剔除该名');
+      await rs.syncResident(f.roots);
+      ok(!fs.existsSync(path.join(f.userAgentsSkills, 'ghost-x')), 'syncResident 回收自建链接');
+      ok(fs.existsSync(path.join(f.library, 'ghost-x', 'SKILL.md')), '库真身无损');
+      eq(rs.dropResidentName(f.roots, 'ghost-x'), false, '名单外名字 drop 返回 false（幂等）');
+      // N1（终审 2026-10-26）：prune removeEntry 失败 → 失败项保留台账下次重试，不清整目录
+      saveResident(f.roots, [], { links: { [f.userDsh]: { pb2: { kind: 'junction' }, pb3: { kind: 'junction' } } } });
+      const fakeFs = { rmdirSync: (p) => { if (String(p).includes('pb3')) throw new Error('EBUSY'); } }; // pb2 成功、pb3 失败
+      const pr4 = await pruneLegacyResidentLinks(f.roots, { fs: fakeFs });
+      setEq(pr4.pruned.map((x) => x.name), ['pb2'], '成功项进 pruned');
+      eq(pr4.warnings.length, 1, '失败项进 warnings');
+      const lk = loadResident(f.roots).links[f.userDsh];
+      ok(lk?.pb3 && !lk?.pb2, '台账只保留失败项（成功后清、失败重试）');
     },
   },
   {
@@ -1078,6 +1099,14 @@ const CASES = [
       eq(readManifest(path.join(f.userAgentsSkills, 'ag-one')), null, '复原后删认领 manifest（不留 foreign 假象）');
       ok(!fs.existsSync(path.join(f.library, 'ag-one')), '库侧移除');
       eq(JSON.stringify(L.data.moved), JSON.stringify([]), 'ledger 清空');
+      // M3 回归（终审 2026-10-26）：预览为空 + ledger 从未写过 → apply() 不 save → load()=null → 曾 null.moved TypeError
+      const L3 = { data: null };
+      const ledger3 = { load: async () => L3.data, save: async (d) => { L3.data = JSON.parse(JSON.stringify(d)); } };
+      const ap3 = await m.applyAgents(f.roots, { ledger: ledger3 });
+      eq(ap3.moved.length, 2, '再 apply 把 undo 回的两条目重新搬走');
+      L3.data = null; // 模拟插件重装（fresh ledger）+ agents 区只剩 keep 条目 = 空预览
+      const ap4 = await m.applyAgents(f.roots, { ledger: ledger3 });
+      eq(ap4.moved.length, 0, '空预览 + 空 ledger apply 不崩（M3：曾 null.moved TypeError）');
       // 旧向导 undo 不受 claimed 逻辑影响：legacy ledger 无 claimed 字段
       const L2 = { data: { moved: [{ name: 'legacy-x', from: path.join(f.userDsh, 'legacy-x'), to: path.join(f.library, 'legacy-x') }] } };
       writeSkill(f.library, 'legacy-x');
@@ -1095,7 +1124,7 @@ const CASES = [
       const te = await core('translateExec');
       eq(te.parseSingleReply('1. 收到代码审查反馈时使用\n2. 另一条'), '收到代码审查反馈时使用', '拆回编号行首条');
       eq(te.parseSingleReply('「2」设计深层模块'), '设计深层模块', '剥编号与引号');
-      const store = (() => { const m = new Map(); return { get: async (t, k) => m.get(t + '|' + k), put: async (t, k, v) => m.set(t + '|' + k, JSON.parse(JSON.stringify(v))) }; })();
+      const store = (() => { const m = new Map(); const c = (v) => v === undefined ? v : JSON.parse(JSON.stringify(v)); return { get: async (t, k) => c(m.get(t + '|' + k)), put: async (t, k, v) => m.set(t + '|' + k, c(v)) }; })(); // get/put 均深拷贝 = 盘上 JSON store 语义（共享引用会掩盖丢更新竞态）
       writeSkill(f.library, 'dp-a', 'en text alpha'); writeSkill(f.library, 'dp-b', 'en text beta');
       // (1) 对账：全 pending + 落盘 + decorate 口径
       let r = await dp.reconcileLibrary(f.roots, store);
@@ -1111,12 +1140,31 @@ const CASES = [
       eq(c2['dp-a'].status, 'ok', 'ok 回写'); eq(c2['dp-a'].zh, '中文甲', 'zh 剥编号后回写');
       eq(c2['dp-b'].status, 'failed', 'failed 回写');
       eq(c2['dp-b'].srcHash, sha256(Buffer.from('en text beta')), 'failed 也带 srcHash（同哈希不自愈）');
+      // (2b) M1 竞态（终审 2026-10-26）：批中外部 reconcile save → 批尾回写不得整表覆盖外部成果
+      writeSkill(f.library, 'dp-race', 'en race');
+      await dp.reconcileLibrary(f.roots, store);
+      let injected = false;
+      const out2 = await dp.translateRunCore({ roots: f.roots, store, names: ['dp-race'],
+        callLlm: async () => {
+          if (!injected) {
+            injected = true; // 模拟批中（分钟级）弹窗打开触发 reconcileLibrary 落盘
+            const mid = await dp.loadCache(store);
+            mid['dp-mid'] = { srcHash: 'sha256:mid', en: 'en mid', zh: null, status: 'pending', updatedAt: '2026-01-01T00:00:00.000Z' };
+            await dp.saveCache(store, mid);
+          }
+          return '1. 竞速中文';
+        }, callMt: null });
+      eq(out2.done.length, 1, '竞态批成功一条');
+      const c3 = await dp.loadCache(store);
+      eq(c3['dp-race']?.status, 'ok', '本批结果回写');
+      eq(c3['dp-mid']?.status, 'pending', '批中外部新增条目不被批尾覆盖（M1 merge）');
       // (3) 对账幂等 + 库删 GC
       r = await dp.reconcileLibrary(f.roots, store);
       eq(r.pending, [], '同哈希不重翻（failed 不自愈，等手动批量）');
       fs.rmSync(path.join(f.library, 'dp-b'), { recursive: true, force: true });
+      fs.rmSync(path.join(f.library, 'dp-race'), { recursive: true, force: true });
       await dp.reconcileLibrary(f.roots, store);
-      setEq(Object.keys(await dp.loadCache(store)), ['dp-a'], '库消失 → 缓存 GC');
+      setEq(Object.keys(await dp.loadCache(store)), ['dp-a'], '库消失 → 缓存 GC（含批中注入的 dp-mid 幽灵）');
       // (4) residentForeign：名单外含 SKILL.md 的 agents 条目
       writeSkill(f.userAgentsSkills, 'foreign-z'); writeSkill(f.userAgentsSkills, 'mine-y');
       const { saveResident } = await core('sets');
@@ -1155,6 +1203,22 @@ const CASES = [
         try { await store.put('bindings', evil, {}); } catch { bad = true; }
         ok(bad, `key "${evil}" 被拒（防目录穿越）`);
       }
+    },
+  },
+  {
+    id: 'p3-rc3-shape', title: 'P3 rc.3 形状容错：refId 收字符串/{id}/{name}、normalizeSel 缺侧即 null（防 provider 对象进 stream 炸 NO_ADAPTER 崩 host）',
+    run: async () => {
+      const { refId, normalizeSel } = await core('translateExec');
+      eq(refId(' strata '), 'strata', '字符串去空白');
+      eq(refId({ id: 'strata', name: 'Strata' }), 'strata', '对象取 id 优先');
+      eq(refId({ name: 'Strata' }), 'Strata', '无 id 回落 name');
+      for (const bad of [null, undefined, 42, '', '   ', {}, { id: 7 }]) eq(refId(bad), null, `拒 ${JSON.stringify(bad) ?? String(bad)}`);
+      eq(normalizeSel({ provider: 'a', model: 'b' }), { provider: 'a', model: 'b' }, '字符串对直收');
+      eq(normalizeSel({ provider: { id: 'a' }, model: { id: 'b', name: 'B' } }), { provider: 'a', model: 'b' }, '对象对归一（rc.3 疑似形状）');
+      eq(normalizeSel({ providerId: 'a', modelId: 'b' }), { provider: 'a', model: 'b' }, 'providerId/modelId 别名兼容');
+      eq(normalizeSel({ provider: 'a' }), null, '缺 model 即 null');
+      eq(normalizeSel({ provider: {}, model: 'b' }), null, 'provider 空对象即 null（不再 [object Object] 进 stream）');
+      eq(normalizeSel(null), null, 'null 安全');
     },
   },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----

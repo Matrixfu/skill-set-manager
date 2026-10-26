@@ -64,7 +64,9 @@ export async function translateRunCore({ roots, store, names, callLlm, callMt, c
   }
   const res = await runBatch({ items, callLlm, callMt, concurrency, limit });
   const byName = new Map(items.map((i) => [i.name, i]));
-  let next = cache;
+  // M1（终审 2026-10-26）：整批 LLM 调用是分钟级，期间 reconcileLibrary（每次 libraryList）可能已推表——
+  // 批尾必须重读最新表再逐条 merge 本批结果，绝不整表覆盖批首快照。
+  let next = await loadCache(store);
   for (const d of res.done) {
     const it = byName.get(d.name);
     next = setTranslated(next, d.name, { srcHash: it.srcHash, en: it.en, zh: parseSingleReply(d.zh), status: 'ok' });

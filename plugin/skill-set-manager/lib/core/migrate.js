@@ -115,7 +115,7 @@ export function previewAgents(roots, { fs: fsImpl = fs } = {}) {
 export async function applyAgents(roots, { ledger }, { fs: fsImpl = fs } = {}) {
   const pv = previewAgents(roots, { fs: fsImpl });
   const res = await apply(roots, { moves: pv.moves, ledger }, { fs: fsImpl });
-  const data = await ledger.load();
+  const data = (await ledger.load()) ?? { moved: [] }; // 空预览时 apply 不落盘，load 为 null（M3 回归 2026-10-26）
   for (const item of data.moved) {
     if (item.claimed) continue;
     try { claimSource(roots, { name: item.name, source: 'unknown' }, { fs: fsImpl }); item.claimed = true; } catch {}
