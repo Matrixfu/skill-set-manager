@@ -768,9 +768,13 @@ window.__ModuleLoader__.load({
                     await call(ctx, 'setResident', { names: next });
                     await loadState();
                   }) }), ' ', r.name),
-                String(r.source).startsWith('github:') ? h('span', { className: 'ssm-n' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
-                h('span', { className: 'ssm-grow' }, null),
-                r.descriptionZh ? h('span', { className: 'ssm-n', title: r.description ?? undefined }, r.descriptionZh) : null));
+                String(r.source).startsWith('github:') ? h('span', { className: 'ssm-n' }, String(r.source).replace('github:', '').slice(0, 20)) : null),
+              // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款）
+              r.descriptionZh
+                ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' }, title: r.description ?? undefined }, r.descriptionZh)
+                : r.description
+                  ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0', maxWidth: 'none' }, title: r.description }, r.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
+                  : null);
           })) : null,
         tab === 'ops' ? h(React.Fragment, null,
           h('div', { className: 'ssm-sec' }, t('installTitle')),
