@@ -62,7 +62,8 @@ export async function translateRunCore({ roots, store, names, callLlm, callMt, c
     if (!en) { const d = readDescription(path.join(roots.libraryRoot, name), { fs: fsImpl }); en = d.text; srcHash = d.hash; }
     if (en) items.push({ name, en, srcHash });
   }
-  const res = await runBatch({ items, callLlm, callMt, concurrency, limit });
+  // 提速（2026-10-26 用户反馈「特别慢」）：5 条拼一个 prompt（runBatch chunk），错行自动逐条回退
+  const res = await runBatch({ items, callLlm, callMt, concurrency, limit, chunk: 5 });
   const byName = new Map(items.map((i) => [i.name, i]));
   // M1（终审 2026-10-26）：整批 LLM 调用是分钟级，期间 reconcileLibrary（每次 libraryList）可能已推表——
   // 批尾必须重读最新表再逐条 merge 本批结果，绝不整表覆盖批首快照。

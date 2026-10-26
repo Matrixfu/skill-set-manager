@@ -624,7 +624,8 @@ window.__ModuleLoader__.load({
                   h('button', { disabled: !!busy, onClick: () => run('trR', async () => {
                     const o = tr.model !== '' ? (tr.models?.options ?? [])[Number(tr.model)] ?? null : null; // M2：pending ∪ failed 一并（failed 同哈希不自愈，此处即重试入口，AC#2）
                     const names = [...(tr.pending ?? []).map((p) => p.name), ...(tr.failed ?? []).map((f) => f.name)];
-                    // 逐条 RPC + 并发 2（用户反馈 2026-10-26：整批 await 无进度）：每条返回即刷进度，可停止；host 侧单条即落盘，中断不丢已完成
+                    // 分组 RPC（每组 5 条 = host 一个 prompt，reasoning 模型思考次数 ÷5）+ 并发 2：
+                    // 每组返回即刷进度；host 组内即落盘，停止不丢已完成（用户反馈 2026-10-26：无进度 + 逐条太慢）
                     trStop.current = false;
                     const base = { ...tr, result: null };
                     const st = { done: [], failed: [], running: [] };
@@ -633,14 +634,14 @@ window.__ModuleLoader__.load({
                     paint();
                     const worker = async () => {
                       while (i < names.length && !trStop.current) {
-                        const n = names[i++];
-                        st.running.push(n); paint();
+                        const g = names.slice(i, i + 5); i += g.length;
+                        st.running.push(...g); paint();
                         try {
-                          const r = await call(ctx, 'translateRun', { names: [n], provider: o?.provider ?? null, model: o?.model ?? null });
+                          const r = await call(ctx, 'translateRun', { names: g, provider: o?.provider ?? null, model: o?.model ?? null });
                           if (r?.done?.length) st.done.push(...r.done);
-                          else st.failed.push(...(r?.failed ?? [{ name: n, error: 'no translate route' }]));
-                        } catch (e) { st.failed.push({ name: n, error: String(e?.message ?? e) }); }
-                        st.running = st.running.filter((x) => x !== n); paint();
+                          st.failed.push(...(r?.failed ?? []));
+                        } catch (e) { g.forEach((n) => st.failed.push({ name: n, error: String(e?.message ?? e) })); }
+                        st.running = st.running.filter((x) => !g.includes(x)); paint();
                       }
                     };
                     await Promise.all([worker(), worker()]);
@@ -653,7 +654,7 @@ window.__ModuleLoader__.load({
           tr?.progress
             ? h('div', { className: 'ssm-hint' },
                 `${t('translateProgress')} ${tr.progress.done + tr.progress.failed}/${tr.progress.total}（✓${tr.progress.done} ×${tr.progress.failed}）${tr.progress.stopping ? ` · ${t('translateStopping')}` : ''}`,
-                ...tr.progress.running.map((n) => h('div', { key: n, className: 'ssm-hint' }, `⋯ ${n}`)))
+                tr.progress.running.length ? h('div', { className: 'ssm-hint' }, `⋯ ${tr.progress.running.slice(0, 2).join(', ')}${tr.progress.running.length > 2 ? ` +${tr.progress.running.length - 2}` : ''}`) : null)
             : null,
           tr?.result
             ? h('div', { className: 'ssm-hint' }, `${t('translateDone')}: ✓${(tr.result.done ?? []).length} ×${(tr.result.failed ?? []).length}${tr.result.skipped ? ` ⏭${tr.result.skipped}` : ''}`,
@@ -848,8 +849,8 @@ window.__ModuleLoader__.load({
 .ssm-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
 .ssm-n{color:var(--dsw-alias-label-secondary);font-size:11px}
 .ssm-cur-tag{font-size:10px;color:var(--dsw-alias-brand-primary)}
-.ssm-row button:not(.ssm-pick){background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
-.ssm-row button:not(.ssm-pick):hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)}
+.ssm-row button:not(.ssm-pick){font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 10px;cursor:pointer} /* 明确按钮外观（用户反馈 2026-10-26：此前无边框形同文字） */
+.ssm-row button:not(.ssm-pick):hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-label-primary) 30%, transparent)}
 .ssm-input{flex:1;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 7px;min-width:0}
 .ssm-io{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .ssm-textarea{width:100%;box-sizing:border-box;resize:vertical;font:11px/1.5 ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px}
@@ -878,8 +879,8 @@ window.__ModuleLoader__.load({
 .ssm-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
 .ssm-click{cursor:pointer}
 .ssm-click:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-radius:6px}
-.ssm-settings .ssm-row button{background:0;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11px;padding:3px 6px;border-radius:5px}
-.ssm-settings .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)}
+.ssm-settings .ssm-row button{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 10px;cursor:pointer}
+.ssm-settings .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-label-primary) 30%, transparent)}
 .ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 `;
 

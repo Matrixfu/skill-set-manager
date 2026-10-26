@@ -1221,6 +1221,43 @@ const CASES = [
       eq(normalizeSel(null), null, 'null 安全');
     },
   },
+  {
+    id: 'p3-translate-chunk', title: 'P3 翻译拼接批：parseBatchReply 按编号拆回（缺行即 null）；runBatch chunk 模式错行整组逐条回退（提速：5 条 1 prompt）',
+    run: async () => {
+      const { parseBatchReply, runBatch } = await core('translateExec');
+      eq(parseBatchReply('1. a\n2. b\n3. c', 3), ['a', 'b', 'c'], '编号行按序拆回');
+      eq(parseBatchReply('2. b\n好的，以下是翻译：\n1. a\n3. c', 3), ['a', 'b', 'c'], '乱序 + 说明行忽略');
+      eq(parseBatchReply('1. "a"\n2. “b”', 2), ['a', 'b'], '包裹引号剥除');
+      eq(parseBatchReply('1. a\n3. c', 3), null, '缺行 → null（触发回退）');
+      eq(parseBatchReply('1. a\n1. b', 2), null, '重复编号首个生效、缺行仍 null');
+      eq(parseBatchReply('', 2), null, '空答复 → null');
+      eq(parseBatchReply('没有编号的一行', 1), null, '无编号 → null');
+      eq(parseBatchReply('1. a', 1), ['a'], 'n=1 也走编号协议');
+      // runBatch chunk：拼接调用 + 错行回退
+      const items = [{ name: 'x1', en: 'E1' }, { name: 'x2', en: 'E2' }, { name: 'x3', en: 'E3' }];
+      const seen = [];
+      const r1 = await runBatch({ items, chunk: 3, callLlm: async (arg) => { seen.push(Array.isArray(arg) ? 'batch' : 'single'); return '1. A\n2. B\n3. C'; } });
+      eq(r1.done.length, 3, '拼接批 3 条全成');
+      eq(seen, ['batch'], 'chunk=3 → 仅 1 次数组调用');
+      eq(r1.done.map((d) => d.zh), ['A', 'B', 'C'], '按编号拆回对位');
+      eq(r1.done[0].via, 'llm', 'via=llm');
+      const seen2 = [];
+      const r2 = await runBatch({ items, chunk: 3, callLlm: async (arg) => { seen2.push(Array.isArray(arg) ? 'batch' : `single:${arg}`); return Array.isArray(arg) ? '完全不像编号的答复' : `T:${arg}`; } });
+      eq(r2.done.length, 3, '错行 → 整组逐条回退后仍 3 成');
+      eq(seen2, ['batch', 'single:E1', 'single:E2', 'single:E3'], '回退为逐条字符串调用（含首批失败重试）');
+      const seen3 = [];
+      const r3 = await runBatch({ items, chunk: 2, callLlm: async (arg) => { seen3.push(Array.isArray(arg) ? 'batch' : 'single'); return Array.isArray(arg) && arg.length === 2 ? '1. A\n2. B' : null; } });
+      eq(r3.done.length, 2, 'chunk=2 分组：首组成、次组 null 答复全缺');
+      eq(r3.failed.length, 1, '次组第 3 条（单独成组拿 null）failed');
+      eq(seen3, ['batch', 'single'], '末组仅 1 条：不拼接直接逐条（组内 ≥2 才拼 prompt）');
+      const r4 = await runBatch({ items, callLlm: async (arg) => `T:${arg}` }); // chunk 缺省 = 1（回归）
+      eq(r4.done.length, 3, 'chunk 缺省逐条行为不变');
+      eq(r4.done[0].zh, 'T:E1', '单条直收');
+      const r5 = await runBatch({ items, chunk: 3, callLlm: async () => { throw new Error('boom'); } });
+      eq(r5.failed.length, 3, '拼接批抛错 → 逐条回退也抛错 → 全 failed');
+      ok(r5.failed.every((f) => String(f.error).includes('boom')), '回退错误入 failed 记录');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',

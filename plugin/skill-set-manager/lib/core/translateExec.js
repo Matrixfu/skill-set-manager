@@ -7,7 +7,7 @@ export function buildLlmPrompt(enTexts) {
   const lines = enTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
   return [
     '把下列英文技能用途逐条改写成简洁中文用途（每条不超过 40 字，只译用途语义；英文术语/技能名保留原文）。',
-    '每条单独一行输出，行首为编号，不要解释。',
+    '每条单独一行输出，行首为编号，不要解释。直接翻译，无需长时间斟酌措辞。',
     '',
     lines,
   ].join('\n');
@@ -44,7 +44,28 @@ export function normalizeSel(sel) {
   return provider && model ? { provider, model } : null;
 }
 
-export async function runBatch({ items, callLlm, callMt, concurrency = 2, limit = 50 }) {
+/**
+ * 拼接批答复拆回（提速 2026-10-26：reasoning 模型逐条思考太慢，5 条拼一个 prompt）：
+ * 按行首编号对位，忽略无编号说明行，重复编号首个生效，剥包裹引号；
+ * 任一行缺失 → null（调用方据此**整组逐条回退**，错行宁慢勿错）。
+ */
+export function parseBatchReply(text, n) {
+  if (text == null || !String(text).trim()) return null;
+  const out = new Array(n).fill(null);
+  for (const raw of String(text).split(/\r?\n/)) {
+    const ln = raw.trim();
+    if (!ln) continue;
+    const m = ln.match(/^(\d+)\s*[.、)．：:」』]\s*/);
+    if (!m) continue;
+    const i = Number(m[1]) - 1;
+    if (i < 0 || i >= n || out[i] != null) continue;
+    const v = ln.slice(m[0].length).replace(/^["'“「『]+/, '').replace(/["'”」』]+$/, '').trim();
+    if (v) out[i] = v;
+  }
+  return out.every((x) => x != null) ? out : null;
+}
+
+export async function runBatch({ items, callLlm, callMt, concurrency = 2, limit = 50, chunk = 1 }) {
   const all = Array.isArray(items) ? items : [];
   const batch = all.slice(0, limit);
   const skipped = all.length - batch.length;
@@ -69,14 +90,33 @@ export async function runBatch({ items, callLlm, callMt, concurrency = 2, limit 
     }
     return { name: item.name, error: errs.join('; ') || 'no translate route' };
   }
+  // chunk>1：多条拼一个 prompt（callLlm 收 en 数组）；拆回失败/抛错 → 整组逐条回退（宁慢勿错）
+  const groups = [];
+  if (chunk > 1 && callLlm) {
+    for (let i = 0; i < batch.length; i += chunk) groups.push(batch.slice(i, i + chunk));
+  } else {
+    for (const it of batch) groups.push([it]);
+  }
   async function worker() {
-    while (next < batch.length) {
-      const item = batch[next++];
-      const res = await one(item);
-      (res.zh ? done : failed).push(res);
+    while (next < groups.length) {
+      const g = groups[next++];
+      if (g.length > 1 && callLlm) {
+        let parsed = null;
+        try {
+          parsed = parseBatchReply(await callLlm(g.map((x) => x.en)), g.length);
+        } catch { parsed = null; }
+        if (parsed) {
+          g.forEach((it, i) => done.push({ name: it.name, zh: parsed[i], via: 'llm' }));
+          continue;
+        }
+      }
+      for (const it of g) {
+        const res = await one(it);
+        (res.zh ? done : failed).push(res);
+      }
     }
   }
-  const n = Math.max(1, Math.min(concurrency, batch.length));
+  const n = Math.max(1, Math.min(concurrency, groups.length));
   await Promise.all(Array.from({ length: n }, worker));
   return { done, failed, skipped };
 }

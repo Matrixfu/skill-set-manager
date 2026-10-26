@@ -546,10 +546,10 @@ export function apply(ctx, config) {
       const llm = ctx.get('llm');
       const s = normalizeSel(sel);
       if (!llm || !s) return null;
-      return async (en) => {
+      return async (enOrArr) => { // chunk 拼接批收 en 数组、逐条收字符串（runBatch 两种形态都投喂）
         let cur = null;
         let text = '';
-        for await (const ev of llm.stream({ provider: s.provider, model: s.model, messages: [{ role: 'user', content: [{ type: 'text', text: buildLlmPrompt([en]) }] }] })) {
+        for await (const ev of llm.stream({ provider: s.provider, model: s.model, messages: [{ role: 'user', content: [{ type: 'text', text: buildLlmPrompt(Array.isArray(enOrArr) ? enOrArr : [enOrArr]) }] }] })) {
           if (ev.type === 'block-start') cur = ev.blockType ?? null;
           else if (typeof ev.type === 'string' && ev.type.endsWith('-delta') && cur !== 'reasoning' && typeof ev.text === 'string') text += ev.text;
           else if (ev.type === 'finish' && ev.reason && ev.reason !== 'stop' && !text) throw new Error(`llm finish: ${ev.reason}`);
