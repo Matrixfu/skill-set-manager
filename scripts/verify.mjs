@@ -1086,6 +1086,52 @@ const CASES = [
       setEq(un2.restored, ['legacy-x'], 'legacy undo 照常复原');
     },
   },
+  {
+    id: 'p3-data-plane', title: 'P3-T6 数据面：reconcileLibrary 落盘/GC、translateRunCore ok/failed 回写、residentForeign、autoTranslate 钩子默认零出网',
+    async run(f) {
+      await withRoots(f);
+      const dp = await core('dataPlane');
+      const tr = await core('translations');
+      const te = await core('translateExec');
+      eq(te.parseSingleReply('1. 收到代码审查反馈时使用\n2. 另一条'), '收到代码审查反馈时使用', '拆回编号行首条');
+      eq(te.parseSingleReply('「2」设计深层模块'), '设计深层模块', '剥编号与引号');
+      const store = (() => { const m = new Map(); return { get: async (t, k) => m.get(t + '|' + k), put: async (t, k, v) => m.set(t + '|' + k, JSON.parse(JSON.stringify(v))) }; })();
+      writeSkill(f.library, 'dp-a', 'en text alpha'); writeSkill(f.library, 'dp-b', 'en text beta');
+      // (1) 对账：全 pending + 落盘 + decorate 口径
+      let r = await dp.reconcileLibrary(f.roots, store);
+      setEq(r.pending, ['dp-a', 'dp-b'], '新条目全 pending');
+      const cache = await dp.loadCache(store);
+      eq(cache['dp-a'].status, 'pending', '缓存经 store 落盘');
+      eq(tr.decorate([{ name: 'dp-a' }], cache)[0].descriptionStatus, 'pending', '未翻译 → pending 状态（UI 显英文）');
+      // (2) translateRunCore：fake 执行器，一成一败逐条粒度
+      const out = await dp.translateRunCore({ roots: f.roots, store, names: ['dp-a', 'dp-b'],
+        callLlm: async (en) => { if (en.includes('beta')) throw new Error('boom'); return '1. 中文甲'; }, callMt: null });
+      eq(out.done.length, 1, '一条成功'); eq(out.failed.length, 1, '一条失败不炸批');
+      const c2 = await dp.loadCache(store);
+      eq(c2['dp-a'].status, 'ok', 'ok 回写'); eq(c2['dp-a'].zh, '中文甲', 'zh 剥编号后回写');
+      eq(c2['dp-b'].status, 'failed', 'failed 回写');
+      eq(c2['dp-b'].srcHash, sha256(Buffer.from('en text beta')), 'failed 也带 srcHash（同哈希不自愈）');
+      // (3) 对账幂等 + 库删 GC
+      r = await dp.reconcileLibrary(f.roots, store);
+      eq(r.pending, [], '同哈希不重翻（failed 不自愈，等手动批量）');
+      fs.rmSync(path.join(f.library, 'dp-b'), { recursive: true, force: true });
+      await dp.reconcileLibrary(f.roots, store);
+      setEq(Object.keys(await dp.loadCache(store)), ['dp-a'], '库消失 → 缓存 GC');
+      // (4) residentForeign：名单外含 SKILL.md 的 agents 条目
+      writeSkill(f.userAgentsSkills, 'foreign-z'); writeSkill(f.userAgentsSkills, 'mine-y');
+      const { saveResident } = await core('sets');
+      saveResident(f.roots, ['mine-y']);
+      setEq(dp.residentForeign(f.roots), ['foreign-z'], '外来 = 名单外且含 SKILL.md');
+      eq(f.roots.globalResidentDirs[0], f.userAgentsSkills, 'residentTarget = 第一常驻区（agents）');
+      // (5) autoTranslate 钩子：默认 false 零触发（不注入即零出网）
+      let calls = 0;
+      await dp.libraryView(f.roots, store, { autoTranslate: false, onPending: (p) => { calls += p.length; } });
+      eq(calls, 0, 'autoTranslate=false → 钩子完全不触发');
+      writeSkill(f.library, 'dp-new', 'en text new');
+      await dp.libraryView(f.roots, store, { autoTranslate: true, onPending: (p) => { calls += p.length; } });
+      eq(calls, 1, 'autoTranslate=true → 触发一次带 pending 名单');
+    },
+  },
   // ---- Review-Focus 注入项（计划 Review Focus 2/3/4 对应） ----
   {
     id: 'foreign', title: '外来条目一律不动不删（Review-Focus 2）',

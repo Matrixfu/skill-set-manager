@@ -13,6 +13,16 @@ export function buildLlmPrompt(enTexts) {
   ].join('\n');
 }
 
+/** 模型答复拆回：取首个非空行，剥编号前缀与包裹引号（单条批量场景）。 */
+export function parseSingleReply(text) {
+  const line = String(text ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] ?? '';
+  return line
+    .replace(/^["'“「『]+/, '')
+    .replace(/^\d+\s*[.、)．：:」』]/, '')
+    .replace(/["'”」』]+$/, '')
+    .trim();
+}
+
 export async function runBatch({ items, callLlm, callMt, concurrency = 2, limit = 50 }) {
   const all = Array.isArray(items) ? items : [];
   const batch = all.slice(0, limit);

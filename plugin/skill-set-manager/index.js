@@ -18,7 +18,7 @@ import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
-import { syncResident } from './lib/core/resident.js';
+import { syncResident, pruneLegacyResidentLinks } from './lib/core/resident.js';
 import os from 'node:os';
 import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
 import { resolveRepoSource } from './lib/core/source.js';
@@ -27,11 +27,15 @@ import * as bk from './lib/core/backup.js';
 import * as lifecycle from './lib/core/lifecycle.js';
 import { diagnose } from './lib/core/diagnose.js';
 import * as migrate from './lib/core/migrate.js';
+import { decorate } from './lib/core/translations.js';
+import * as dataPlane from './lib/core/dataPlane.js';
+import { buildLlmPrompt } from './lib/core/translateExec.js';
 
 /** 行级配置（cordis.patch.yml 的 config 块；用户 patch 层升级存活）。 */
 export const Config = z.object({
   gitignoreLine: z.boolean().default(true),
-  residentLinkToCrossHarness: z.boolean().default(false),
+  residentLinkToCrossHarness: z.boolean().default(false), // P3 后语义 = 额外保留旧 ~/.dsh/skills 链（默认常驻已搬 ~/.agents/skills）
+  autoTranslate: z.boolean().default(false), // P3：库列表后自动翻 pending（默认关 = 零出网；手动批量不受限）
   autoBindNewProject: z.boolean().default(false),
   autoBindSlug: z.string().default(''),
   customSkillDirs: z.array(z.string()).default([]),
@@ -55,6 +59,8 @@ export function apply(ctx, config) {
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
     'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource',
+    // P3：翻译数据面
+    'translatePending', 'translateRun', 'translateModels',
   ];
 
   class SkillSetManagerRemote extends TypertRemoteService {
@@ -110,6 +116,8 @@ export function apply(ctx, config) {
         library: (await this.libraryList()).library,
         effective: eff,
         resident: sets.loadResident(roots).skills,
+        residentForeign: dataPlane.residentForeign(roots), // 灰行判定源：常驻区名单外条目（设计 §6.4）
+        residentTarget: roots.globalResidentDirs[0], // 弹窗「去设置管理」文案指向
         selfCheck: { ok: sc.ok, frozen: sc.frozen, unbound: sc.unbound, missing: sc.missing, extra: sc.extra, foreign: sc.foreign, brokenLinks: sc.brokenLinks, detail: sc.detail },
         managed: managed?.entries ?? {},
         sessionOverrideActive: (managed?.sessionOverride?.added?.length ?? 0) + (managed?.sessionOverride?.removed?.length ?? 0) > 0,
@@ -281,7 +289,17 @@ export function apply(ctx, config) {
           backupCount: bk.listBackups(roots, n).length,
         });
       }
-      return { library };
+      // P3：读时对账翻译缓存（缓存非真相源，§6.1）+ 三字段 decorate；autoTranslate 默认关 = 钩子不触发
+      let cache = {};
+      try {
+        const store = await storeOf();
+        const r = await dataPlane.libraryView(roots, store, {
+          autoTranslate: config.autoTranslate,
+          onPending: (names) => { void this._translate(names).catch(() => {}); },
+        });
+        cache = r.cache;
+      } catch (e) { ctx.logger.warn(`skill-set-manager 翻译对账失败（列表照常无中文列）: ${e?.message ?? e}`); }
+      return { library: decorate(library, cache) };
     }
 
     /** 认领来源（§8.1）：本地技能补 manifest（认领时的盘上内容即基线）；source='unknown' 撤认领回落本地态。 */
@@ -466,6 +484,65 @@ export function apply(ctx, config) {
 
     async migrateAgentsUndo() {
       return migrate.undoAgents(roots, { ledger: this._migrateAgentsLedger() });
+    }
+
+    // ---- P3：翻译数据面（设计 §6.1/§5.8——llm 主路由，translator 在场才兜底） ----
+
+    async translatePending() {
+      const store = await storeOf();
+      const r = await dataPlane.reconcileLibrary(roots, store);
+      return { pending: r.pending.map((name) => ({ name, en: r.cache[name]?.en ?? null })), autoTranslate: config.autoTranslate };
+    }
+
+    /** 模型面（T0 探针形状）：current = agentDefaultModel 当前选择；options = listProviders+listModels({providerId})。 */
+    async translateModels() {
+      let current = null;
+      const options = [];
+      const llm = ctx.get('llm');
+      try { current = ctx.get('agentDefaultModel')?.currentSelection?.() ?? null; } catch {}
+      try {
+        for (const p of llm?.listProviders?.() ?? []) {
+          for (const m of llm?.listModels?.({ providerId: p.id }) ?? []) options.push({ provider: p.id, model: m.id, label: `${p.name ?? p.id} · ${m.name ?? m.id}` });
+        }
+      } catch (e) { ctx.logger.warn(`skill-set-manager 模型列表失败: ${e?.message ?? e}`); }
+      return { current, options };
+    }
+
+    /** llm 单条调用：content 分块数组 + 只拼非 reasoning delta（T0 探针实定形状）。 */
+    _callLlmTranslate(sel) {
+      const llm = ctx.get('llm');
+      if (!llm || !sel?.provider || !sel?.model) return null;
+      return async (en) => {
+        let cur = null;
+        let text = '';
+        for await (const ev of llm.stream({ provider: sel.provider, model: sel.model, messages: [{ role: 'user', content: [{ type: 'text', text: buildLlmPrompt([en]) }] }] })) {
+          if (ev.type === 'block-start') cur = ev.blockType ?? null;
+          else if (typeof ev.type === 'string' && ev.type.endsWith('-delta') && cur !== 'reasoning' && typeof ev.text === 'string') text += ev.text;
+          else if (ev.type === 'finish' && ev.reason && ev.reason !== 'stop' && !text) throw new Error(`llm finish: ${ev.reason}`);
+        }
+        return text;
+      };
+    }
+
+    _callMtTranslate() {
+      const mt = ctx.get('translator'); // 本机 live profile 未挂载（探针证实）→ null = 无兜底，LLM 失败逐条 failed
+      if (!mt) return null;
+      return async (en) => {
+        const r = await mt.translate?.(en, { to: 'zh' }); // 形状未经实证（服务缺席），抛错即该条 failed
+        return typeof r === 'string' ? r : r?.text ?? null;
+      };
+    }
+
+    async _translate(names, { provider = null, model = null } = {}) {
+      const store = await storeOf();
+      let sel = null;
+      try { sel = provider && model ? { provider, model } : (ctx.get('agentDefaultModel')?.currentSelection?.() ?? null); } catch {}
+      const r = await dataPlane.translateRunCore({ roots, store, names, callLlm: this._callLlmTranslate(sel), callMt: this._callMtTranslate() });
+      return { done: r.done, failed: r.failed, skipped: r.skipped };
+    }
+
+    async translateRun(req) {
+      return this._translate(Array.isArray(req?.names) ? req.names : [], { provider: req?.provider ?? null, model: req?.model ?? null });
     }
 
     /** 解绑（面板缺口）：回收托管条目 + 删 binding/managed；gitignore 行保留。 */
@@ -675,6 +752,12 @@ export function apply(ctx, config) {
   syncResident(roots).then((r) => {
     if (r.warnings.length) ctx.logger.warn(`skill-set-manager 常驻同步警告: ${r.warnings.join('; ')}`);
   }).catch((e) => ctx.logger.warn(`skill-set-manager 常驻同步失败: ${e?.message ?? e}`));
+
+  // P3 常驻区搬迁：按台账回收旧 ~/.dsh/skills 的自建遗留链（他人条目零触碰，幂等）。
+  pruneLegacyResidentLinks(roots).then((r) => {
+    if (r.pruned.length) ctx.logger.info(`skill-set-manager 回收 ${r.pruned.length} 条旧常驻链（常驻区已迁 ~/.agents/skills）`);
+    if (r.warnings.length) ctx.logger.warn(`skill-set-manager 旧链回收警告: ${r.warnings.join('; ')}`);
+  }).catch((e) => ctx.logger.warn(`skill-set-manager 旧链回收失败: ${e?.message ?? e}`));
 
   // 新会话自动绑定（默认关；开启后仅对无绑定的项目落默认集）。
   if (config.autoBindNewProject && config.autoBindSlug) {
