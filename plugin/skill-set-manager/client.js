@@ -198,6 +198,7 @@ window.__ModuleLoader__.load({
       const [confirmUnbind, setConfirmUnbind] = React.useState(false);
       const [edit, setEdit] = React.useState(null); // {slug, picked:{name:true}}——编辑成员表单（§5#2）
       const [q, setQ] = React.useState(''); // P3 搜索框（设计 §6.3）：非空 → 结果列表替换三区
+      const [mq, setMq] = React.useState(''); // P3 成员编辑表单过滤（§6.2；勾选态 picked 按名字存，过滤不丢）
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -283,11 +284,23 @@ window.__ModuleLoader__.load({
           edit?.slug === s.slug
             ? h('div', { className: 'ssm-io' },
                 h('div', { className: 'ssm-sec' }, t('editTitle'), ' ', s.name),
+                h('div', { className: 'ssm-row' },
+                  h('input', { className: 'ssm-input', placeholder: t('searchPh'), value: mq, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setMq(e.target.value) }),
+                  mq ? h('button', { disabled: busy, onClick: () => setMq('') }, '×') : null),
                 h('div', { className: 'ssm-chips' },
-                  ...[...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])].sort()
-                    .map((n) => h('label', { key: n, className: 'ssm-chip' + (edit.picked[n] ? ' ssm-on' : '') },
+                  ...searchRows(
+                    [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])].sort()
+                      .map((n) => {
+                        const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
+                        return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
+                      }),
+                    mq,
+                  ).map((row) => {
+                    const n = row.name;
+                    return h('label', { key: n, className: 'ssm-chip' + (edit.picked[n] ? ' ssm-on' : ''), title: row.descriptionZh ?? undefined },
                       h('input', { type: 'checkbox', checked: !!edit.picked[n], disabled: busy, onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [n]: !edit.picked[n] } }) }), ' ', n,
-                      (st.library ?? []).some((l) => l.name === n) ? null : h('span', { className: 'ssm-warn-inline' }, ` ${t('memberMissing')}`)))),
+                      (st.library ?? []).some((l) => l.name === n) ? null : h('span', { className: 'ssm-warn-inline' }, ` ${t('memberMissing')}`));
+                  })),
                 h('div', { className: 'ssm-hint' }, t('memberHint')),
                 h('div', { className: 'ssm-row' },
                   h('button', { disabled: busy, onClick: () => run(async () => {
