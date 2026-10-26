@@ -28,13 +28,15 @@ export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), works
   const groups = { partition: [], copies: [], dangling: [], deadLinks: [], structure: [], env: [] };
   const zones = [roots.libraryRoot, roots.userDshRoot, roots.userAgentsRoot, ...roots.customDirs];
   const skillsDirOf = (pr) => path.join(pr, '.dsh', 'skills');
+  // 集名口径（用户报告 2026-10-26：面板改名后诊断仍打 slug）：显示名优先，集文件缺失（冻结绑定）回落 slug
+  const setLabel = (slug) => (slug ? (loadSet(roots, slug)?.name || slug) : slug);
 
   // §9.1 分区（信息行：解释「为什么生效清单比技能集大」）
   const managed = (projectRoot ? readManaged(projectRoot, { fs: fsImpl }) : null) ?? { entries: {} };
   if (projectRoot) {
     const binding = readBinding(projectRoot, { fs: fsImpl });
     groups.partition.push(row('info', 'partition-managed',
-      `受管技能（技能集 ${binding?.setSlug ? `"${binding.setSlug}"` : '（未绑定）'} 提供，插件按托管清单接管，切换即改写）：${Object.keys(managed.entries || {}).join(', ') || '（无）'}`,
+      `受管技能（技能集 ${binding?.setSlug ? `"${setLabel(binding.setSlug)}"` : '（未绑定）'} 提供，插件按托管清单接管，切换即改写）：${Object.keys(managed.entries || {}).join(', ') || '（无）'}`,
       skillsDirOf(projectRoot), '无需修复：分区仅解释清单构成'));
     const resident = loadResident(roots);
     groups.partition.push(row('info', 'partition-resident',
@@ -62,7 +64,7 @@ export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), works
   for (const s of listSets(roots)) {
     const set = loadSet(roots, s.slug);
     for (const n of set?.skills || []) if (!known.has(n))
-      groups.dangling.push(row('warn', 'dangling', `技能集 "${s.slug}" 引用不存在的技能 "${n}"`, roots.setsDir, `从该集移除 "${n}" 或补齐技能体`));
+      groups.dangling.push(row('warn', 'dangling', `技能集 "${set?.name || s.slug}" 引用不存在的技能 "${n}"`, roots.setsDir, `从该集移除 "${n}" 或补齐技能体`));
   }
   for (const n of loadResident(roots).skills || []) if (!known.has(n))
     groups.dangling.push(row('warn', 'dangling', `常驻名单引用不存在的技能 "${n}"`, path.join(roots.setsDir, '_resident.json'), `取消常驻 "${n}" 或补齐技能体`));

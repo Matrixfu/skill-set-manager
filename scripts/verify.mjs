@@ -687,6 +687,15 @@ const CASES = [
       ok(d5.groups.copies.some((r) => String(r.what).includes('漂移') || String(r.what).includes('drift') || r.level === 'warn'), '副本漂移检出');
       ok(!d5.groups.env.some((r) => String(r.what).includes('flatone')), 'flat 托管条目不误报 foreign（review m7）');
       ok(d5.groups.dangling.some((r) => String(r.what).includes('gone1')), '台账在盘上缺 → broken-entry 报出');
+      // 集名同步（用户报告 2026-10-26：面板里 aa 已改名「设计类」，诊断分区行仍打 slug）
+      await saveSet(f.roots, { slug: 'aa', name: '设计类', skills: ['ghost'] });
+      writeBinding(f.projectA, 'aa');
+      const d6 = dg.diagnose(f.roots, { projectRoot: f.projectA, cwd: f.projectA });
+      const part = d6.groups.partition.map((r) => String(r.what)).join('\n');
+      ok(part.includes('"设计类"'), '分区行显示技能集显示名');
+      ok(!part.includes('"aa"'), '分区行不再打 slug（改名后不同步）');
+      const dang = d6.groups.dangling.filter((r) => String(r.what).includes('"ghost"')).map((r) => String(r.what)).join('\n');
+      ok(dang.includes('设计类') && !dang.includes('"aa"'), '悬空行同样用显示名');
     },
   },
   {

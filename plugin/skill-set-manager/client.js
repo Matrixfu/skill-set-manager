@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
         claimGo: '认领来源', claimEdit: '改认领', claimSourcePh: '来源 owner/repo[/subpath]', claimCommitPh: 'commit（可空）',
         claimUndo: '撤认领', claimHint: '认领 = 以当前盘上内容为基线写 manifest（此后本地改动可被升级识别并跳过）',
         editMembers: '成员', editTitle: '编辑成员', saveBtn: '保存',
-        memberHint: '勾选 = 该集包含，保存即写回；当前绑定集会立即重新生成生效清单（会话临时覆盖保留）', memberMissing: '不在库',
+        memberHint: '勾选 = 该集包含，保存即写回；当前绑定集会立即重新生成生效清单（会话临时覆盖保留）；全局常驻技能所有集自动包含，故不进候选（用户 2026-10-26）', memberMissing: '不在库', memberResidentTag: '已是全局常驻·自动包含',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -114,7 +114,7 @@ window.__ModuleLoader__.load({
         claimGo: 'Claim source', claimEdit: 'Re-claim', claimSourcePh: 'source owner/repo[/subpath]', claimCommitPh: 'commit (optional)',
         claimUndo: 'Unclaim', claimHint: 'Claiming writes a manifest with the current files as baseline (later local edits are then detected and skipped on update)',
         editMembers: 'Members', editTitle: 'Edit members', saveBtn: 'Save',
-        memberHint: 'Checked = in this set; Save writes it back. The bound set rebuilds its effective list immediately (session overrides stay)', memberMissing: 'not in library',
+        memberHint: 'Checked = in this set; Save writes it back. The bound set rebuilds its effective list immediately (session overrides stay). Global resident skills are auto-included in every set, so they are not offered as candidates', memberMissing: 'not in library', memberResidentTag: 'already global resident · auto-included',
       },
     };
 
@@ -303,7 +303,11 @@ window.__ModuleLoader__.load({
                   mq ? h('button', { disabled: busy, onClick: () => setMq('') }, '×') : null),
                 h('div', { className: 'ssm-chips' },
                   ...searchRows(
-                    [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])].sort()
+                    // 常驻 = 所有集自动包含（§17#3）→ 不进成员候选（用户报告 2026-10-26，与另存为 excludeResident 同口径）；
+                    // 已存进本集的常驻名仍列出并标注，避免保存时被静默剔除
+                    [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])]
+                      .filter((n) => !(resident.has(n) || foreignRes.has(n)) || (s.skills ?? []).includes(n))
+                      .sort()
                       .map((n) => {
                         const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
                         return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
@@ -313,7 +317,8 @@ window.__ModuleLoader__.load({
                     const n = row.name;
                     return h('label', { key: n, className: 'ssm-chip' + (edit.picked[n] ? ' ssm-on' : ''), title: row.descriptionZh ?? undefined },
                       h('input', { type: 'checkbox', checked: !!edit.picked[n], disabled: busy, onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [n]: !edit.picked[n] } }) }), ' ', n,
-                      (st.library ?? []).some((l) => l.name === n) ? null : h('span', { className: 'ssm-warn-inline' }, ` ${t('memberMissing')}`));
+                      (st.library ?? []).some((l) => l.name === n) ? null : h('span', { className: 'ssm-warn-inline' }, ` ${t('memberMissing')}`),
+                      (resident.has(n) || foreignRes.has(n)) ? h('span', { className: 'ssm-n' }, ` ${t('memberResidentTag')}`) : null);
                   })),
                 h('div', { className: 'ssm-hint' }, t('memberHint')),
                 h('div', { className: 'ssm-row' },
