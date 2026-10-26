@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
         goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择技能集，之后才可用临时覆盖（仅本会话）', // N6：未绑定时临时覆盖不可用（host 会拒），文案不得引导点击
         tabGlobal: '全局技能集', globalTabHint: '常驻技能在所有项目生效；链接落在下行所示目录（跨 harness 共享，其他工具可见）。外来常驻条目只读。',
         residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果', failedRetryable: '条此前失败 · 点击一并重试',
+        translateProgress: '翻译中', translateStop: '停止', translateStopping: '停止中（等在途条目收尾）',
         modelSelect: '翻译模型（默认 = 当前会话模型）', currentModel: '当前模型（默认）',
         autoTranslateHint: '自动翻译默认关（零出网）；关闭时用手动批量按钮。中文写缓存、不改技能原文。',
         tabTitle: '技能集详情', tabDesc: '完整生效清单、状态分区与诊断摘要', openRight: '在右栏打开技能集详情',
@@ -92,6 +93,7 @@ window.__ModuleLoader__.load({
         goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above first; session override becomes available after binding',
         tabGlobal: 'Global Skills', globalTabHint: 'Resident skills apply to every project; links live in the dir shown below (shared across harnesses). Foreign residents are read-only.',
         residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result', failedRetryable: 'previously failed · click to retry all',
+        translateProgress: 'Translating', translateStop: 'Stop', translateStopping: 'stopping (waiting for in-flight items)',
         modelSelect: 'Translate model (default = current model)', currentModel: 'Current model (default)',
         autoTranslateHint: 'Auto-translate is off by default (no outbound traffic); use the batch button any time. Translations are cached; originals untouched.',
         tabTitle: 'Skill set detail', tabDesc: 'Full effective list, status partition and diagnose summary', openRight: 'Open skill set detail in right sidebar',
@@ -405,24 +407,28 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ssm-sec' }, `${hits.length} ${t('hitCount')}`),
               bound ? null : h('div', { className: 'ssm-hint' }, t('unboundHint')),
               hits.length ? null : h('div', { className: 'ssm-empty' }, t('none')),
+              // 中文用途第二行（用户点验反馈 2026-10-26：弹窗与设置页同款，窄面板不挤右侧）
               ...hits.map((l) => {
+                const desc = l.descriptionZh
+                  ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' }, title: l.description ?? undefined }, l.descriptionZh)
+                  : l.description
+                    ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0', maxWidth: 'none' }, title: l.description }, l.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
+                    : null;
                 const isRes = resident.has(l.name) || foreignRes.has(l.name);
-                if (isRes) return h('div', { key: l.name, className: 'ssm-row ssm-gray', title: l.descriptionZh ?? l.description ?? undefined }, // 灰行只读、无复选框（反目标项）
-                  h('span', null, l.name),
-                  h('span', { className: 'ssm-n' }, ' ', resident.has(l.name) ? t('residentRow') : t('foreignRow')),
-                  h('span', { className: 'ssm-grow' }, null),
-                  h('span', { className: 'ssm-n' }, t('goSettings'))); // T0 静态裁定：无编程跳转 → 纯文案
+                if (isRes) return h('div', { key: l.name, className: 'ssm-srow ssm-gray' }, // 灰行只读、无复选框（反目标项）
+                  h('div', { className: 'ssm-row' },
+                    h('span', null, l.name),
+                    h('span', { className: 'ssm-n' }, ' ', resident.has(l.name) ? t('residentRow') : t('foreignRow')),
+                    h('span', { className: 'ssm-grow' }, null),
+                    h('span', { className: 'ssm-n' }, t('goSettings'))), // T0 静态裁定：无编程跳转 → 纯文案
+                  desc);
                 const on = eff.has(l.name);
-                return h('div', { key: l.name, className: 'ssm-row' },
-                  h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
-                    h('input', { type: 'checkbox', checked: on, disabled: busy || !bound, title: l.descriptionZh ?? undefined,
-                      onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l })),
-                  h('span', { className: 'ssm-grow' }, null),
-                  l.descriptionZh
-                    ? h('span', { className: 'ssm-n', title: l.description ?? undefined }, l.descriptionZh)
-                    : l.description
-                      ? h('span', { className: 'ssm-desc-en', title: l.description }, l.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
-                      : null);
+                return h('div', { key: l.name, className: 'ssm-srow' },
+                  h('div', { className: 'ssm-row' },
+                    h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
+                      h('input', { type: 'checkbox', checked: on, disabled: busy || !bound, title: l.descriptionZh ?? undefined,
+                        onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l }))),
+                  desc);
               }))
           : h(React.Fragment, null,
               h('div', { className: 'ssm-sec' }, t('managedSec')),
@@ -563,7 +569,8 @@ window.__ModuleLoader__.load({
       const [resident, setResident] = React.useState([]);
       const [foreign, setForeign] = React.useState([]);
       const [rTarget, setRTarget] = React.useState('');
-      const [tr, setTr] = React.useState(null); // {pending, models, model, result}
+      const [tr, setTr] = React.useState(null); // {pending, failed, models, model, result, progress}
+      const trStop = React.useRef(false); // 批量翻译「停止」标志（逐条 RPC 循环检查，用户反馈 2026-10-26：无进度不可知）
       const [migA, setMigA] = React.useState(null); // {preview, applied}
       const [diag, setDiag] = React.useState(null);
       const load = React.useCallback(async () => {
@@ -615,10 +622,37 @@ window.__ModuleLoader__.load({
                   h('button', { disabled: !!busy, onClick: () => run('trR', async () => {
                     const o = tr.model !== '' ? (tr.models?.options ?? [])[Number(tr.model)] ?? null : null; // M2：pending ∪ failed 一并（failed 同哈希不自愈，此处即重试入口，AC#2）
                     const names = [...(tr.pending ?? []).map((p) => p.name), ...(tr.failed ?? []).map((f) => f.name)];
-                    const r = await call(ctx, 'translateRun', { names, provider: o?.provider ?? null, model: o?.model ?? null });
-                    setTr({ ...tr, result: r }); await load();
-                  }) }, `${t('translateGo')}(${(tr.pending?.length ?? 0) + (tr.failed?.length ?? 0)})`))
+                    // 逐条 RPC + 并发 2（用户反馈 2026-10-26：整批 await 无进度）：每条返回即刷进度，可停止；host 侧单条即落盘，中断不丢已完成
+                    trStop.current = false;
+                    const base = { ...tr, result: null };
+                    const st = { done: [], failed: [], running: [] };
+                    let i = 0;
+                    const paint = () => setTr({ ...base, progress: { total: names.length, done: st.done.length, failed: st.failed.length, running: st.running.slice(), stopping: trStop.current } });
+                    paint();
+                    const worker = async () => {
+                      while (i < names.length && !trStop.current) {
+                        const n = names[i++];
+                        st.running.push(n); paint();
+                        try {
+                          const r = await call(ctx, 'translateRun', { names: [n], provider: o?.provider ?? null, model: o?.model ?? null });
+                          if (r?.done?.length) st.done.push(...r.done);
+                          else st.failed.push(...(r?.failed ?? [{ name: n, error: 'no translate route' }]));
+                        } catch (e) { st.failed.push({ name: n, error: String(e?.message ?? e) }); }
+                        st.running = st.running.filter((x) => x !== n); paint();
+                      }
+                    };
+                    await Promise.all([worker(), worker()]);
+                    const stopped = trStop.current; trStop.current = false;
+                    setTr({ ...base, progress: null, result: { done: st.done, failed: st.failed, skipped: stopped ? names.length - st.done.length - st.failed.length : 0 } });
+                    await load();
+                  }) }, `${t('translateGo')}(${(tr.pending?.length ?? 0) + (tr.failed?.length ?? 0)})`),
+                  tr?.progress ? h('button', { disabled: !tr.progress, onClick: () => { trStop.current = true; } }, t('translateStop')) : null)
                 : null),
+          tr?.progress
+            ? h('div', { className: 'ssm-hint' },
+                `${t('translateProgress')} ${tr.progress.done + tr.progress.failed}/${tr.progress.total}（✓${tr.progress.done} ×${tr.progress.failed}）${tr.progress.stopping ? ` · ${t('translateStopping')}` : ''}`,
+                ...tr.progress.running.map((n) => h('div', { key: n, className: 'ssm-hint' }, `⋯ ${n}`)))
+            : null,
           tr?.result
             ? h('div', { className: 'ssm-hint' }, `${t('translateDone')}: ✓${(tr.result.done ?? []).length} ×${(tr.result.failed ?? []).length}${tr.result.skipped ? ` ⏭${tr.result.skipped}` : ''}`,
                 ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-warn-inline' }, `${f.name}: ${f.error ?? ''}`)))
