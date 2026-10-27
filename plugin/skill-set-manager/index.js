@@ -898,15 +898,25 @@ export function apply(ctx, config) {
   ctx.on('skills/change', () => {});
 
   // 兜底通道：Remote 面不可达时 client 走同源 fetch（同一实现，非第二套逻辑）。
-  // 注意：webServer 用 ctx.get 可选取用（headless profile 无此服务时不得崩 entry）。
-  // 关键：路由 disposer 必须挂进 ctx.effect——否则 bundle 禁用后路由泄漏在
+  // webServer 是可选服务，必须经 ctx.inject 等它就绪再取用，不能在 apply 里一次性 ctx.get：
+  // 冷启动时本 fiber 可以排在 webserver fiber 之前，一次性取用拿到 undefined，于是只警告
+  // 一声就跳过注册 → 路由永久不被认领 → webServer 的 fallback 对未认领路径回 404
+  // （Service 口径原文：answers anything not yet claimed during startup with 404 until its
+  // owner registers）。client 的兜底 fetch 于是拿到「HTTP 404」，面板整片报「加载失败」。
+  // 实锤 2026-10-26：重启 dsh desktop 后面板 404，同一份代码热启用一次就好——差别只在启动
+  // 顺序；无凭据 curl 可判口径：未认领 = 落进 /api 鉴权门回 401，已认领 = 直达 handler 回 400/200
+  // （见 scripts/probe-fetch-route.mjs）。可选服务走 ctx.inject 也是 practices.md 的明文口径。
+  // headless profile 无 webServer 时回调根本不跑，entry 不崩（原 ctx.get 分支的意图不变）。
+  // 关键：路由 disposer 必须挂进注入回调给的 sctx.effect——否则 bundle 禁用后路由泄漏在
   // app 级路由表里引用已 dispose 的旧 ctx（“inactive context”），再启用时
   // duplicate 注册被拒，路由永久停在已死的旧 handler 上。
   try {
-    const webServer = ctx.get('webServer');
-    if (!webServer) {
-      ctx.logger.warn('skill-set-manager：无 webServer 服务，fetch 兜底通道不可用（Remote 面不受影响）');
-    } else {
+    ctx.inject(['webServer'], (sctx) => {
+      const webServer = sctx.get('webServer');
+      if (!webServer) {
+        ctx.logger.warn('skill-set-manager：webServer 不可用，fetch 兜底通道暂不注册（Remote 面不受影响）');
+        return;
+      }
       const route = {
         kind: 'exact',
         path: '/api/skill-set-manager',
@@ -931,7 +941,7 @@ export function apply(ctx, config) {
           }
         },
       };
-      ctx.effect(() => {
+      sctx.effect(() => {
         let off;
         try {
           off = webServer.register(route);
@@ -943,7 +953,7 @@ export function apply(ctx, config) {
         }
         return () => off();
       }, 'skill-set-manager.fetchRoute');
-    }
+    });
   } catch (e) {
     ctx.logger.warn(`skill-set-manager webServer 兜底通道注册失败（不影响 Remote 面）: ${e?.message ?? e}`);
   }
