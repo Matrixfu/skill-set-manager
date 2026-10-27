@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
         confirmSwitch: '确认切换：将改写仓库根的 .dsh/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
-        regen: '重新生成', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选技能 → 上方输入集合名 → 「另存为当前清单」即创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
+        regen: '重新生成', claimForeign: '接管失配条目', claimForeignHint: '把「名字在本集里、盘上已存在、且确实指向库/生效区」的链接补回托管台账（只补台账，不动盘上条目）', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选技能 → 上方输入集合名 → 「另存为当前清单」即创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         noSession: '先在对话页打开一个会话',
@@ -73,7 +73,7 @@ window.__ModuleLoader__.load({
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
         confirmSwitch: 'Confirm switch: rewrites .dsh/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
-        regen: 'Regenerate', pruneMissing: 'Remove missing members', draftHint: 'No set bound: tick skills, name the set above, then "Save current as set" creates it and binds this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
+        regen: 'Regenerate', claimForeign: 'Claim mismatched entries', claimForeignHint: 'Re-register links that are named in this set, already on disk and really pointing at the library/active zones back into the managed ledger (ledger only, disk entries untouched)', pruneMissing: 'Remove missing members', draftHint: 'No set bound: tick skills, name the set above, then "Save current as set" creates it and binds this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         noSession: 'Open a conversation session first',
@@ -219,7 +219,13 @@ window.__ModuleLoader__.load({
       }, [onClose]);
       const run = async (fn) => {
         setBusy(true); setError(null);
-        try { await fn(); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); }
+        try {
+          const r = await fn();
+          // 返回的 warnings 必须可见：台账失配态下「重新生成」盘上什么都不做，理由只存在于 warnings，
+          // 丢弃就等于「点了没反应」（活体复盘 2026-10-27，另一作用域 line run(key,fn) 早已这么做）。
+          const w = r && Array.isArray(r.warnings) && r.warnings.length ? r.warnings : null;
+          if (w) setError(`${t('opDone')} ⚠ ${w.join('; ')}`);
+        } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); }
         finally { setBusy(false); setConfirm(null); await reload(); }
       };
       const st = state ?? {};
@@ -259,6 +265,11 @@ window.__ModuleLoader__.load({
         sc.ok === false && !sc.unbound
           ? h('div', { className: sc.frozen ? 'ssm-warn' : 'ssm-err' }, sc.detail, ' ',
               sc.frozen ? null : h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'bind', { sessionId, slug: st.binding?.setSlug })) }, t('regen')),
+              // 接管（认领）：台账与盘上失配时 regen 只会空转（planEffective 一律判外来而跳过），
+              // 唯一恢复通道是把自家链接补回台账——只在确实有外来条目时出现（活体实锤 2026-10-27）
+              (sc.foreign ?? []).length && !sc.frozen
+                ? h('button', { disabled: busy, title: t('claimForeignHint'), onClick: () => run(() => call(ctx, 'claimForeign', { sessionId })) }, t('claimForeign'))
+                : null,
               // 幽灵名快捷修复（用户报告 2026-10-26：speckit-* 实体被外部删除，regen 无源可重建，唯一出路是从集合剔除）
               st.set && (st.effective?.missing ?? []).length
                 ? h('button', { disabled: busy, className: 'ssm-danger', onClick: () => run(async () => {
@@ -866,7 +877,7 @@ window.__ModuleLoader__.load({
             diag?.fixable?.reclaimDeadLinks?.count
               ? h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
               : null,
-            h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('rebuild', async () => { await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, t('fixRebuild')),
+            h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('rebuild', async () => { const r = await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); return r; }) }, t('fixRebuild')),
             !bus.sessionId ? h('div', { className: 'ssm-hint' }, t('noSession')) : null),
           diag
             ? h('div', null, ...Object.entries({

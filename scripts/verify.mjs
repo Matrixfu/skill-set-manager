@@ -1396,6 +1396,55 @@ const CASES = [
     },
   },
   {
+    id: 'claim-foreign', title: '接管失配链接：台账被上一代快照整体覆盖后，「重新生成」不得永久空转（活体实锤 2026-10-27）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'alpha'); writeSkill(f.library, 'beta');
+      const { saveSet } = await core('sets');
+      await saveSet(f.roots, { slug: 's1', name: 'S1', skills: ['alpha', 'beta'] });
+      const { writeBinding } = await core('binding');
+      const { planEffective, applyPlan, selfCheck, claimForeign } = await core('effective');
+      const { readManaged, writeManaged } = await core('managed');
+      const { entryKind } = await core('linkx');
+      writeBinding(f.projectA, 's1');
+      applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 's1'));
+      // 制造失配（applyUndo 语义：快照 entries 整体覆盖当前台账）：盘上两条自家链接仍在，台账却归零
+      writeManaged(f.projectA, { setSlug: 's1', entries: {}, sessionOverride: null });
+      const p0 = await planEffective(f.roots, f.projectA, 's1');
+      eq(p0.add.length, 0, '失配态：add 空（重新生成空转 = 用户看到的「点了无效」）');
+      eq(p0.warnForeign.length, 2, '失配态：两条自家链接都被判外来而跳过');
+      eq(selfCheck(f.roots, f.projectA).foreign.length, 2, '失配态：selfCheck 记两条外来');
+      // 接管：只补台账，绝不动盘上条目
+      const c1 = await claimForeign(f.roots, f.projectA);
+      eq(c1.claimed.map((x) => x.name).sort(), ['alpha', 'beta'], '两条自家链接被接管');
+      const mg = (await readManaged(f.projectA)).entries;
+      eq(mg.alpha && mg.alpha.kind, entryKind(path.join(f.projectA, '.dsh', 'skills', 'alpha')), '台账 kind 与盘上实际一致');
+      ok(mg.alpha && mg.alpha.from, '台账记下来源（from）');
+      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'alpha', 'SKILL.md')), '接管未改动盘上条目（内容仍可读）');
+      // 接管后重新生成恢复有效
+      const p1 = await planEffective(f.roots, f.projectA, 's1');
+      eq(p1.warnForeign.length, 0, '接管后不再报外来');
+      eq(p1.keep.slice().sort(), ['alpha', 'beta'], '接管后 keep 命中（重新生成有对象了）');
+      eq(selfCheck(f.roots, f.projectA).foreign.length, 0, '接管后 foreign 清零');
+      // 边界①：不在本集里的外来条目不接管
+      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'outsider');
+      const c2 = await claimForeign(f.roots, f.projectA);
+      eq(c2.claimed.length, 0, 'outsider/无失配 → 无可接管');
+      has(c2.skipped.map((s) => s.name), 'outsider', '不在集里的 outsider 记入 skipped');
+      has(skillDirNames(f.projectA), 'outsider', 'outsider 仍在盘上（不动不删）');
+      // 边界②：真目录（非本插件链接）即使与集同名也不接管
+      writeSkill(f.library, 'gamma');
+      const s2 = await core('sets');
+      await s2.saveSet(f.roots, { slug: 's2', name: 'S2', skills: ['gamma'] });
+      writeBinding(f.projectA, 's2');
+      fs.mkdirSync(path.join(f.projectA, '.dsh', 'skills', 'gamma'), { recursive: true }); // 手工同名真目录
+      const c3 = await claimForeign(f.roots, f.projectA);
+      eq(c3.claimed.length, 0, '同名真目录不被接管（他人所有）');
+      has(c3.skipped.map((s) => s.name), 'gamma', 'gamma 记入 skipped');
+      ok(c3.skipped.some((s) => s.name === 'gamma' && s.reason), 'skipped 带 reason');
+    },
+  },
+  {
     id: 'conflict-foreign', title: '目标同名外来条目：跳过并警告，绝不删除（M3/§7.3）',
     async run(f) {
       await withRoots(f);

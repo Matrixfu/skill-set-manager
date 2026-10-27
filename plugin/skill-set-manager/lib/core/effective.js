@@ -139,3 +139,69 @@ export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
     ].filter(Boolean).join('；'),
   };
 }
+
+/** 路径归一化（Windows 大小写不敏感、末尾分隔符无关），用于比对链接真实目标。 */
+const normPath = (p) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+
+/**
+ * 接管（认领）失配的自家条目。台账被上一代快照整体覆盖后（applyUndo 语义：pending.js 用
+ * 快照 entries 直接替换当前台账），本代链接全体降级成「外来」，planEffective 既不 add 也不
+ * remove → 「重新生成」永久空转（活体实锤 2026-10-27：盘上 16 条链接、台账 0 条，面板「多出」
+ * 红标点了重新生成毫无反应，且 warnings 被前端丢弃，用户连原因都看不到）。
+ * 口径：**只补台账、绝不动盘上条目**（ADR-0003「不动不删」在此同样成立），且只接管同时满足
+ * ①名字在本集期望清单（集 ∪ 覆盖增 ∖ 覆盖减）里、②盘上是链接（junction/symlink）、
+ * ③链接真实目标 = 该名字解析出的目标（库体或生效区本体）的条目。真目录、指向别处的链接、
+ * 不在本集里的条目一律 skipped 带理由——接管是「认领自己弄丢的东西」，不是「抢占别人的东西」。
+ */
+export async function claimForeign(roots, projectRoot, { fs: fsImpl = fs } = {}) {
+  const claimed = [];
+  const skipped = [];
+  const binding = readBinding(projectRoot, { fs: fsImpl });
+  const managed = readManaged(projectRoot, { fs: fsImpl });
+  if (!binding?.setSlug) return { claimed, skipped, warnings: ['未绑定技能集：没有可接管的目标态'] };
+  const set = binding.setSlug !== RESIDENT_SLUG ? loadSet(roots, binding.setSlug) : null;
+  let names = [...new Set(set?.skills ?? [])];
+  const ov = managed?.sessionOverride;
+  if (ov) {
+    const removed = new Set(ov.removed ?? []);
+    names = [...new Set([...names.filter((n) => !removed.has(n)), ...(ov.added ?? [])])];
+  }
+  const { targets } = await resolveSkillTargets(roots, projectRoot, names, { fs: fsImpl });
+  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const entries = { ...(managed?.entries ?? {}) };
+  for (const name of names) {
+    if (name in entries) continue; // 台账已有：不是失配条目
+    const t = targets.get(name);
+    if (!t) { skipped.push({ name, reason: '库/生效区解析不到（悬空引用），未接管' }); continue; }
+    const p = path.join(skillsDir, name);
+    const kind = entryKind(p, { fs: fsImpl });
+    if (kind === 'missing') continue; // 盘上没有 = 「缺失」，归重新生成重建，不是接管对象
+    if (kind !== 'junction' && kind !== 'symlink') {
+      skipped.push({ name, reason: `盘上是${kind === 'file' ? '文件' : '真实目录'}（他人所有），未接管` });
+      continue;
+    }
+    let real;
+    try { real = fsImpl.realpathSync(p); } catch { real = null; } // 死链/无权限
+    if (!real || normPath(real) !== normPath(t.path)) {
+      skipped.push({ name, reason: `链接指向 ${real ?? '未知（死链）'}，不是「${name}」的解析目标 ${t.path}，未接管` });
+      continue;
+    }
+    entries[name] = { kind, from: t.origin ?? t.path };
+    claimed.push({ name, kind, from: t.origin ?? t.path, target: t.path });
+  }
+  // 盘上其余外来条目（不在本集清单里）：一律不接管，但如实报出理由——面板据此解释「为什么没动」，
+  // 不再把「点了重新生成毫无反应」留给用户自己猜（活体复盘 2026-10-27）。
+  const rc = readbackCheck(roots, projectRoot, binding.setSlug, { override: ov, fs: fsImpl });
+  const inPlan = new Set(names);
+  for (const n of rc.actual) {
+    if (inPlan.has(n) || n in entries || skipped.some((s) => s.name === n)) continue;
+    skipped.push({ name: n, reason: '不在当前集合的清单里（不接管：要保留就把它加入集合，要清掉就摘链接）' });
+  }
+  if (claimed.length)
+    writeManaged(projectRoot, { setSlug: managed?.setSlug ?? binding.setSlug, entries, sessionOverride: managed?.sessionOverride ?? null }, { fs: fsImpl });
+  const warnings = [
+    ...claimed.map((c) => `${c.name}: 已接管进托管台账（盘上条目未改动）`),
+    ...skipped.map((s) => `${s.name}: ${s.reason}`),
+  ];
+  return { claimed, skipped, warnings };
+}

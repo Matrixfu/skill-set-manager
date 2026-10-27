@@ -13,7 +13,7 @@ import * as sets from './lib/core/sets.js';
 import { findProjectRoot } from './lib/core/projectRoot.js';
 import { readBinding, writeBinding } from './lib/core/binding.js';
 import { readManaged } from './lib/core/managed.js';
-import { planEffective, applyPlan, selfCheck } from './lib/core/effective.js';
+import { planEffective, applyPlan, selfCheck, claimForeign } from './lib/core/effective.js';
 import { providerSkills } from './lib/core/providerSkills.js';
 import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
@@ -60,7 +60,7 @@ export function apply(ctx, config) {
     'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
-    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource',
+    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource',
     // P3：翻译数据面
     'translatePending', 'translateRun', 'translateModels',
   ];
@@ -481,7 +481,26 @@ export function apply(ctx, config) {
       const slug = readBinding(loc.projectRoot)?.setSlug;
       if (!slug) throw new Error('未绑定技能集，无从重建');
       const plan = await planEffective(roots, loc.projectRoot, slug);
-      return { ...applyPlan(loc.projectRoot, plan), plan };
+      const result = applyPlan(loc.projectRoot, plan);
+      // 台账失配态下 add/remove/keep 三项皆空，理由只存在于 plan.warnForeign/warnMissing：
+      // 不并回 warnings 就成了「点了重新生成毫无反应」（活体复盘 2026-10-27，前端此前直接丢弃返回值）。
+      const planWarn = [
+        ...(plan.warnForeign ?? []).map((w) => `${w.name}: 生效目录已有同名${w.kind === 'file' ? '文件' : '条目'}（他人所有），未抢占未删除`
+          + (w.kind === 'junction' || w.kind === 'symlink' ? '——与当前集同名，可用「接管」认领回台账' : '——请改名或移除该条目后重试')),
+        ...(plan.warnMissing ?? []).map((n) => `${n}: 库/生效区解析不到（悬空引用），未生成`),
+      ];
+      return { ...result, warnings: [...(result.warnings ?? []), ...planWarn], plan };
+    }
+
+    /**
+     * 接管（认领）台账失配的自家链接：只把盘上已在、名字在本集里的链接补回台账，绝不动条目本身。
+     * 台账被上一代快照整体覆盖后（applyUndo 语义）planEffective 会把它全体判为外来并跳过，
+     * 「重新生成」从此空转——本方法就是那条丢失的恢复通道（活体实锤 2026-10-27：16 链接 / 台账 0 条）。
+     */
+    async claimForeign(req) {
+      if (!req?.sessionId) throw new Error('无活动会话：无法定位项目，请先在对话页打开会话（review M2）');
+      const loc = await this.locate(req);
+      return await claimForeign(roots, loc.projectRoot);
     }
 
     // ---- P1a：迁移向导（§8.2，ledger 落 storageDomain） ----
