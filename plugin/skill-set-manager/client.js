@@ -56,6 +56,7 @@ window.__ModuleLoader__.load({
         rpFrozen: '技能集已删除（冻结：清单原样保留）', rpClick: '点击查看 SKILL.md', rpNoSession: '（右栏 tab 未绑定会话）',
         rpForeign: '外来', rpMissing: '缺失', rpDead: '失效',
         rpEmpty: '（无生效技能）', rpDiagFail: '诊断加载失败',
+        rpGlobalActiveUnbound: '未绑定技能集：全局常驻技能已生效（{n} 项，不逐条列出）', rpGlobalActiveHint: '全局常驻技能已生效（{n} 项，不逐条列出）',
         importPreviewBtn: '预览导入', importApply: '应用导入', importConflict: '显示名已存在（该项跳过）',
         importAllPresent: '技能齐备', importMissing: '本机缺失', importNoPin: '无来源 pin，装不了',
         importChoiceInstall: '按 pin 安装', importChoicePlaceholder: '先占位', importChoiceIgnore: '忽略',
@@ -109,6 +110,7 @@ window.__ModuleLoader__.load({
         rpFrozen: 'Set deleted (frozen: list kept as-is)', rpClick: 'Click to open SKILL.md', rpNoSession: '(right tab has no bound session)',
         rpForeign: 'foreign', rpMissing: 'missing', rpDead: 'dead',
         rpEmpty: '(no effective skills)', rpDiagFail: 'diagnose failed',
+        rpGlobalActiveUnbound: 'No skill set bound: global resident skills are active ({n} items, not listed one by one)', rpGlobalActiveHint: 'Global resident skills are active ({n} items, not listed one by one)',
         importPreviewBtn: 'Preview import', importApply: 'Apply import', importConflict: 'name exists (this item is skipped)',
         importAllPresent: 'all skills present', importMissing: 'missing locally', importNoPin: 'no source pin — cannot install',
         importChoiceInstall: 'Install by pin', importChoicePlaceholder: 'Placeholder', importChoiceIgnore: 'Ignore',
@@ -122,11 +124,15 @@ window.__ModuleLoader__.load({
 
     /** 入口与 overlay 面板共享的模块级总线（overlay 是 root scope，拿不到 sessionId prop）。 */
     const bus = {
-      open: false, sessionId: null, state: null, subs: new Set(),
+      open: false, sessionId: null, state: null, subs: new Set(), token: 0,
       setOpen(v) { this.open = v; this.subs.forEach((f) => f()); },
       setSession(id) { if (id && id !== this.sessionId) { this.sessionId = id; this.subs.forEach((f) => f()); } },
       clearSessionIf(id) { if (id && this.sessionId === id) { this.sessionId = null; this.subs.forEach((f) => f()); } },
       setState(s) { this.state = s; this.subs.forEach((f) => f()); },
+      // 右栏详情刷新信号（用户报告 2026-10-27）：v0.25 起 betterSidebar 的原生 tab 体常驻挂载，
+      // 已打开的 tab 再点 ⇥ 既不重挂载、visible 也不翻转 → 组件自带的 visible/load 效应永不触发，
+      // 右栏停在旧集快照。onOpen/onActivate 与面板 run() 统一广播本信号；只广播当前会话防串台。
+      refresh(id) { if (id && id === this.sessionId) { this.token += 1; this.subs.forEach((f) => f()); } },
     };
     function useBus() {
       const [, bump] = React.useState(0);
@@ -226,7 +232,7 @@ window.__ModuleLoader__.load({
           const w = r && Array.isArray(r.warnings) && r.warnings.length ? r.warnings : null;
           if (w) setError(`${t('opDone')} ⚠ ${w.join('; ')}`);
         } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); }
-        finally { setBusy(false); setConfirm(null); await reload(); }
+        finally { setBusy(false); setConfirm(null); await reload(); bus.refresh(sessionId); } // 面板切集/重生成后右栏详情同步刷新（用户 2026-10-27）
       };
       const st = state ?? {};
       // 「已在项目」口径 = JSON 生效清单 ∪ 托管台账：临时覆盖加的技能只进台账、不进 state.effective
@@ -528,8 +534,14 @@ window.__ModuleLoader__.load({
       const [dg, setDg] = React.useState(null);
       const [dgErr, setDgErr] = React.useState(null);
       const [err, setErr] = React.useState(null);
+      const [token, setToken] = React.useState(bus.token); // 刷新信号快照（⇥ 再点/面板操作即刷新，见 bus.refresh）
       const sessionId = scope?.sessionId ?? null;
-      React.useEffect(() => { setSt(null); setDg(null); setDgErr(null); }, [sessionId]); // scope 切换先清旧数据，防瞬态串会话
+      React.useEffect(() => { setSt(null); setDg(null); setDgErr(null); setToken(bus.token); }, [sessionId]); // scope 切换先清旧数据（含旧会话的刷新信号），防瞬态串会话
+      React.useEffect(() => { // 订阅刷新信号：bus.refresh 只广播当前会话，token 变即触发下方重载
+        const fn = () => setToken(bus.token);
+        bus.subs.add(fn);
+        return () => bus.subs.delete(fn);
+      }, []);
       const load = React.useCallback(async () => {
         if (!sessionId) return;
         try {
@@ -541,7 +553,7 @@ window.__ModuleLoader__.load({
           setErr(null);
         } catch (e) { setErr(`${t('loadFailed')}: ${e?.message ?? e}`); }
       }, [ctx, sessionId]);
-      React.useEffect(() => { if (visible !== false) load(); }, [load, visible]); // parked 时暂停拉取（计划 T0 口径，review m3）
+      React.useEffect(() => { if (visible !== false) load(); }, [load, visible, token]); // parked 时暂停拉取（计划 T0 口径，review m3）；token=bus 刷新信号：tab 常驻挂载下 ⇥ 再点/面板切集都靠它触发重载（用户报告 2026-10-27）
       if (!sessionId) return h('div', { className: 'ssm-rp' }, t('rpNoSession'));
       const sc = st?.selfCheck ?? {};
       const resident = new Set(st?.resident ?? []);
@@ -550,7 +562,15 @@ window.__ModuleLoader__.load({
       const broken = new Set(sc.brokenLinks ?? []);
       const missing = new Set(st?.effective?.missing ?? []);
       const libMap = new Map((st?.library ?? []).map((l) => [l.name, l]));
-      const names = [...new Set([...(st?.effective?.names ?? []), ...Object.keys(managed), ...foreign])].sort();
+      // 右栏列表口径（用户 2026-10-27）：已绑定 = 集成员 ∪ 托管台账 ∪ 外来条目（冻结/集被删回退生效清单），
+      // 且剔除「仅全局常驻」行——不逐条列出全部全局技能，改由下方计数提示如实告知常驻已生效；
+      // 绑定常驻伪集（_resident，loadSet 返回 null）例外：列表本身就是常驻名册。
+      const bound = !!st?.binding?.setSlug;
+      const residentSlugBound = st?.binding?.setSlug === '_resident';
+      const setNames = new Set(st?.set?.skills ?? []);
+      const baseNames = st?.set?.skills ?? (bound ? st?.effective?.names ?? [] : []);
+      let names = [...new Set([...baseNames, ...Object.keys(managed), ...foreign])].sort();
+      if (bound && !residentSlugBound) names = names.filter((n) => !resident.has(n) || setNames.has(n) || n in managed);
       const row = (n) => {
         const l = libMap.get(n);
         const open = l?.skillMd && onOpenFile ? () => onOpenFile(l.skillMd) : null;
@@ -575,7 +595,9 @@ window.__ModuleLoader__.load({
         h('div', { className: 'ssm-root' }, st?.projectRoot ?? ''),
         err ? h('div', { className: 'ssm-err' }, err) : null,
         !st && !err ? h('div', { className: 'ssm-empty' }, '…') : null, // 未到位≠空：不得先渲染空态（review m4）
-        st && names.length === 0 ? h('div', { className: 'ssm-empty' }, t('rpEmpty')) : null,
+        st && !st.binding?.setSlug && (st.resident ?? []).length ? h('div', { className: 'ssm-empty' }, t('rpGlobalActiveUnbound').replace('{n}', st.resident.length)) : null,
+        st && (!st.binding?.setSlug ? !(st.resident ?? []).length : names.length === 0) ? h('div', { className: 'ssm-empty' }, t('rpEmpty')) : null,
+        st && bound && (st.resident ?? []).length ? h('div', { className: 'ssm-hint' }, t('rpGlobalActiveHint').replace('{n}', st.resident.length)) : null, // 未绑定时由上方专属文案告知，不重复
         st ? h('div', null, ...names.map(row)) : null,
         // 插件/Preset 灰段（用户疑问 2026-10-26）：运行时注入、不在生效清单内，只读不可勾；null = 服务不可知不渲染。
         (st?.unmanaged?.length ?? -1) >= 0 ? h(React.Fragment, null,
@@ -991,6 +1013,11 @@ window.__ModuleLoader__.load({
               description: () => t('tabDesc'),
               order: 40,
               single: true,
+              // 刷新接线（用户报告 2026-10-27，betterSidebar 源码取证）：surface 分支每次 openTab
+              // （含已开 reveal）必发 onOpen；底栏分支激活既有 tab 发 onActivate——两钩子广播信号，
+              // 常驻挂载的 tab 体据此重载，不再停在旧集快照（手动 ⟳ 仍保留）。
+              onOpen: (_tab, scope) => bus.refresh(scope?.sessionId),
+              onActivate: (_tab, scope) => bus.refresh(scope?.sessionId),
               badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && bus.state.selfCheck && !bus.state.selfCheck.ok && !bus.state.selfCheck.unbound) ? '!' : null,
               component: (props) => h(RightPanel, { ctx, t, scope: props.scope, visible: props.visible, onOpenFile: props.onOpenFile }),
             }); } catch (e) {

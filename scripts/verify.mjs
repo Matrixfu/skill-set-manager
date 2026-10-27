@@ -1846,6 +1846,37 @@ const CASES = [
     },
   },
   {
+    id: 'rp-refresh',
+    title: '右栏详情刷新接线 + 全局常驻如实呈现（用户报告 2026-10-27）',
+    async run() {
+      // 根因1（源码取证 dsh-better-sidebar）：v0.25 起已访问的原生 tab 体常驻（keepMounted），
+      // 面板里切换技能集后再点 ⇥，openTab 走 surface 分支 reveal 既有 tab——visible 不变、
+      // 组件不重挂载 → 只靠 visible 效应驱动的 load() 永不再触发，右栏停在旧集快照。
+      // 修法口径：descriptor.onOpen 在 surface 分支每次 openTab 必发（含已开）、onActivate 在
+      // 底栏分支激活既有 tab 时发——两钩子广播 bus.refresh 信号，RightPanel 按会话订阅即刷新。
+      // 根因2：state.effective 未绑定 = 空名单（host 只给绑定集的名单），右栏据此渲染
+      // 「（无生效技能）」，而全局常驻技能明明生效——必须显式告知，且不逐条列全部常驻。
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const src = fs.readFileSync(file, 'utf8');
+      ok(/setOpen\(v\)[\s\S]*?refresh\(id\)[^\n]*\{[^}]*token/.test(src), 'bus 提供 refresh 信号（token 单调递增）');
+      ok(/refresh\(id\)[\s\S]*?if \(id && id === this\.sessionId\)/.test(src), 'refresh 只广播给当前会话（防跨会话串台）');
+      ok(/finally \{ setBusy\(false\); setConfirm\(null\); await reload\(\); bus\.refresh\(sessionId\); \}/.test(src), '面板操作（run）也广播 refresh——切集后右栏不留旧态');
+      ok(/onOpen: \(\w+, \w+\) => bus\.refresh\(/.test(src), 'descriptor.onOpen 接线（surface 分支每次 openTab 必发）');
+      ok(/onActivate: \(\w+, \w+\) => bus\.refresh\(/.test(src), 'descriptor.onActivate 接线（底栏分支激活既有 tab 时发）');
+      ok(/setToken\(bus\.token\)/.test(src), 'RightPanel 订阅刷新信号（token 同步进组件 state）');
+      ok(/\[load, visible, token\]/.test(src), '刷新信号进入拉取效应依赖表（token 变即 load）');
+      // 问题2 口径：未绑定不再渲染「（无生效技能）」而是全局常驻生效提示；
+      // 已绑定列表 = 集成员 ∪ 台账 ∪ 外来，剔除「仅常驻」行（不逐条列全部常驻），另给计数提示。
+      for (const key of ['rpGlobalActiveUnbound', 'rpGlobalActiveHint'])
+        for (const loc of ['zh', 'en'])
+          ok(new RegExp(`${loc}: \\{[\\s\\S]*?${key}:`).test(src), `字典 ${loc} 含 ${key}`);
+      ok(/t\('rpGlobalActiveUnbound'\)/.test(src), '未绑定空态改渲染全局常驻生效提示');
+      ok(/t\('rpGlobalActiveHint'\)/.test(src), '已绑定列表上方给常驻计数提示');
+      ok(/names\.filter\(\(n\) => !resident\.has\(n\) \|\| setNames\.has\(n\) \|\| n in managed\)/.test(src),
+        '常驻行只剔「仅常驻」成员（集成员/台账行保留）');
+    },
+  },
+  {
     id: 'provider-skill',
     title: '插件/Preset 提供分区：fake skills 服务过滤口径 + 诊断第三分区行（用户疑问 2026-10-26）',
     async run(f) {
