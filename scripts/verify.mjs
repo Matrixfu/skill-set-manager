@@ -981,6 +981,32 @@ const CASES = [
     },
   },
   {
+    id: 'override-unbound',
+    title: '未绑定也能临时覆盖：勾上即写盘、还原回零写入、绑定即丢弃（用户 2026-10-28）',
+    async run(f) {
+      await withRoots(f);
+      writeSkill(f.library, 'ub-a'); writeSkill(f.library, 'ub-b');
+      const { makeFallbackStore } = await core('storage');
+      const { readManaged } = await core('managed');
+      const p = await core('pending');
+      const store = makeFallbackStore(path.join(f.base, 'store'));
+      // 未绑定勾选一个技能 = 本会话临时生效
+      const r1 = await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
+      setEq(r1.missingAdd, [], '未绑定起盘不得把可用技能报成缺体');
+      has(skillDirNames(f.projectA), 'ub-a', '未绑定勾选即写进项目 .dsh/skills');
+      const mg = readManaged(f.projectA);
+      eq(mg.setSlug, null, '未绑定覆盖：台账 setSlug 为 null（≠ 绑定）');
+      setEq(mg.sessionOverride.added, ['ub-a'], '覆盖记录记的是新增');
+      eq((await store.keys('pending')).length, 1, '先落 pending 标记（崩溃可还原）');
+      // Review-Focus 1：同名外来条目不抢占
+      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'ub-b', '用户自有条目');
+      const r2 = await p.startOverride(store, f.roots, f.projectA, { add: ['ub-b'], sessionId: 's1' });
+      setEq(r2.missingAdd, ['ub-b'], '同名外来条目：如实报缺体，不抢占');
+      eq(fs.readFileSync(path.join(f.projectA, '.dsh', 'skills', 'ub-b', 'SKILL.md'), 'utf8').includes('用户自有条目'), true, '外来条目原文不动');
+      lacks(Object.keys(readManaged(f.projectA).entries), 'ub-b', '外来条目不进托管台账');
+    },
+  },
+  {
     id: 'translations-core', title: 'P3-T1 翻译缓存核心：折叠块 description 读取+稳定哈希、reconcile 对账/失效/GC、decorate 三字段',
     async run(f) {
       await withRoots(f);

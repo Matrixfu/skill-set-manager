@@ -1,6 +1,7 @@
 /**
  * 会话临时覆盖（§6.6）：先落 pending 标记再动目录；崩溃残留由启动 restoreAllPending
  * **无条件**还原（按 binding 重放 planEffective+applyPlan）——这是「直接写」设计的前提。
+ * 未绑定项目也可起盘覆盖（台账 setSlug 为 null），还原后回到插件零写入（设计 2026-10-28）。
  * undo 快照供技能集切换的一次性撤销（§5.2），消费即删。
  */
 import fs from 'node:fs';
@@ -33,8 +34,7 @@ function netOverride(roots, setSlug, entries, prev, { addedThisCall = [], remove
 }
 
 export async function startOverride(store, roots, projectRoot, { add = [], remove = [], sessionId = null } = {}, { fs: fsImpl = fs } = {}) {
-  const managed = readManaged(projectRoot, { fs: fsImpl });
-  if (!managed) throw new Error('临时覆盖要求该项目已绑定技能集（无托管清单）');
+  const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { setSlug: null, entries: {}, sessionOverride: null }; // 未绑定也可起盘：台账 setSlug 为 null（设计 2026-10-28）
   const snapshot = { setSlug: managed.setSlug, entries: structuredClone(managed.entries), sessionOverride: managed.sessionOverride };
   // 先落标记后动目录（§6.6 崩溃即设计前提）：标记在 = 可还原；目录动了没标记 = 不可还原
   // sessionId = 本次覆盖的归属会话（§6.6「只对本次会话生效」）：事件还原据此判断是否该动手（评审 I1）
