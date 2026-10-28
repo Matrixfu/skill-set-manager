@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectKey } from './storage.js';
-import { readManaged, writeManaged } from './managed.js';
+import { readManaged, writeManaged, managedFile } from './managed.js';
 import { readBinding, writeBinding } from './binding.js';
 import { planEffective, applyPlan } from './effective.js';
 import { loadSet, RESIDENT_SLUG } from './sets.js';
@@ -36,12 +36,14 @@ function netOverride(roots, setSlug, entries, prev, { addedThisCall = [], remove
 export async function startOverride(store, roots, projectRoot, { add = [], remove = [], sessionId = null } = {}, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { setSlug: null, entries: {}, sessionOverride: null }; // 未绑定也可起盘：台账 setSlug 为 null（设计 2026-10-28）
   const snapshot = { setSlug: managed.setSlug, entries: structuredClone(managed.entries), sessionOverride: managed.sessionOverride };
+  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  // 未绑定起盘时若该目录原本不存在，还原后连这个空目录一起收回（回到插件零写入）
+  const createdSkillsDir = !fsImpl.existsSync(skillsDir);
   // 先落标记后动目录（§6.6 崩溃即设计前提）：标记在 = 可还原；目录动了没标记 = 不可还原
   // sessionId = 本次覆盖的归属会话（§6.6「只对本次会话生效」）：事件还原据此判断是否该动手（评审 I1）
-  const rec = (added, removed) => ({ projectRoot, setSlug: managed.setSlug, sessionId: sessionId ?? null, previousManaged: snapshot, added, removed });
+  const rec = (added, removed) => ({ projectRoot, setSlug: managed.setSlug, sessionId: sessionId ?? null, previousManaged: snapshot, added, removed, createdSkillsDir });
   await store.put('pending', projectKey(projectRoot), rec([], []));
   const entries = { ...managed.entries };
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
   const removed = remove.filter((n) => n in entries);
   for (const name of removed) {
     removeEntry(path.join(skillsDir, name), entries[name].kind, { fs: fsImpl });
@@ -71,7 +73,7 @@ export async function endOverride(store, roots, projectRoot) {
   const key = projectKey(projectRoot);
   const rec = await store.get('pending', key);
   if (!rec) return false;
-  const restored = await restoreProject(roots, rec.projectRoot);
+  const restored = await restoreProject(roots, rec.projectRoot, rec);
   await store.delete('pending', key);
   return restored; // 已解绑/冻结无可还原目标：如实返回，标记照样清掉
 }
@@ -92,9 +94,29 @@ export async function endOverrideIfActive(store, roots, projectRoot, endingSessi
   return { ended: !!ended, projectRoot };
 }
 
-async function restoreProject(roots, projectRoot) {
+/**
+ * 未绑定还原（设计 2026-10-28）：本次覆盖加了什么就摘什么；台账空了连 `.managed.json`
+ * 一起删，本次创建的空 `.dsh/skills` 目录也收回——项目回到「插件零写入」。
+ * 未绑定基线为空 ⇒ sessionOverride.removed 恒为空，无需补回条目。
+ */
+function unboundRestore(projectRoot, rec) {
+  const mg = readManaged(projectRoot);
+  if (!mg?.sessionOverride) return false; // 没有覆盖痕迹：不动盘
+  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  for (const n of mg.sessionOverride.added ?? []) {
+    const kind = mg.entries?.[n]?.kind;
+    if (kind) removeEntry(path.join(skillsDir, n), kind);
+    if (mg.entries) delete mg.entries[n];
+  }
+  if (Object.keys(mg.entries ?? {}).length) { writeManaged(projectRoot, { ...mg, sessionOverride: null }); return true; }
+  fs.rmSync(managedFile(projectRoot), { force: true });
+  if (rec?.createdSkillsDir) { try { if (fs.readdirSync(skillsDir).length === 0) fs.rmdirSync(skillsDir); } catch {} }
+  return true;
+}
+
+async function restoreProject(roots, projectRoot, rec = null) {
   const binding = readBinding(projectRoot);
-  if (!binding?.setSlug) return false; // 未绑定/已解绑：无目标态可还原
+  if (!binding?.setSlug) return unboundRestore(projectRoot, rec); // 未绑定/已解绑：只收回本次覆盖加的条目
   // 冻结绑定（集已删，§5.8「清单原样保留」）：不按空清单重放（那会摘光托管条目，评审 M9）；
   // 只摘本次覆盖加的条目，其余条目与台账原样留着，等用户改名/重建集。
   if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
@@ -126,7 +148,7 @@ export async function restoreAllPending(store, roots) {
     const rec = await store.get('pending', key);
     if (!rec) continue;
     try {
-      if (await restoreProject(roots, rec.projectRoot)) restored.push(rec.projectRoot);
+      if (await restoreProject(roots, rec.projectRoot, rec)) restored.push(rec.projectRoot);
     } catch (e) {
       warnings.push(`${rec.projectRoot}: 启动还原失败（${e.message}）`);
       continue; // 保留标记，下次启动再试

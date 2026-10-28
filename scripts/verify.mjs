@@ -987,7 +987,7 @@ const CASES = [
       await withRoots(f);
       writeSkill(f.library, 'ub-a'); writeSkill(f.library, 'ub-b');
       const { makeFallbackStore } = await core('storage');
-      const { readManaged } = await core('managed');
+      const { readManaged, managedFile } = await core('managed');
       const p = await core('pending');
       const store = makeFallbackStore(path.join(f.base, 'store'));
       // 未绑定勾选一个技能 = 本会话临时生效
@@ -1004,6 +1004,26 @@ const CASES = [
       setEq(r2.missingAdd, ['ub-b'], '同名外来条目：如实报缺体，不抢占');
       eq(fs.readFileSync(path.join(f.projectA, '.dsh', 'skills', 'ub-b', 'SKILL.md'), 'utf8').includes('用户自有条目'), true, '外来条目原文不动');
       lacks(Object.keys(readManaged(f.projectA).entries), 'ub-b', '外来条目不进托管台账');
+      // 撤下勾选
+      await p.startOverride(store, f.roots, f.projectA, { remove: ['ub-a'], sessionId: 's1' });
+      lacks(skillDirNames(f.projectA), 'ub-a', '再点一次即撤下');
+      setEq(readManaged(f.projectA).sessionOverride.added, [], '撤下后 added 净归零');
+      // Review-Focus 3：他会话结束不得动盘
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
+      eq(await p.endOverrideIfActive(store, f.roots, f.projectA, 's2'),
+        { ended: false, skipped: 'other-session', projectRoot: f.projectA, ownerSession: 's1' }, '他会话结束：跳过');
+      has(skillDirNames(f.projectA), 'ub-a', '他会话：条目仍在');
+      // 本会话结束：回到插件零写入
+      eq(await p.endOverrideIfActive(store, f.roots, f.projectA, 's1'), { ended: true, projectRoot: f.projectA }, '本会话结束即还原');
+      eq(fs.existsSync(managedFile(f.projectA)), false, '台账已删：未绑定项目回到插件零写入');
+      // Review-Focus 2：崩溃残留（留 pending 标记 → 启动无条件还原）
+      fs.rmSync(path.join(f.projectA, '.dsh', 'skills'), { recursive: true, force: true }); // 模拟从未有过该目录的干净项目
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
+      has(skillDirNames(f.projectA), 'ub-a', '还原前条目在盘');
+      await p.restoreAllPending(store, f.roots);
+      eq(fs.existsSync(path.join(f.projectA, '.dsh', 'skills')), false, '本次创建的 .dsh/skills 空目录一并收回');
+      ok(fs.existsSync(path.join(f.projectA, '.dsh')), '.dsh 本身不动');
+      eq((await store.keys('pending')).length, 0, 'pending 标记已清');
     },
   },
   {
