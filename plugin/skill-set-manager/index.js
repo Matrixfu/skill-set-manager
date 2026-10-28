@@ -657,6 +657,7 @@ export function apply(ctx, config) {
       const res = lifecycle.unbindProject(loc.projectRoot);
       const store = await storeOf();
       await store.delete('bindings', projectKey(loc.projectRoot));
+      await store.delete('pending', projectKey(loc.projectRoot)); // 解绑即撤掉临时覆盖标记：条目已回收，别留待还原的悬账
       return { ...res, projectRoot: loc.projectRoot };
     }
   }

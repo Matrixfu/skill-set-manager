@@ -1027,7 +1027,7 @@ const CASES = [
       // Review-Focus 4：绑定不得粘临时条目
       const s = await core('sets');
       await s.saveSet(f.roots, { slug: 'ub-set', name: 'UB', skills: ['ub-b'] });
-      const { planEffective, applyPlan } = await core('effective');
+      const { planEffective, applyPlan, selfCheck } = await core('effective');
       const { writeBinding } = await core('binding');
       await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
       has(skillDirNames(f.projectA), 'ub-a', '绑定前：临时条目在盘');
@@ -1043,6 +1043,19 @@ const CASES = [
       await writeBinding(f.projectA, 'ub-set2');
       applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'ub-set2'));
       setEq(skillDirNames(f.projectA), ['ub-a'], '已绑定切换后覆盖条目仍在（现状）');
+      // Review-Focus 5：未绑定 + 覆盖中，自家临时条目不得被误报（projectA 已被绑定，改用仍未绑定的 projectB）
+      await p.startOverride(store, f.roots, f.projectB, { add: ['ub-a'], sessionId: 's1' });
+      const sc = selfCheck(f.roots, f.projectB);
+      eq(sc.unbound, true, '仍报未绑定');
+      eq(sc.ok, true, '临时条目不是外来条目：自检不得报红');
+      setEq(sc.foreign, [], '临时条目不进 foreign');
+      fs.rmSync(path.join(f.projectB, '.dsh', 'skills', 'ub-a'), { recursive: true, force: true });
+      const sc2 = selfCheck(f.roots, f.projectB);
+      eq(sc2.ok, false, '临时条目被外删 → 报异常');
+      setEq(sc2.brokenLinks, ['ub-a'], '失效链接点名到条目');
+      // 无覆盖时未绑定口径不变
+      await p.endOverride(store, f.roots, f.projectB);
+      eq(selfCheck(f.roots, f.projectB).detail, '未绑定：插件不改动该项目', '无覆盖：未绑定口径不变');
     },
   },
   {

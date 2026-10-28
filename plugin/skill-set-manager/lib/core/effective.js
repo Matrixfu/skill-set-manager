@@ -111,12 +111,16 @@ export function readbackCheck(roots, projectRoot, setSlug, { override = null, fs
 export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
   const binding = readBinding(projectRoot, { fs: fsImpl });
   const managed = readManaged(projectRoot, { fs: fsImpl });
-  const base = { ok: true, missing: [], extra: [], foreign: [], brokenLinks: [], frozen: false, unbound: false, binding, setSlug: binding?.setSlug ?? null, detail: '' };
-  if (!binding || !binding.setSlug) return { ...base, unbound: true, detail: '未绑定：插件不改动该项目' };
-  if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
+  const base = { ok: true, missing: [], extra: [], foreign: [], brokenLinks: [], frozen: false, unbound: !binding?.setSlug, binding, setSlug: binding?.setSlug ?? null, detail: '' };
+  const override = managed?.sessionOverride ?? null;
+  const ovActive = !!(override?.added?.length || override?.removed?.length);
+  if (!binding || !binding.setSlug) {
+    // 未绑定但有会话覆盖：临时条目是自家条目（台账在），按「期望=覆盖新增」口径读回（设计 2026-10-28）
+    if (!ovActive) return { ...base, unbound: true, detail: '未绑定：插件不改动该项目' };
+  } else if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
     return { ...base, ok: false, frozen: true, detail: `冻结绑定：技能集「${binding.setSlug}」已删除，生效清单原样保留，请改绑` };
   }
-  const rc = readbackCheck(roots, projectRoot, binding.setSlug, { override: managed?.sessionOverride ?? null, fs: fsImpl });
+  const rc = readbackCheck(roots, projectRoot, binding?.setSlug ?? null, { override, fs: fsImpl });
   const skillsDir = path.join(projectRoot, '.dsh', 'skills');
   const entries = managed?.entries ?? {};
   const brokenLinks = Object.keys(entries).filter((name) => {
@@ -132,7 +136,7 @@ export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
     extra: rc.extra,
     foreign,
     brokenLinks,
-    detail: ok ? '托管清单与目录一致' : [
+    detail: ok ? (binding?.setSlug ? '托管清单与目录一致' : '会话临时覆盖与目录一致') : [
       rc.missing.length ? `缺失: ${rc.missing.join(', ')}` : '',
       rc.extra.length ? `多出: ${rc.extra.join(', ')}` : '',
       brokenLinks.length ? `失效链接: ${brokenLinks.join(', ')}` : '',
