@@ -877,6 +877,7 @@ export function apply(ctx, config) {
         const projectRoot = findProjectRoot(cwd);
         if (readBinding(projectRoot)) return;
         if (!sets.loadSet(roots, config.autoBindSlug)) return;
+        dropOverrideOnBind(projectRoot); // 自动绑定也是绑定：先丢未绑定态的临时覆盖，否则 planEffective 把临时条目并进期望态、粘进刚绑定的集（设计 2026-10-28）
         writeBinding(projectRoot, config.autoBindSlug);
         applyPlan(projectRoot, await planEffective(roots, projectRoot, config.autoBindSlug));
         ensureGitignoreLine(projectRoot, { enabled: config.gitignoreLine });

@@ -128,17 +128,22 @@ export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
     return k === 'missing';
   });
   const foreign = [...new Set([...rc.actual, ...Object.keys(entries)])].filter((n) => !(n in entries)).sort(); // 盘上有、台账无 = 外来（即使名字恰与集重名也不当我托管）
-  const ok = rc.ok && brokenLinks.length === 0;
+  // 未绑定：插件对该项目没有「期望清单」（ADR-0003 只认台账），盘上非台账条目一律归 foreign——
+  // 不得计成「多出」、不得把徽标拉红（设计 2026-10-28：未绑定 + 覆盖仍守「不改动该项目」口径）。
+  // 台账里确实属于插件、却不在本次覆盖新增里的条目仍算多出（插件自己漏在盘上的东西）。
+  const unboundNow = !binding?.setSlug;
+  const extra = unboundNow ? rc.extra.filter((n) => !foreign.includes(n)) : rc.extra;
+  const ok = unboundNow ? (rc.missing.length === 0 && brokenLinks.length === 0) : (rc.ok && brokenLinks.length === 0);
   return {
     ...base,
     ok,
     missing: rc.missing,
-    extra: rc.extra,
+    extra,
     foreign,
     brokenLinks,
     detail: ok ? (binding?.setSlug ? '托管清单与目录一致' : '会话临时覆盖与目录一致') : [
       rc.missing.length ? `缺失: ${rc.missing.join(', ')}` : '',
-      rc.extra.length ? `多出: ${rc.extra.join(', ')}` : '',
+      extra.length ? `多出: ${extra.join(', ')}` : '',
       brokenLinks.length ? `失效链接: ${brokenLinks.join(', ')}` : '',
     ].filter(Boolean).join('；'),
   };

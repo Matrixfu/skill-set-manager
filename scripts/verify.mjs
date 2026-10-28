@@ -1049,6 +1049,15 @@ const CASES = [
       eq(sc.unbound, true, '仍报未绑定');
       eq(sc.ok, true, '临时条目不是外来条目：自检不得报红');
       setEq(sc.foreign, [], '临时条目不进 foreign');
+      // 终审 Important 1（计划/设计空白）：未绑定 + 覆盖中，用户手写的项目技能不是偏差——
+      // 插件对未绑定项目没有期望清单（ADR-0003），非台账条目归 foreign，不得计成「多出」把徽标拉红
+      writeSkill(path.join(f.projectB, '.dsh', 'skills'), 'own-keep', '用户手写的项目技能');
+      const scOwn = selfCheck(f.roots, f.projectB);
+      eq(scOwn.ok, true, '未绑定 + 覆盖：自有条目不得拉红（改动前必红：多出 own-keep）');
+      setEq(scOwn.extra, [], '自有条目不进 extra');
+      setEq(scOwn.foreign, ['own-keep'], '自有条目如实报成外来（只报告不动手，ADR-0003）');
+      eq(scOwn.detail, '会话临时覆盖与目录一致', '未绑定覆盖态的正常文案不被自有条目污染');
+      fs.rmSync(path.join(f.projectB, '.dsh', 'skills', 'own-keep'), { recursive: true, force: true }); // 清掉夹具，后续断言不受干扰
       fs.rmSync(path.join(f.projectB, '.dsh', 'skills', 'ub-a'), { recursive: true, force: true });
       const sc2 = selfCheck(f.roots, f.projectB);
       eq(sc2.ok, false, '临时条目被外删 → 报异常');
@@ -1056,6 +1065,14 @@ const CASES = [
       // 无覆盖时未绑定口径不变
       await p.endOverride(store, f.roots, f.projectB);
       eq(selfCheck(f.roots, f.projectB).detail, '未绑定：插件不改动该项目', '无覆盖：未绑定口径不变');
+      // 终审 Important 2：`session/created` 自动绑定也是绑定路径——须在 writeBinding/applyPlan 前丢临时覆盖，
+      // 否则 planEffective 把 override.added 并进期望态，临时条目粘进刚自动绑定的集（设计反目标）。
+      // index.js 是 Cordis 激活体，套件无法起 ctx，只能钉接线顺序（与 client-unbound-override 同一手法）。
+      const hostSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'index.js'), 'utf8');
+      const autoFrom = hostSrc.indexOf("ctx.on('session/created'");
+      ok(autoFrom > 0, '找到自动绑定分支');
+      const autoSeg = hostSrc.slice(autoFrom, hostSrc.indexOf('applyPlan(projectRoot, await planEffective(roots, projectRoot, config.autoBindSlug))'));
+      ok(/dropOverrideOnBind\(projectRoot\)/.test(autoSeg), '自动绑定：writeBinding 之前丢临时覆盖');
     },
   },
   {
