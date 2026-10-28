@@ -68,6 +68,19 @@ export async function startOverride(store, roots, projectRoot, { add = [], remov
   return { ...snapshot, missingAdd };
 }
 
+/**
+ * 绑定即丢弃会话覆盖（设计 2026-10-28）：只有**当前仍未绑定**且存在覆盖记录时清标记——
+ * 未绑定时临时勾的技能不该粘进新绑定的集。已绑定之间切换仍保留覆盖（现状口径）。
+ * 必须在 `writeBinding` 之前调用：判定「绑定前是不是未绑定」靠的就是当时的 binding。
+ */
+export function dropOverrideOnBind(projectRoot, { fs: fsImpl = fs } = {}) {
+  if (readBinding(projectRoot, { fs: fsImpl })?.setSlug) return false; // 已绑定：切换保留覆盖
+  const managed = readManaged(projectRoot, { fs: fsImpl });
+  if (!managed?.sessionOverride) return false;
+  writeManaged(projectRoot, { ...managed, sessionOverride: null }, { fs: fsImpl });
+  return true;
+}
+
 /** 手动结束覆盖：按 binding 还原目录，清标记（面板按钮=用户明示意图，无条件执行）。 */
 export async function endOverride(store, roots, projectRoot) {
   const key = projectKey(projectRoot);

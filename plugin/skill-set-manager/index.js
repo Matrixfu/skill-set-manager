@@ -18,7 +18,7 @@ import { providerSkills } from './lib/core/providerSkills.js';
 import { entryKind, removeEntry } from './lib/core/linkx.js';
 import { ensureGitignoreLine } from './lib/core/gitignore.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
-import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
+import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo, dropOverrideOnBind } from './lib/core/pending.js';
 import { syncResident, pruneLegacyResidentLinks, dropResidentName } from './lib/core/resident.js';
 import os from 'node:os';
 import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
@@ -254,6 +254,7 @@ export function apply(ctx, config) {
     async bind(req) {
       const loc = await this.locate(req);
       if (!sets.loadSet(roots, req.slug) && req.slug !== sets.RESIDENT_SLUG) throw new Error(`技能集不存在: ${req.slug}`);
+      dropOverrideOnBind(loc.projectRoot); // 未绑定 → 绑定：丢弃会话临时覆盖（设计 2026-10-28）；须在 writeBinding 前判前态
       writeBinding(loc.projectRoot, req.slug);
       const plan = await planEffective(roots, loc.projectRoot, req.slug);
       const result = applyPlan(loc.projectRoot, plan);

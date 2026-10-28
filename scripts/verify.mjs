@@ -1024,6 +1024,25 @@ const CASES = [
       eq(fs.existsSync(path.join(f.projectA, '.dsh', 'skills')), false, '本次创建的 .dsh/skills 空目录一并收回');
       ok(fs.existsSync(path.join(f.projectA, '.dsh')), '.dsh 本身不动');
       eq((await store.keys('pending')).length, 0, 'pending 标记已清');
+      // Review-Focus 4：绑定不得粘临时条目
+      const s = await core('sets');
+      await s.saveSet(f.roots, { slug: 'ub-set', name: 'UB', skills: ['ub-b'] });
+      const { planEffective, applyPlan } = await core('effective');
+      const { writeBinding } = await core('binding');
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
+      has(skillDirNames(f.projectA), 'ub-a', '绑定前：临时条目在盘');
+      eq(await p.dropOverrideOnBind(f.projectA), true, '未绑定 + 覆盖中 → 绑定前清覆盖标记');
+      await writeBinding(f.projectA, 'ub-set');
+      applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'ub-set'));
+      setEq(skillDirNames(f.projectA), ['ub-b'], '生效清单只剩该集：临时条目不粘');
+      eq(readManaged(f.projectA).sessionOverride, null, 'sessionOverride 已清');
+      // 已绑定 → 切换仍保留覆盖（现状口径，不得回归）
+      await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
+      eq(await p.dropOverrideOnBind(f.projectA), false, '已绑定：切换不清覆盖');
+      await s.saveSet(f.roots, { slug: 'ub-set2', name: 'UB2', skills: [] });
+      await writeBinding(f.projectA, 'ub-set2');
+      applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'ub-set2'));
+      setEq(skillDirNames(f.projectA), ['ub-a'], '已绑定切换后覆盖条目仍在（现状）');
     },
   },
   {
