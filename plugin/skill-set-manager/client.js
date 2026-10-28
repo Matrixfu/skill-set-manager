@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
         confirmSwitch: '确认切换：将改写仓库根的 .dsh/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
-        regen: '重新生成', claimForeign: '接管失配条目', claimForeignHint: '把「名字在本集里、盘上已存在、且确实指向库/生效区」的链接补回托管台账（只补台账，不动盘上条目）', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选技能 → 上方输入集合名 → 「另存为当前清单」即创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
+        regen: '重新生成', claimForeign: '接管失配条目', claimForeignHint: '把「名字在本集里、盘上已存在、且确实指向库/生效区」的链接补回托管台账（只补台账，不动盘上条目）', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选即本会话临时生效（会话结束自动撤下）；要固化就在上方输入集合名 → 「另存为当前清单」创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；/ 命令列表属 P2，新会话前不同步',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         noSession: '先在对话页打开一个会话',
@@ -45,7 +45,7 @@ window.__ModuleLoader__.load({
         searchPh: '按名称/用途搜索技能…', hitCount: '命中', pendingTag: '待翻译',
         residentRow: '全局常驻 · 已在所有项目生效', foreignRow: '外来常驻 · 其他工具放入 ~/.agents/skills',
         providerSec: '插件/Preset 提供', providerHint: '插件或 agent preset 注入，不受技能集管控：切换技能集不移除；停用对应插件即消失', providerRow: '插件/Preset 提供 · 不受技能集管控', providerRowGo: '在「设置 → 插件」停用来源插件',
-        goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：先在上方选择技能集，之后才可用临时覆盖（仅本会话）', // N6：未绑定时临时覆盖不可用（host 会拒），文案不得引导点击
+        goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：勾选即本会话临时生效（会话结束自动撤下）；要固化请用「另存为当前清单」创建并绑定技能集', // 设计 2026-10-28：未绑定也可起盘临时覆盖（host 台账 setSlug:null），旧 N6「未绑定不可覆盖」口径已废
         tabGlobal: '全局技能集', globalTabHint: '常驻技能在所有项目生效；链接落在下行所示目录（跨 harness 共享，其他工具可见）。外来常驻条目只读。',
         residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果', failedRetryable: '条此前失败 · 点击一并重试',
         translateProgress: '翻译中', translateStop: '停止', translateStopping: '停止中（等在途条目收尾）',
@@ -74,7 +74,7 @@ window.__ModuleLoader__.load({
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
         confirmSwitch: 'Confirm switch: rewrites .dsh/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
-        regen: 'Regenerate', claimForeign: 'Claim mismatched entries', claimForeignHint: 'Re-register links that are named in this set, already on disk and really pointing at the library/active zones back into the managed ledger (ledger only, disk entries untouched)', pruneMissing: 'Remove missing members', draftHint: 'No set bound: tick skills, name the set above, then "Save current as set" creates it and binds this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
+        regen: 'Regenerate', claimForeign: 'Claim mismatched entries', claimForeignHint: 'Re-register links that are named in this set, already on disk and really pointing at the library/active zones back into the managed ledger (ledger only, disk entries untouched)', pruneMissing: 'Remove missing members', draftHint: 'No set bound: ticking a skill activates it for this session only (auto-removed when the session ends); to keep it, name the set above, then "Save current as set" creates it and binds this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; / commands are P2 (new sessions only)',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         noSession: 'Open a conversation session first',
@@ -99,7 +99,7 @@ window.__ModuleLoader__.load({
         searchPh: 'Search skills by name or purpose…', hitCount: 'matches', pendingTag: 'untranslated',
         residentRow: 'Global resident · active in every project', foreignRow: 'Foreign resident · from ~/.agents/skills',
         providerSec: 'Plugin / preset-provided', providerHint: 'Injected by a plugin or agent preset, outside skill-set control: switching sets will not remove them; disable the plugin to hide', providerRow: 'Plugin / preset-provided · not skill-set managed', providerRowGo: 'disable the source plugin in Settings → Plugins',
-        goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: pick one above first; session override becomes available after binding',
+        goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: ticking a skill in Session override activates it for this session only (auto-removed when the session ends); to keep it, use "Save current as set" to create a set and bind this project',
         tabGlobal: 'Global Skills', globalTabHint: 'Resident skills apply to every project; links live in the dir shown below (shared across harnesses). Foreign residents are read-only.',
         residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result', failedRetryable: 'previously failed · click to retry all',
         translateProgress: 'Translating', translateStop: 'Stop', translateStopping: 'stopping (waiting for in-flight items)',
@@ -211,8 +211,6 @@ window.__ModuleLoader__.load({
       const [edit, setEdit] = React.useState(null); // {slug, picked:{name:true}}——编辑成员表单（§5#2）
       const [q, setQ] = React.useState(''); // P3 搜索框（设计 §6.3）：非空 → 结果列表替换三区
       const [mq, setMq] = React.useState(''); // P3 成员编辑表单过滤（§6.2；勾选态 picked 按名字存，过滤不丢）
-      const [draftPick, setDraftPick] = React.useState(() => new Set()); // 未绑定勾选草稿（用户 2026-10-26：未绑定也要能挑技能→存集）
-      const togglePick = (n) => setDraftPick((s) => { const next = new Set(s); if (next.has(n)) next.delete(n); else next.add(n); return next; });
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -239,7 +237,7 @@ window.__ModuleLoader__.load({
       // 的 JSON 口径，加完必须即从候选区撤回（受管区即显示为选中勾选），否则复选框永远显未勾（用户报）。
       const eff = new Set([...(st.effective?.names ?? []), ...Object.keys(st.managed ?? {})]);
       const resident = new Set(st.resident ?? []);
-      const managed = Object.keys(st.managed ?? {});
+      const managed = Object.keys(st.managed ?? {}); // 一套勾选（设计 2026-10-28）：已绑定=集提供的条目；未绑定=本会话临时生效的条目
       // P3 搜索结果（设计 §6.3/§6.4）：语料 = 库行 ∪ 常驻名单 ∪ 盘上外来常驻（灰行判定 = 名单 ∪ 实扫）
       const foreignRes = new Set(st.residentForeign ?? []);
       const bound = !!st.binding?.setSlug;
@@ -352,12 +350,11 @@ window.__ModuleLoader__.load({
             : null)),
         h('div', { className: 'ssm-row' },
           h('input', { className: 'ssm-input', placeholder: t('newName'), value: draft, onChange: (e) => setDraft(e.target.value) }),
-          h('button', { disabled: busy || !draft.trim() || (!bound && !draftPick.size), title: !bound && !draftPick.size ? t('draftHint') : undefined, onClick: () => run(async () => {
+          h('button', { disabled: busy || !draft.trim() || (!bound && !managed.length), title: !bound && !managed.length ? t('draftHint') : undefined, onClick: () => run(async () => {
             const name = draft.trim();
-            // 未绑定走显式草稿名单（候选已剔常驻）；已绑定隐式 = 生效清单，host 端剔常驻（save-as-resident CASE）
-            const s = await call(ctx, 'saveAsFromEffective', { sessionId, name, ...(bound ? {} : { names: [...draftPick] }) });
-            if (!bound && s?.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 存集即生效：本项目只出现所选技能
-            setDraftPick(new Set());
+            // 未绑定走当前临时清单（候选已剔常驻）；已绑定隐式 = 生效清单，host 端剔常驻（save-as-resident CASE）
+            const s = await call(ctx, 'saveAsFromEffective', { sessionId, name, ...(bound ? {} : { names: [...managed] }) });
+            if (!bound && s?.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 存集即生效：bind 先丢临时覆盖（dropOverrideOnBind），本项目只出现所选技能
             setDraft(''); // 新建集已落盘；刷新同上走 reload()（用户报告：保存成功却弹「操作失败: load is not defined」）
           }) }, t('saveAs')),
           h('button', { disabled: busy, onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, t('importJson'))),
@@ -471,28 +468,34 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'ssm-grow' }, null),
                     h('span', { className: 'ssm-n' }, isRes ? t('goSettings') : t('providerRowGo'))), // T0 静态裁定：无编程跳转 → 纯文案（插件行指向插件设置）
                   desc);
-                const on = eff.has(l.name);
+                const on = bound ? eff.has(l.name) : !!st.managed?.[l.name]; // 未绑定：勾上态 = 已在盘上临时生效（台账）
                 return h('div', { key: l.name, className: 'ssm-srow' },
                   h('div', { className: 'ssm-row' },
-                    h('label', { className: 'ssm-chip' + ((bound ? on : draftPick.has(l.name)) ? ' ssm-on' : '') },
-                      h('input', { type: 'checkbox', checked: bound ? on : draftPick.has(l.name), disabled: busy, title: l.descriptionZh ?? undefined,
-                        onChange: () => bound ? run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) : togglePick(l.name) }), ' ', l.name, h(LibBadges, { lib: l }))),
+                    h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
+                      h('input', { type: 'checkbox', checked: on, disabled: busy, title: l.descriptionZh ?? undefined,
+                        onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l }))),
                   desc);
               }))
           : h(React.Fragment, null,
-              h('div', { className: 'ssm-sec' }, t('managedSec')),
-              h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
-                ...managed.map((n) => h('label', { key: n, className: 'ssm-chip' },
-                  h('input', { type: 'checkbox', checked: true, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }), ' ', n))),
+              // 未绑定时整段隐藏（设计 2026-10-28）：临时条目已在下方「临时覆盖」区以勾上态呈现，不重复一节
+              ...(bound ? [
+                h('div', { className: 'ssm-sec' }, t('managedSec')),
+                h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
+                  ...managed.map((n) => h('label', { key: n, className: 'ssm-chip' },
+                    h('input', { type: 'checkbox', checked: true, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }), ' ', n))),
+              ] : []),
               // 常驻大平铺段已删（P3 设计 §6.3）：常驻管理移设置页「全局技能集」tab；弹窗内仅搜索结果灰行
               h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
               h('div', { className: 'ssm-chips' },
                 ...(bound
                   ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip', title: l.descriptionZh ?? undefined },
                       h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
-                  // 未绑定（用户 2026-10-26）：候选 = 库 − 常驻全局，勾选进本地草稿，「另存为当前清单」建集并绑定
-                  : (st.library ?? []).filter((l) => !resident.has(l.name) && !foreignRes.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip' + (draftPick.has(l.name) ? ' ssm-on' : ''), title: l.descriptionZh ?? undefined },
-                      h('input', { type: 'checkbox', checked: draftPick.has(l.name), disabled: busy, onChange: () => togglePick(l.name) }), ' ', l.name, h(LibBadges, { lib: l })))),
+                  // 未绑定（设计 2026-10-28）：候选 = 库 − 常驻全局；勾选即本会话临时生效（host 起盘 setSlug:null 台账），要固化走「另存为当前清单」
+                  : (st.library ?? []).filter((l) => !resident.has(l.name) && !foreignRes.has(l.name)).map((l) => {
+                      const on = managed.includes(l.name);
+                      return h('label', { key: l.name, className: 'ssm-chip' + (on ? ' ssm-on' : ''), title: l.descriptionZh ?? undefined },
+                        h('input', { type: 'checkbox', checked: on, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l }));
+                    })),
                   // 被覆盖剔除的集成员（用户 2026-10-26：testt 4 技能项目只见 3，被剔项从三区消失）——显示并可直接勾回
                   ...((st.sessionOverride?.removed) ?? []).map((n) => h('label', { key: 'ovr-' + n, className: 'ssm-chip', title: t('ovRestoreTip') },
                     h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [n] })) }), ' ', n,

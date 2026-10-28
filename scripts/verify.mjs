@@ -1863,6 +1863,23 @@ const CASES = [
     },
   },
   {
+    id: 'client-unbound-override',
+    title: 'client.js：未绑定勾选走 host 临时覆盖，不再攒本地草稿；中英文案同步（用户 2026-10-28）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(!/draftPick|togglePick/.test(body), '未绑定勾选不再走本地草稿（draftPick/togglePick 已删）');
+      ok(/const managed = Object\.keys\(st\.managed \?\? \{\}\)/.test(body), '一套勾选：临时生效名单就是托管台账（未绑定态）');
+      ok(/names: \[\.\.\.managed\]/.test(body), '另存为：未绑定用当前临时清单作名单');
+      for (const copy of [
+        '未绑定：勾选即本会话临时生效', '本项目未绑定技能集：勾选即本会话临时生效',
+        'No set bound: ticking a skill activates it for this session only',
+        'No skill set bound: ticking a skill in Session override activates it for this session only',
+      ]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+    },
+  },
+  {
     id: 'client-scope',
     title: 'client.js 分段作用域扫描：只在点击路径上炸的 ReferenceError（§10 UI 无 linter）',
     async run() {
