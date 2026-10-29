@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({
         taskUninstall: '正在卸载并回收托管条目…', taskMigrate: '正在迁移存量条目…',
         taskElapsed: '已等待 {n}s', taskBusyWith: '正在{n}，请先等它跑完', taskDismiss: '清除',
         taskOpInstall: '安装', taskOpImport: '导入', taskOpUninstall: '卸载', taskOpMigrate: '迁移', taskOpCheck: '检查更新', taskOpApply: '应用更新',
+        opPartial: '部分完成：{n} 装入 · {m} 未装（逐条结果见「运维」页签）',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -130,6 +131,7 @@ window.__ModuleLoader__.load({
         taskUninstall: 'Uninstalling and reclaiming managed entries…', taskMigrate: 'Migrating legacy entries…',
         taskElapsed: 'Waiting {n}s', taskBusyWith: '{n} in progress — wait for it to finish', taskDismiss: 'Dismiss',
         taskOpInstall: 'Install', taskOpImport: 'Import', taskOpUninstall: 'Uninstall', taskOpMigrate: 'Migrate', taskOpCheck: 'Update check', taskOpApply: 'Apply update',
+        opPartial: 'Partially done: {n} installed · {m} skipped (per-skill results are in the Ops tab)',
       },
     };
 
@@ -198,7 +200,7 @@ window.__ModuleLoader__.load({
       tasks.running = task; tasks.last = task; emitTasks();
       const settle = (s) => {
         task.status = s.ok ? 'ok' : 'err';
-        task.result = s.value; task.error = s.error; task.warnings = s.warnings; task.note = s.note ?? null;
+        task.result = s.value; task.error = s.error; task.warnings = s.warnings; task.note = opts.noteOf?.(s) ?? s.note ?? null;
         task.doneAt = Date.now(); tasks.running = null; emitTasks();
         // 收尾回调拿同一份 settled：调用方只在 ok 时写回，失败不再被 run() 的 catch 降级成「操作失败」
         opts.onDone?.({ ok: s.ok, value: s.value, error: s.error, warnings: s.warnings });
@@ -1002,7 +1004,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-row' },
             h('input', { className: 'ssm-input', placeholder: t('installSpecPh'), value: spec, disabled: locked, onChange: (e) => setSpec(e.target.value) }),
             h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: overwrite, disabled: locked, onChange: (e) => setOverwrite(e.target.checked) }), ' ', t('overwriteChk')),
-            h('button', { disabled: locked || !spec.trim(), title: busyTitle, onClick: () => { if (startLong(ctx, 'installApply', spec.trim(), { spec: spec.trim(), overwrite }, { onDone: () => load() })) setSpec(''); } }, t('installGo'))),
+            h('button', { disabled: locked || !spec.trim(), title: busyTitle, onClick: () => { if (startLong(ctx, 'installApply', spec.trim(), { spec: spec.trim(), overwrite }, { noteOf: (s) => { const rs = s.ok ? s.value?.results ?? [] : []; const bad = rs.filter((r) => !r.ok).length; return bad ? t('opPartial').replace('{n}', String(rs.length - bad)).replace('{m}', String(bad)) : null; }, onDone: () => load() })) setSpec(''); } }, t('installGo'))),
           instDone
             ? h('div', { className: 'ssm-hint' }, `@${String(instDone.commit ?? '').slice(0, 7)} `,
                 ...(instDone.results ?? []).map((r) => h('span', { key: r.name, className: 'ssm-chip' }, `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}`)))

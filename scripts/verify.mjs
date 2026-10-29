@@ -2049,7 +2049,7 @@ const CASES = [
       const en = src.slice(src.indexOf('      en: {'), dictEnd);
       const KEYS = ['taskConnect', 'taskFetching', 'taskSlowRepo', 'taskImport', 'taskUpdateCheck', 'taskUpdateApply',
         'taskUninstall', 'taskMigrate', 'taskElapsed', 'taskBusyWith', 'taskDismiss',
-        'taskOpInstall', 'taskOpImport', 'taskOpUninstall', 'taskOpMigrate', 'taskOpCheck', 'taskOpApply'];
+        'taskOpInstall', 'taskOpImport', 'taskOpUninstall', 'taskOpMigrate', 'taskOpCheck', 'taskOpApply', 'opPartial'];
       for (const k of KEYS) { ok(zh.includes(`${k}:`), `字典 zh 缺 ${k}`); ok(en.includes(`${k}:`), `字典 en 缺 ${k}`); } // Review Focus #4
       for (const op of ['installApply', 'importApply', 'updateCheck', 'updateApply', 'uninstallSkill',
         'migrateApply', 'migrateUndo', 'migrateAgentsApply', 'migrateAgentsUndo'])
@@ -2069,6 +2069,8 @@ const CASES = [
       ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
       ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
       ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : t\('opFailed'\)/.test(body), '结束后阶段文案收口为操作完成或操作失败（终审 I1）');
+      ok(/if \(last\?\.op !== 'updateCheck' \|\| last\.status !== 'ok' \|\| !last\.result\) return;/.test(body), '检查更新结果从任务态补回（终审 I2）');
+      ok(/noteOf: \(s\) => s\.ok && s\.value\?\.backup/.test(body), '备份路径提示改挂任务 note（终审 I2）');
       ok(!/run\('install'/.test(body), '安装按钮不再走组件内 busy（一关页面就丢）');
       for (const site of ["startLong(ctx, 'installApply'", "startLong(ctx, 'uninstallSkill'", "startLong(ctx, 'updateCheck'",
         "startLong(ctx, 'updateApply'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
