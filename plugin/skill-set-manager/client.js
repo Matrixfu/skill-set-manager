@@ -784,6 +784,13 @@ window.__ModuleLoader__.load({
       const trStop = React.useRef(false); // 批量翻译「停止」标志（逐条 RPC 循环检查，用户反馈 2026-10-26：无进度不可知）
       const [migA, setMigA] = React.useState(null); // {preview, applied}
       const [diag, setDiag] = React.useState(null);
+      // 在飞时关掉设置页，onDone 写回的是点击那一刻的实例，那次写入被 React 丢弃；
+      // 重开时从任务态把最近一次「检查更新」的结果补回来（终审 I2）
+      React.useEffect(() => {
+        const last = tasks.last;
+        if (last?.op !== 'updateCheck' || last.status !== 'ok' || !last.result) return;
+        setUpRes((m) => (m[last.target] ? m : { ...m, [last.target]: last.result }));
+      }, [tasks.last]);
       const load = React.useCallback(async () => {
         try { const v = await call(ctx, 'libraryList', {}); setLib(v.library ?? []); }
         catch (e) { setMsg({ kind: 'err', text: `${t('loadFailed')}: ${e?.message ?? e}` }); }
@@ -894,12 +901,14 @@ window.__ModuleLoader__.load({
                 ? busyBtn('updateCheck', x.name, t('checkUp'), t('checkingUp'), () => startLong(ctx, 'updateCheck', x.name, { name: x.name }, { onDone: (s) => { if (s.ok) setUpRes((m) => ({ ...m, [x.name]: s.value })); } }))
                 : null,
               upRes[x.name] && !upRes[x.name].upToDate
-                ? busyBtn('updateApply', x.name, t('applyUp'), t('applyingUp'), () => startLong(ctx, 'updateApply', x.name, { name: x.name }, { onDone: (s) => {
-                    if (!s.ok) return; // 失败由 TaskStrip 染红并报原因，不再被 run() 的 catch 混成「操作失败」
-                    setUpRes((m) => ({ ...m, [x.name]: null }));
-                    setMsg({ kind: 'ok', text: s.value?.backup ? `${t('opDone')} · ${t('backupAt')} ${s.value.backup}` : t('opDone') });
-                    load();
-                  } }))
+                ? busyBtn('updateApply', x.name, t('applyUp'), t('applyingUp'), () => startLong(ctx, 'updateApply', x.name, { name: x.name }, {
+                    noteOf: (s) => s.ok && s.value?.backup ? `${t('opDone')} · ${t('backupAt')} ${s.value.backup}` : null,
+                    onDone: (s) => {
+                      if (!s.ok) return; // 失败由 TaskStrip 染红并报原因，不再被 run() 的 catch 混成「操作失败」
+                      setUpRes((m) => ({ ...m, [x.name]: null }));
+                      load();
+                    },
+                  }))
                 : null,
               x.backupCount
                 ? h('button', { disabled: locked, title: busyTitle, onClick: () => {

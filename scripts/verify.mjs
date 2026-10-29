@@ -2071,6 +2071,8 @@ const CASES = [
       ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : t\('opFailed'\)/.test(body), '结束后阶段文案收口为操作完成或操作失败（终审 I1）');
       ok(/if \(last\?\.op !== 'updateCheck' \|\| last\.status !== 'ok' \|\| !last\.result\) return;/.test(body), '检查更新结果从任务态补回（终审 I2）');
       ok(/noteOf: \(s\) => s\.ok && s\.value\?\.backup/.test(body), '备份路径提示改挂任务 note（终审 I2）');
+      ok(/opts\.noteOf\?\.\(s\)/.test(body), 'settle 可按结果派生 note（终审 I3）');
+      ok(/noteOf: \(s\) => \{/.test(body), '安装部分成功写 note（终审 I3）');
       ok(!/run\('install'/.test(body), '安装按钮不再走组件内 busy（一关页面就丢）');
       for (const site of ["startLong(ctx, 'installApply'", "startLong(ctx, 'uninstallSkill'", "startLong(ctx, 'updateCheck'",
         "startLong(ctx, 'updateApply'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
