@@ -314,6 +314,7 @@ window.__ModuleLoader__.load({
     }
 
     function Panel({ ctx, t, sessionId, onClose, bs }) {
+      const tasks = useTasks(); // 与设置页同一份模块级任务态：面板关掉后，导入的进行中与结果仍在这份状态里
       const [state, setState] = React.useState(null);
       const [error, setError] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
@@ -326,6 +327,10 @@ window.__ModuleLoader__.load({
       const [edit, setEdit] = React.useState(null); // {slug, picked:{name:true}}——编辑成员表单（§5#2）
       const [q, setQ] = React.useState(''); // P3 搜索框（设计 §6.3）：非空 → 结果列表替换三区
       const [mq, setMq] = React.useState(''); // P3 成员编辑表单过滤（§6.2；勾选态 picked 按名字存，过滤不丢）
+      const locked = !!tasks.running || busy; // 长任务在飞时 host 事件循环也被 spawnSync 占住，此处不再另起 RPC
+      const busyTitle = tasks.running ? t('taskBusyWith').replace('{n}', t(SLOW_OPS[tasks.running.op].label)) : undefined;
+      // 导入结果改从任务态读（原 io.applied 是组件 state，一关面板就没了）
+      const importDone = tasks.last?.op === 'importApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
@@ -379,6 +384,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ssm-grow' }, null),
           bs || ctx.get('betterSidebar') ? h('button', { className: 'ssm-x', title: t('openRight'), onClick: () => (bs ?? ctx.get('betterSidebar'))?.openTab({ type: 'skill-set-manager:detail', title: t('tabTitle') }, { sessionId }) }, '⇥') : null,
           h('button', { className: 'ssm-x', onClick: onClose, 'aria-label': t('close') }, '×')),
+        h(TaskStrip, { t, tasks }), // 面板顶部一条：导入块（io）被关掉后，进度与结果仍在这行上（设计 §5）
         st.projectRoot ? h('div', { className: 'ssm-root' }, t('projectRoot'), '：', st.projectRoot, st.rootDrift ? h('span', { className: 'ssm-warn-inline' }, t('rootDrift')) : null) : null,
         st.presetWarn ? h('div', { className: 'ssm-warn' }, st.presetWarn) : null,
         sc.ok === false && !sc.unbound
@@ -509,13 +515,12 @@ window.__ModuleLoader__.load({
                         onClick: () => setIo({ ...io, choices: { ...io.choices, [m.name]: 'ignore' } }),
                       }, (io.choices[m.name] === 'ignore' ? '✓ ' : '') + t('importChoiceIgnore'))))))
                 : null,
-              // 导入结果回显（评审 I2）：四组计数 + 警告留在面板里，不静默关面板
-              io.applied
+              // 导入结果回显（评审 I2 + 用户 2026-10-29）：四组计数从任务态读；warnings 由上方 TaskStrip 逐行显示，不重复一遍
+              importDone
                 ? h('div', { className: 'ssm-io' },
                     h('div', { className: 'ssm-ok' },
-                      `${t('importApplied')}：` + ([[io.applied.created?.length ?? 0, t('sets')], [io.applied.installed?.length ?? 0, t('importChoiceInstall')], [io.applied.placeholders?.length ?? 0, t('importChoicePlaceholder')], [io.applied.ignored?.length ?? 0, t('importChoiceIgnore')], [(io.applied.nameConflicts?.length ?? 0) + (io.applied.errors?.length ?? 0), t('importConflict')]].filter((p) => p[0]).map((p) => `${p[1]} ${p[0]}`).join(' · ') || t('none')),
-                      (io.applied.created ?? []).length ? `（${io.applied.created.map((c) => c.slug).join('、')}）` : ''),
-                    ...(io.applied.warnings ?? []).map((w, i) => h('div', { key: 'aw' + i, className: 'ssm-warn' }, `⚠ ${w}`)))
+                      `${t('importApplied')}：` + ([[importDone.created?.length ?? 0, t('sets')], [importDone.installed?.length ?? 0, t('importChoiceInstall')], [importDone.placeholders?.length ?? 0, t('importChoicePlaceholder')], [importDone.ignored?.length ?? 0, t('importChoiceIgnore')], [(importDone.nameConflicts?.length ?? 0) + (importDone.errors?.length ?? 0), t('importConflict')]].filter((p) => p[0]).map((p) => `${p[1]} ${p[0]}`).join(' · ') || t('none')),
+                      (importDone.created ?? []).length ? `（${importDone.created.map((c) => c.slug).join('、')}）` : ''))
                 : null,
               h('div', { className: 'ssm-row' },
                 io.mode === 'export'
@@ -528,13 +533,12 @@ window.__ModuleLoader__.load({
                     }, t('copyClip'))
                   : io.preview
                     ? h('button', {
-                        disabled: busy,
-                        onClick: async () => {
-                          setBusy(true); setError(null);
-                          try { setIo({ ...io, applied: await call(ctx, 'importApply', { payload: io.payload, choices: io.choices }) }); } // 结果留在面板里回显（评审 I2）
-                          catch (e) { setError(`${t('importApply')}: ${e?.message ?? e}`); }
-                          finally { setBusy(false); await reload(); }
-                        },
+                        disabled: locked, title: busyTitle,
+                        onClick: () => startLong(ctx, 'importApply', null, { payload: io.payload, choices: io.choices }, {
+                          // 预期耗时按「按 pin 安装」的技能数放大：每个技能各自浅克隆一次仓库，25s 是单个的量级
+                          T: 25000 * Math.max(1, Object.values(io.choices ?? {}).filter((c) => c === 'install').length),
+                          onDone: () => { reload(); bus.refresh(sessionId); }, // 左面板与右栏详情同步刷新（用户 2026-10-27）
+                        }),
                       }, t('importApply'))
                     : h('button', {
                         disabled: busy || !io.text.trim(),

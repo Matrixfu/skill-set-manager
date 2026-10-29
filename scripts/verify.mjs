@@ -2079,6 +2079,12 @@ const CASES = [
       ok(/const rowBusy = \(op, name\) =>/.test(body), '行内转圈改由任务态驱动');
       ok(/h\(TaskStrip, \{ t, tasks \}\)/.test(body), '设置页页签下方渲染任务条');
       ok(!/const \[instRes, setInstRes\]/.test(body), '安装结果改从任务态读（Review Focus #1）');
+      ok(body.includes("startLong(ctx, 'importApply'"), '按 pin 导入接长任务');
+      eq((body.match(/h\(TaskStrip, \{ t, tasks \}\)/g) ?? []).length, 2, '设置页与会话面板各一条（Review Focus #1）');
+      ok(!/setIo\(\{ \.\.\.io, applied: await/.test(body), '导入结果不再只存组件内');
+      ok(/T: 25000 \* Math\.max\(1,/.test(body), '导入耗时预期按所选技能数放大');
+      const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
+      ok(gl.includes('**长任务（Long Operation）**'), 'GLOSSARY 收录术语');
     },
   },
 ];
