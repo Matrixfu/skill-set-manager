@@ -246,7 +246,7 @@ window.__ModuleLoader__.load({
           task.status === 'running' ? h('span', { className: 'ssm-spin' }, null) : null,
           h('span', { className: 'ssm-cur' }, t(SLOW_OPS[task.op].label)),
           task.target ? h('span', { className: 'ssm-n' }, task.target) : null,
-          h('span', { className: 'ssm-n' }, t(taskStageKey(task, now))),
+          h('span', { className: 'ssm-n' }, task.status === 'running' ? t(taskStageKey(task, now)) : task.status === 'ok' ? t('opDone') : t('opFailed')),
           h('span', { className: 'ssm-grow' }, null),
           h('span', { className: 'ssm-n' }, t('taskElapsed').replace('{n}', `${secs}`)),
           // 在飞不提供 ×：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」（设计末条判断）

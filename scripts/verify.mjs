@@ -2068,6 +2068,7 @@ const CASES = [
       ok(/tasks\.running \? null : h\('button'/.test(body), '在飞不提供清除：不能取消就别假装能收起');
       ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
       ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
+      ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : t\('opFailed'\)/.test(body), '结束后阶段文案收口为操作完成或操作失败（终审 I1）');
       ok(!/run\('install'/.test(body), '安装按钮不再走组件内 busy（一关页面就丢）');
       for (const site of ["startLong(ctx, 'installApply'", "startLong(ctx, 'uninstallSkill'", "startLong(ctx, 'updateCheck'",
         "startLong(ctx, 'updateApply'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
