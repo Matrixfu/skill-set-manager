@@ -200,7 +200,7 @@ window.__ModuleLoader__.load({
       tasks.running = task; tasks.last = task; emitTasks();
       const settle = (s) => {
         task.status = s.ok ? 'ok' : 'err';
-        task.result = s.value; task.error = s.error; task.warnings = s.warnings; task.note = opts.noteOf?.(s) ?? s.note ?? null;
+        task.result = s.value; task.error = s.error; task.warnings = s.warnings; try { task.note = opts.noteOf?.(s) ?? s.note ?? null; } catch { task.note = null; } // noteOf 只是附加说明，抛错不得卡住 settle（终审 N1）
         task.doneAt = Date.now(); tasks.running = null; emitTasks();
         // 收尾回调拿同一份 settled：调用方只在 ok 时写回，失败不再被 run() 的 catch 降级成「操作失败」
         opts.onDone?.({ ok: s.ok, value: s.value, error: s.error, warnings: s.warnings });
@@ -248,7 +248,8 @@ window.__ModuleLoader__.load({
           task.status === 'running' ? h('span', { className: 'ssm-spin' }, null) : null,
           h('span', { className: 'ssm-cur' }, t(SLOW_OPS[task.op].label)),
           task.target ? h('span', { className: 'ssm-n' }, task.target) : null,
-          h('span', { className: 'ssm-n' }, task.status === 'running' ? t(taskStageKey(task, now)) : task.status === 'ok' ? t('opDone') : t('opFailed')),
+          // 失败不在这行重复「操作失败」：下方 .ssm-err 行已带同一个 key 的前缀（终审 N3）
+          h('span', { className: 'ssm-n' }, task.status === 'running' ? t(taskStageKey(task, now)) : task.status === 'ok' ? t('opDone') : null),
           h('span', { className: 'ssm-grow' }, null),
           h('span', { className: 'ssm-n' }, t('taskElapsed').replace('{n}', `${secs}`)),
           // 在飞不提供 ×：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」（设计末条判断）

@@ -2068,11 +2068,13 @@ const CASES = [
       ok(/tasks\.running \? null : h\('button'/.test(body), '在飞不提供清除：不能取消就别假装能收起');
       ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
       ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
-      ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : t\('opFailed'\)/.test(body), '结束后阶段文案收口为操作完成或操作失败（终审 I1）');
+      ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : null/.test(body), '结束后文案收口：完成显文案，失败交给下方红行（终审 I1/N3）');
       ok(/if \(last\?\.op !== 'updateCheck' \|\| last\.status !== 'ok' \|\| !last\.result\) return;/.test(body), '检查更新结果从任务态补回（终审 I2）');
       ok(/noteOf: \(s\) => s\.ok && s\.value\?\.backup/.test(body), '备份路径提示改挂任务 note（终审 I2）');
       ok(/opts\.noteOf\?\.\(s\)/.test(body), 'settle 可按结果派生 note（终审 I3）');
       ok(/noteOf: \(s\) => \{/.test(body), '安装部分成功写 note（终审 I3）');
+      ok(/try \{ task\.note = opts\.noteOf\?\.\(s\) \?\? s\.note \?\? null; \} catch \{ task\.note = null; \}/.test(body), 'noteOf 抛错不得卡住 settle（终审 N1）');
+      ok(/\.filter\(\(r\) => !r\.ok\)\.length/.test(body), '部分成功按 results[].ok 计数（终审 N5）');
       ok(!/run\('install'/.test(body), '安装按钮不再走组件内 busy（一关页面就丢）');
       for (const site of ["startLong(ctx, 'installApply'", "startLong(ctx, 'uninstallSkill'", "startLong(ctx, 'updateCheck'",
         "startLong(ctx, 'updateApply'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
