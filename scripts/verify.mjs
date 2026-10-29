@@ -2037,6 +2037,32 @@ const CASES = [
       ok(!dOld.groups.partition.map((r) => String(r.what)).join('\n').includes('插件/Preset'), '不传参数时不新增分区行');
     },
   },
+  {
+    id: 'client-longop-progress',
+    title: 'client.js：慢操作有转圈/进度条/耗时，进行中与结果跨界面存活（用户 2026-10-29）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const src = fs.readFileSync(file, 'utf8');
+      const body = src.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      const dictEnd = src.indexOf('    function Panel(');
+      const zh = src.slice(src.indexOf('      zh: {'), src.indexOf('      en: {'));
+      const en = src.slice(src.indexOf('      en: {'), dictEnd);
+      const KEYS = ['taskConnect', 'taskFetching', 'taskSlowRepo', 'taskImport', 'taskUpdateCheck', 'taskUpdateApply',
+        'taskUninstall', 'taskMigrate', 'taskElapsed', 'taskBusyWith', 'taskDismiss',
+        'taskOpInstall', 'taskOpImport', 'taskOpUninstall', 'taskOpMigrate', 'taskOpCheck', 'taskOpApply'];
+      for (const k of KEYS) { ok(zh.includes(`${k}:`), `字典 zh 缺 ${k}`); ok(en.includes(`${k}:`), `字典 en 缺 ${k}`); } // Review Focus #4
+      for (const op of ['installApply', 'importApply', 'updateCheck', 'updateApply', 'uninstallSkill',
+        'migrateApply', 'migrateUndo', 'migrateAgentsApply', 'migrateAgentsUndo'])
+        ok(body.includes(`${op}: {`), `SLOW_OPS 缺 ${op}`);
+      ok(/^    const tasks = \{ seq: 0, running: null, last: null, subs: new Set\(\) \};$/m.test(body),
+        '任务态是模块级：关设置页/面板不丢（Review Focus #1）');
+      ok(/function startLong\(ctx, op, target, args, opts = \{\}\)/.test(body), 'startLong 签名');
+      ok(/if \(tasks\.running\) return false;/.test(body), '单飞：已在飞直接拒（Review Focus #2）');
+      ok(/Math\.min\(95,/.test(body), '运行中进度封顶 95%（反目标：不得谎报完成）');
+      ok(/task\.status !== 'running' \? 100/.test(body), '只有 RPC 真返回才 100%');
+      ok(/opts\.onDone\?\.\(\{ ok:/.test(body), 'settle 后回调 onDone(settled)');
+    },
+  },
 ];
 
 // ---------- 运行器 ----------

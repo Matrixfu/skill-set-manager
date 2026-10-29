@@ -65,6 +65,12 @@ window.__ModuleLoader__.load({
         claimUndo: '撤认领', claimHint: '认领 = 以当前盘上内容为基线写 manifest（此后本地改动可被升级识别并跳过）',
         editMembers: '成员', editTitle: '编辑成员', saveBtn: '保存',
         memberHint: '勾选 = 该集包含，保存即写回；当前绑定集会立即重新生成生效清单（会话临时覆盖保留）；全局常驻技能所有集自动包含，故不进候选（用户 2026-10-26）', memberMissing: '不在库', memberResidentTag: '已是全局常驻·自动包含',
+        // 长任务态（设计 2026-10-29）：阶段文案只描述「还在等 host」，不假装知道真实边界
+        taskConnect: '正在连接 GitHub…', taskFetching: '正在浅克隆仓库并检出文件…', taskSlowRepo: '仍在拉取：大仓库可能要 1–2 分钟',
+        taskImport: '正在按 pin 安装所选技能…', taskUpdateCheck: '正在比对远端 commit…', taskUpdateApply: '正在拉取远端并写回本地…',
+        taskUninstall: '正在卸载并回收托管条目…', taskMigrate: '正在迁移存量条目…',
+        taskElapsed: '已等待 {n}s', taskBusyWith: '正在{n}，请先等它跑完', taskDismiss: '清除',
+        taskOpInstall: '安装', taskOpImport: '导入', taskOpUninstall: '卸载', taskOpMigrate: '迁移', taskOpCheck: '检查更新', taskOpApply: '应用更新',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -119,6 +125,11 @@ window.__ModuleLoader__.load({
         claimUndo: 'Unclaim', claimHint: 'Claiming writes a manifest with the current files as baseline (later local edits are then detected and skipped on update)',
         editMembers: 'Members', editTitle: 'Edit members', saveBtn: 'Save',
         memberHint: 'Checked = in this set; Save writes it back. The bound set rebuilds its effective list immediately (session overrides stay). Global resident skills are auto-included in every set, so they are not offered as candidates', memberMissing: 'not in library', memberResidentTag: 'already global resident · auto-included',
+        taskConnect: 'Connecting to GitHub…', taskFetching: 'Shallow-cloning the repo and checking out files…', taskSlowRepo: 'Still fetching: large repos can take 1–2 minutes',
+        taskImport: 'Installing the selected skills by pin…', taskUpdateCheck: 'Comparing against the remote commit…', taskUpdateApply: 'Fetching the remote and writing files back…',
+        taskUninstall: 'Uninstalling and reclaiming managed entries…', taskMigrate: 'Migrating legacy entries…',
+        taskElapsed: 'Waiting {n}s', taskBusyWith: '{n} in progress — wait for it to finish', taskDismiss: 'Dismiss',
+        taskOpInstall: 'Install', taskOpImport: 'Import', taskOpUninstall: 'Uninstall', taskOpMigrate: 'Migrate', taskOpCheck: 'Update check', taskOpApply: 'Apply update',
       },
     };
 
@@ -143,6 +154,74 @@ window.__ModuleLoader__.load({
       }, []);
       return bus;
     }
+
+    /**
+     * 慢操作登记表（设计 2026-10-29）：键 = RPC 名。T = 进度条时间常数（ms）；
+     * stages = [文案键, 起始 ms] 递增阶梯；label = 被挡住按钮 title 里的短名。
+     * 阶段与百分比都是按耗时的猜测——真边界要 host 把 git 改异步 spawn 并解析 --progress，本期明确排除。
+     */
+    const SLOW_OPS = {
+      installApply: { T: 25000, label: 'taskOpInstall', stages: [['taskConnect', 0], ['taskFetching', 10000], ['taskSlowRepo', 60000]] },
+      importApply: { T: 25000, label: 'taskOpImport', stages: [['taskImport', 0], ['taskSlowRepo', 60000]] },
+      updateCheck: { T: 15000, label: 'taskOpCheck', stages: [['taskUpdateCheck', 0]] },
+      updateApply: { T: 20000, label: 'taskOpApply', stages: [['taskUpdateApply', 0]] },
+      uninstallSkill: { T: 6000, label: 'taskOpUninstall', stages: [['taskUninstall', 0]] },
+      migrateApply: { T: 6000, label: 'taskOpMigrate', stages: [['taskMigrate', 0]] },
+      migrateUndo: { T: 6000, label: 'taskOpMigrate', stages: [['taskMigrate', 0]] },
+      migrateAgentsApply: { T: 6000, label: 'taskOpMigrate', stages: [['taskMigrate', 0]] },
+      migrateAgentsUndo: { T: 6000, label: 'taskOpMigrate', stages: [['taskMigrate', 0]] },
+    };
+
+    /**
+     * 模块级长任务态（用户 2026-10-29：安装中退出设置界面，回来必须仍见进度与最终结果）。
+     * promise 本来就与组件无关（host 侧无人取消），丢的一直是 UI 侧的状态与结果——所以状态不放 useState。
+     * 单飞：host 没有取消能力（git 走 spawnSync），并行没有真实收益，同名技能还会互踩，故全局只允许一个。
+     */
+    const tasks = { seq: 0, running: null, last: null, subs: new Set() };
+    const emitTasks = () => tasks.subs.forEach((f) => f());
+    function useTasks() {
+      const [, bump] = React.useState(0);
+      React.useEffect(() => {
+        const fn = () => bump((v) => v + 1);
+        tasks.subs.add(fn);
+        return () => tasks.subs.delete(fn);
+      }, []);
+      return tasks;
+    }
+    /** 起一个长任务。已在飞 → 返回 false 且不改任何状态；调用方据此给按钮挂 title 说明被谁挡住。 */
+    function startLong(ctx, op, target, args, opts = {}) {
+      if (tasks.running) return false;
+      const task = {
+        id: (tasks.seq += 1), op, target, note: null, T: opts.T ?? SLOW_OPS[op].T,
+        startedAt: Date.now(), doneAt: null, status: 'running', result: null, error: null, warnings: [],
+      };
+      tasks.running = task; tasks.last = task; emitTasks();
+      const settle = (s) => {
+        task.status = s.ok ? 'ok' : 'err';
+        task.result = s.value; task.error = s.error; task.warnings = s.warnings; task.note = s.note ?? null;
+        task.doneAt = Date.now(); tasks.running = null; emitTasks();
+        // 收尾回调拿同一份 settled：调用方只在 ok 时写回，失败不再被 run() 的 catch 降级成「操作失败」
+        opts.onDone?.({ ok: s.ok, value: s.value, error: s.error, warnings: s.warnings });
+      };
+      call(ctx, op, args).then(
+        (value) => settle({ ok: true, value, error: null, warnings: Array.isArray(value?.warnings) ? value.warnings : [] }),
+        (error) => settle({ ok: false, value: null, error, warnings: [] }),
+      );
+      return true;
+    }
+    /** 清除已结束的任务。在飞不提供清除：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」。 */
+    function clearTask() { if (!tasks.running) { tasks.last = null; emitTasks(); } }
+    /** 运行中永不到 100%（封顶 95）：条子自己爬满就是在谎报完成（反目标 #1）；只有 RPC 真返回才 100。 */
+    const taskPercent = (task, now) => task.status !== 'running' ? 100
+      : Math.min(95, Math.round(95 * (1 - Math.exp(-(now - task.startedAt) / task.T))));
+    /** 按耗时挑当前阶段文案键：只说「还在等 host」，不假装知道 fetch / 写库的真实边界。 */
+    const taskStageKey = (task, now) => {
+      const st = SLOW_OPS[task.op]?.stages ?? [];
+      const el = now - task.startedAt;
+      let key = st[0]?.[0] ?? 'taskConnect';
+      for (const [k, from] of st) if (el >= from) key = k;
+      return key;
+    };
 
     /** Remote 面优先（RemoteResult 归一化）；任何失败退同源 fetch（同一 host 实现）。 */
     async function call(ctx, method, args) {
