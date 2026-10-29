@@ -2061,6 +2061,13 @@ const CASES = [
       ok(/Math\.min\(95,/.test(body), '运行中进度封顶 95%（反目标：不得谎报完成）');
       ok(/task\.status !== 'running' \? 100/.test(body), '只有 RPC 真返回才 100%');
       ok(/opts\.onDone\?\.\(\{ ok:/.test(body), 'settle 后回调 onDone(settled)');
+      ok(/function TaskStrip\(\{ t, tasks \}\)/.test(body), 'TaskStrip 组件签名');
+      ok(/\.ssm-bar\{/.test(body) && /\.ssm-bar-fill\{/.test(body) && /\.ssm-bar-ok\{/.test(body) && /\.ssm-bar-err\{/.test(body), '进度条 CSS 四件套');
+      ok(/style: \{ width: pct \+ '%' \}/.test(body), '进度条宽度按 percent 驱动');
+      ok(/setInterval\(tick, 500\)/.test(body), '耗时每 500ms 刷一次');
+      ok(/tasks\.running \? null : h\('button'/.test(body), '在飞不提供清除：不能取消就别假装能收起');
+      ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
+      ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
     },
   },
 ];

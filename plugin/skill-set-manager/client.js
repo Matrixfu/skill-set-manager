@@ -223,6 +223,42 @@ window.__ModuleLoader__.load({
       return key;
     };
 
+    /**
+     * 长任务条（设计 2026-10-29）：设置页页签条下方与会话面板顶部各挂一条，切页签照样看得见。
+     * now 每次渲染现算 ⇒ 关掉界面再重开，耗时与阶段按 startedAt 续算、进度条不重置（Review Focus #1）。
+     * 秒表只在「有任务在飞」且组件挂载时跑，卸载即 clearInterval——不挂载就不刷。
+     */
+    function TaskStrip({ t, tasks }) {
+      const [now, setNow] = React.useState(() => Date.now());
+      React.useEffect(() => {
+        if (!tasks.running) return undefined;
+        const tick = () => setNow(Date.now());
+        tick();
+        const id = setInterval(tick, 500);
+        return () => clearInterval(id);
+      }, [tasks, tasks.running]);
+      const task = tasks.last;
+      if (!task) return null;
+      const pct = taskPercent(task, now);
+      const secs = Math.max(0, Math.floor(((task.doneAt ?? now) - task.startedAt) / 1000));
+      return h('div', { className: 'ssm-task' },
+        h('div', { className: 'ssm-row' },
+          task.status === 'running' ? h('span', { className: 'ssm-spin' }, null) : null,
+          h('span', { className: 'ssm-cur' }, t(SLOW_OPS[task.op].label)),
+          task.target ? h('span', { className: 'ssm-n' }, task.target) : null,
+          h('span', { className: 'ssm-n' }, t(taskStageKey(task, now))),
+          h('span', { className: 'ssm-grow' }, null),
+          h('span', { className: 'ssm-n' }, t('taskElapsed').replace('{n}', `${secs}`)),
+          // 在飞不提供 ×：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」（设计末条判断）
+          tasks.running ? null : h('button', { onClick: () => clearTask(), title: t('taskDismiss') }, '×')),
+        h('div', { className: 'ssm-bar' },
+          h('div', { className: task.status === 'err' ? 'ssm-bar-fill ssm-bar-err' : task.status === 'ok' ? 'ssm-bar-fill ssm-bar-ok' : 'ssm-bar-fill', style: { width: pct + '%' } })),
+        task.status === 'err' ? h('div', { className: 'ssm-err' }, `${t('opFailed')}: ${String(task.error?.message ?? task.error ?? '')}`) : null,
+        task.note ? h('div', { className: 'ssm-hint' }, task.note) : null,
+        // warnings 必须逐行可见：台账失配态下盘上什么都没做，理由只存在于 warnings（历史教训 2026-10-27）
+        ...(task.warnings ?? []).map((w, i) => h('div', { key: 'tw' + i, className: 'ssm-warn' }, `⚠ ${w}`)));
+    }
+
     /** Remote 面优先（RemoteResult 归一化）；任何失败退同源 fetch（同一 host 实现）。 */
     async function call(ctx, method, args) {
       const face = ctx.get('remote')?.['skill-set-manager'];
@@ -1016,6 +1052,11 @@ window.__ModuleLoader__.load({
 .ssm-warn-inline{color:var(--dsw-alias-state-warn-primary,#f5a623)}
 .ssm-spin{display:inline-block;width:.7em;height:.7em;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:ssm-spin .7s linear infinite;vertical-align:-1px;margin-right:5px}
 @keyframes ssm-spin{to{transform:rotate(360deg)}}
+.ssm-task{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)} /* 长任务条（用户 2026-10-29：按了安装界面毫无反应） */
+.ssm-bar{height:5px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);overflow:hidden}
+.ssm-bar-fill{height:100%;border-radius:999px;background:var(--dsw-alias-brand-primary);transition:width .4s}
+.ssm-bar-ok{background:var(--dsw-alias-state-success-primary,#22c55e)}
+.ssm-bar-err{background:var(--dsw-alias-state-error-primary,#e5484d)}
 .ssm-warn,.ssm-err{font-size:11px;padding:4px 6px;border-radius:6px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f5a623) 18%,transparent)}
 .ssm-err{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 16%,transparent)}
 .ssm-sec{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px;display:flex;gap:6px;align-items:center}
