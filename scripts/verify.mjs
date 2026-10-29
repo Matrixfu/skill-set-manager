@@ -2068,6 +2068,17 @@ const CASES = [
       ok(/tasks\.running \? null : h\('button'/.test(body), '在飞不提供清除：不能取消就别假装能收起');
       ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
       ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
+      ok(!/run\('install'/.test(body), '安装按钮不再走组件内 busy（一关页面就丢）');
+      for (const site of ["startLong(ctx, 'installApply'", "startLong(ctx, 'uninstallSkill'", "startLong(ctx, 'updateCheck'",
+        "startLong(ctx, 'updateApply'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
+        "startLong(ctx, mig.applied ? 'migrateUndo' : 'migrateApply'"])
+        ok(body.includes(site), `设置页未接长任务：${site}`);
+      ok(!/const tabBtn = \(id, label\) => h\('button', \{[^}]*disabled: !!busy/.test(body), '等待期页签可切换（Review Focus #5）');
+      ok(/const locked = !!tasks\.running \|\| !!busy;/.test(body), '被挡住按钮的禁用口径');
+      ok(/t\('taskBusyWith'\)\.replace\('\{n\}'/.test(body), '被挡按钮说明在跑什么（Review Focus #2）');
+      ok(/const rowBusy = \(op, name\) =>/.test(body), '行内转圈改由任务态驱动');
+      ok(/h\(TaskStrip, \{ t, tasks \}\)/.test(body), '设置页页签下方渲染任务条');
+      ok(!/const \[instRes, setInstRes\]/.test(body), '安装结果改从任务态读（Review Focus #1）');
     },
   },
 ];

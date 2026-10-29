@@ -754,6 +754,7 @@ window.__ModuleLoader__.load({
     };
 
     function SettingsSection({ ctx, t }) {
+      const tasks = useTasks(); // 模块级长任务态：关掉设置页也不丢进度与结果（用户 2026-10-29）
       const [tab, setTab] = React.useState('library');
       const [lib, setLib] = React.useState([]);
       const [filter, setFilter] = React.useState('');
@@ -766,7 +767,6 @@ window.__ModuleLoader__.load({
       const [upRes, setUpRes] = React.useState({}); // name -> checkUpdate result
       const [spec, setSpec] = React.useState('');
       const [overwrite, setOverwrite] = React.useState(false);
-      const [instRes, setInstRes] = React.useState(null);
       const [mig, setMig] = React.useState(null); // {preview, applied}
       // P3 全局技能集 tab + 翻译/agents 迁移（设计 §6.4/§6.1/§6.6）
       const [gq, setGq] = React.useState('');
@@ -800,9 +800,16 @@ window.__ModuleLoader__.load({
         } catch (e) { setMsg({ kind: 'err', text: `${t('opFailed')}: ${e?.message ?? e}` }); }
         finally { setBusy(null); }
       };
+      /** 在飞判定读模块级任务态（组件卸载也看得见）：只有「就是这个 op、就是这个目标」才亮转圈。 */
+      const rowBusy = (op, name) => !!tasks.running && tasks.running.op === op && tasks.running.target === name;
+      const locked = !!tasks.running || !!busy;
+      // 被单飞挡住的按钮必须写明在跑什么（反目标：不得制造新的「点了没反应」）
+      const busyTitle = tasks.running ? t('taskBusyWith').replace('{n}', t(SLOW_OPS[tasks.running.op].label)) : undefined;
       /** 进行中按钮 = 转圈小图标 + 进行时文案（用户 2026-10-26：检查更新要等几十秒，界面毫无反应像卡死）。 */
-      const busyBtn = (key, label, doing, onClick) => h('button', { disabled: !!busy, onClick },
-        busy === key ? h('span', { className: 'ssm-spin' }, null) : null, busy === key ? doing : label);
+      const busyBtn = (op, name, label, doing, onClick) => h('button', { disabled: locked, title: busyTitle, onClick },
+        rowBusy(op, name) ? h('span', { className: 'ssm-spin' }, null) : null, rowBusy(op, name) ? doing : label);
+      // 安装结果改从任务态读：原 instRes 是组件 state，关掉设置页就没了（Review Focus #1）
+      const instDone = tasks.last?.op === 'installApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
       const rows = searchRows(lib, filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
       const gCorpus = [...lib, ...foreign.filter((n) => !lib.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
@@ -812,22 +819,24 @@ window.__ModuleLoader__.load({
         for (const f of files ?? []) if (c[f.action] !== undefined) c[f.action] += 1;
         return c;
       };
-      const tabBtn = (id, label) => h('button', { className: 'ssm-tab' + (tab === id ? ' ssm-tab-on' : ''), disabled: !!busy, onClick: () => setTab(id) }, label);
+      // 等待期不禁用页签（用户 2026-10-29：装一个仓库要几十秒，连切页签都做不到）
+      const tabBtn = (id, label) => h('button', { className: 'ssm-tab' + (tab === id ? ' ssm-tab-on' : ''), onClick: () => setTab(id) }, label);
       return h('div', { className: 'ssm-settings' },
         h('div', { className: 'ssm-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('global', t('tabGlobal')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
+        h(TaskStrip, { t, tasks }), // 条子挂在页签下方：切到任何页签都看得见（Review Focus #1/#5）
         msg ? h('div', { className: msg.kind === 'err' ? 'ssm-err' : 'ssm-ok' }, msg.text) : null,
         tab === 'library' ? h(React.Fragment, null,
           h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('filterPh'), value: filter, onChange: (e) => setFilter(e.target.value) }),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
           h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], failed: p.failed ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
+            h('button', { disabled: locked, title: busyTitle, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], failed: p.failed ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
             (tr?.pending?.length || tr?.failed?.length)
               ? h(React.Fragment, null,
-                  h('select', { className: 'ssm-input', style: { maxWidth: 280 }, disabled: !!busy, title: t('modelSelect'), value: tr.model, onChange: (e) => setTr({ ...tr, model: e.target.value }) },
+                  h('select', { className: 'ssm-input', style: { maxWidth: 280 }, disabled: locked, title: t('modelSelect'), value: tr.model, onChange: (e) => setTr({ ...tr, model: e.target.value }) },
                     h('option', { value: '' }, t('currentModel')),
                     ...(tr.models?.options ?? []).map((o, i) => h('option', { key: `${o.provider}/${o.model}`, value: String(i) }, o.label))), // N7：value 用下标，免 provider/model 含 | 时碎裂
                   tr.failed?.length ? h('span', { className: 'ssm-hint' }, `${tr.failed.length} ${t('failedRetryable')}`) : null,
-                  h('button', { disabled: !!busy, onClick: () => run('trR', async () => {
+                  h('button', { disabled: locked, title: busyTitle, onClick: () => run('trR', async () => {
                     const o = tr.model !== '' ? (tr.models?.options ?? [])[Number(tr.model)] ?? null : null; // M2：pending ∪ failed 一并（failed 同哈希不自愈，此处即重试入口，AC#2）
                     const names = [...(tr.pending ?? []).map((p) => p.name), ...(tr.failed ?? []).map((f) => f.name)];
                     // 分组 RPC（每组 5 条 = host 一个 prompt，reasoning 模型思考次数 ÷5）+ 并发 2：
@@ -876,20 +885,25 @@ window.__ModuleLoader__.load({
               h('span', { className: 'ssm-n' }, `${String(x.source).replace('github:', '')}${x.commit ? ` @${String(x.commit).slice(0, 7)}` : ''}`),
               h('span', { className: 'ssm-grow' }, null),
               String(x.source).startsWith('github:')
-                ? busyBtn(`chk:${x.name}`, t('checkUp'), t('checkingUp'), () => run(`chk:${x.name}`, async () => { const v = await call(ctx, 'updateCheck', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: v })); }))
+                ? busyBtn('updateCheck', x.name, t('checkUp'), t('checkingUp'), () => startLong(ctx, 'updateCheck', x.name, { name: x.name }, { onDone: (s) => { if (s.ok) setUpRes((m) => ({ ...m, [x.name]: s.value })); } }))
                 : null,
               upRes[x.name] && !upRes[x.name].upToDate
-                ? busyBtn(`ap:${x.name}`, t('applyUp'), t('applyingUp'), () => run(`ap:${x.name}`, async () => { const r = await call(ctx, 'updateApply', { name: x.name }); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); return r?.backup ? { noteText: `${t('opDone')} · ${t('backupAt')} ${r.backup}` } : null; }))
+                ? busyBtn('updateApply', x.name, t('applyUp'), t('applyingUp'), () => startLong(ctx, 'updateApply', x.name, { name: x.name }, { onDone: (s) => {
+                    if (!s.ok) return; // 失败由 TaskStrip 染红并报原因，不再被 run() 的 catch 混成「操作失败」
+                    setUpRes((m) => ({ ...m, [x.name]: null }));
+                    setMsg({ kind: 'ok', text: s.value?.backup ? `${t('opDone')} · ${t('backupAt')} ${s.value.backup}` : t('opDone') });
+                    load();
+                  } }))
                 : null,
               x.backupCount
-                ? h('button', { disabled: !!busy, onClick: () => {
+                ? h('button', { disabled: locked, title: busyTitle, onClick: () => {
                     if (backupsOf?.name === x.name) { setBackupsOf(null); return; }
                     run(`bk:${x.name}`, async () => setBackupsOf({ name: x.name, list: (await call(ctx, 'backupsList', { name: x.name })).backups ?? [] }));
                   } }
                 , `${t('backupsTitle')}(${x.backupCount})`)
                 : null,
               h('button', {
-                disabled: !!busy,
+                disabled: locked,
                 title: t('claimHint'),
                 onClick: () => {
                   const on = claimOf === x.name;
@@ -898,7 +912,7 @@ window.__ModuleLoader__.load({
                   if (!on) setClaimDraft({ source: String(x.source).startsWith('github:') ? String(x.source) : '', commit: x.commit ? String(x.commit) : '' });
                 },
               }, String(x.source).startsWith('github:') ? t('claimEdit') : t('claimGo')),
-              h('button', { disabled: !!busy, className: 'ssm-danger', onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
+              h('button', { disabled: locked, title: busyTitle, className: 'ssm-danger', onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
             // P3 中文用途灰字行（未翻译显英文 + 待翻译角标，§6.1）
             x.descriptionZh
               ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' } }, x.descriptionZh)
@@ -909,13 +923,13 @@ window.__ModuleLoader__.load({
             claimOf === x.name
               ? h(React.Fragment, null,
                   h('div', { className: 'ssm-row' },
-                    h('input', { className: 'ssm-input', style: { maxWidth: 230 }, autoFocus: true, placeholder: t('claimSourcePh'), value: claimDraft.source, disabled: !!busy, onChange: (e) => setClaimDraft({ ...claimDraft, source: e.target.value }) }),
-                    h('input', { className: 'ssm-input', style: { maxWidth: 120 }, placeholder: t('claimCommitPh'), value: claimDraft.commit, disabled: !!busy, onChange: (e) => setClaimDraft({ ...claimDraft, commit: e.target.value }) }),
-                    h('button', { disabled: !!busy || !claimDraft.source.trim(), onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: claimDraft.source.trim(), commit: claimDraft.commit.trim() || null }); setClaimOf(null); await load(); }) }, '✓'),
+                    h('input', { className: 'ssm-input', style: { maxWidth: 230 }, autoFocus: true, placeholder: t('claimSourcePh'), value: claimDraft.source, disabled: locked, onChange: (e) => setClaimDraft({ ...claimDraft, source: e.target.value }) }),
+                    h('input', { className: 'ssm-input', style: { maxWidth: 120 }, placeholder: t('claimCommitPh'), value: claimDraft.commit, disabled: locked, onChange: (e) => setClaimDraft({ ...claimDraft, commit: e.target.value }) }),
+                    h('button', { disabled: locked || !claimDraft.source.trim(), title: busyTitle, onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: claimDraft.source.trim(), commit: claimDraft.commit.trim() || null }); setClaimOf(null); await load(); }) }, '✓'),
                     x.source !== 'unknown' && x.source !== 'placeholder'
-                      ? h('button', { disabled: !!busy, onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: 'unknown' }); setClaimOf(null); await load(); }) }, t('claimUndo'))
+                      ? h('button', { disabled: locked, title: busyTitle, onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: 'unknown' }); setClaimOf(null); await load(); }) }, t('claimUndo'))
                       : null,
-                    h('button', { disabled: !!busy, onClick: () => setClaimOf(null) }, '×')),
+                    h('button', { disabled: locked, onClick: () => setClaimOf(null) }, '×')),
                   h('div', { className: 'ssm-hint' }, t('claimHint')))
               : null,
             upRes[x.name]
@@ -940,7 +954,7 @@ window.__ModuleLoader__.load({
               : null,
             confirmUn === x.name
               ? h('div', { className: 'ssm-confirm' }, t('confirmUn'), ' ', x.name, ' ',
-                  h('button', { autoFocus: true, disabled: !!busy, className: 'ssm-danger', onClick: () => run(`un:${x.name}`, async () => { await call(ctx, 'uninstallSkill', { name: x.name }); setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); await load(); }) }, t('uninstallGo')),
+                  h('button', { autoFocus: true, disabled: locked, title: busyTitle, className: 'ssm-danger', onClick: () => startLong(ctx, 'uninstallSkill', x.name, { name: x.name }, { onDone: (s) => { if (!s.ok) return; setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); load(); } }) }, t('uninstallGo')),
                   h('button', { onClick: () => setConfirmUn(null) }, '×'))
               : null,
             backupsOf?.name === x.name
@@ -948,14 +962,14 @@ window.__ModuleLoader__.load({
                 ? h('span', { className: 'ssm-empty' }, t('none'))
                 : backupsOf.list.map((b) => h('label', { key: b.dir, className: 'ssm-chip' },
                     h('span', null, `${b.ts} (${b.fileCount})`), ' ',
-                    h('button', { disabled: !!busy, onClick: () => run(`rs:${b.dir}`, async () => { await call(ctx, 'backupRestore', { name: x.name, dir: b.dir }); setBackupsOf(null); await load(); }) }, t('restoreGo')))))
+                    h('button', { disabled: locked, title: busyTitle, onClick: () => run(`rs:${b.dir}`, async () => { await call(ctx, 'backupRestore', { name: x.name, dir: b.dir }); setBackupsOf(null); await load(); }) }, t('restoreGo')))))
               : null))
         ) : null,
         tab === 'global' ? h(React.Fragment, null, // P3 全局技能集 tab（设计 §6.4）：常驻名单 + 外来只读
           h('div', { className: 'ssm-hint' }, t('globalTabHint'), rTarget ? ` ${rTarget}` : ''),
           h('div', { className: 'ssm-row' },
-            h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('searchPh'), value: gq, disabled: !!busy, onChange: (e) => setGq(e.target.value) }),
-            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: gOnly, disabled: !!busy, onChange: (e) => setGOnly(e.target.checked) }), ' ', t('residentOnly'))),
+            h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('searchPh'), value: gq, disabled: locked, onChange: (e) => setGq(e.target.value) }),
+            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: gOnly, disabled: locked, onChange: (e) => setGOnly(e.target.checked) }), ' ', t('residentOnly'))),
           grows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
           ...grows.map((r) => {
             if (r.foreign) return h('div', { key: r.name, className: 'ssm-srow ssm-gray' }, // N5：已在设置页内，不再挂「去设置管理」文案
@@ -966,7 +980,7 @@ window.__ModuleLoader__.load({
             return h('div', { key: r.name, className: 'ssm-srow' },
               h('div', { className: 'ssm-row' },
                 h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
-                  h('input', { type: 'checkbox', checked: on, disabled: !!busy, onChange: () => run(`res:${r.name}`, async () => {
+                  h('input', { type: 'checkbox', checked: on, disabled: locked, onChange: () => run(`res:${r.name}`, async () => {
                     const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
                     await call(ctx, 'setResident', { names: next });
                     await loadState();
@@ -982,18 +996,18 @@ window.__ModuleLoader__.load({
         tab === 'ops' ? h(React.Fragment, null,
           h('div', { className: 'ssm-sec' }, t('installTitle')),
           h('div', { className: 'ssm-row' },
-            h('input', { className: 'ssm-input', placeholder: t('installSpecPh'), value: spec, disabled: !!busy, onChange: (e) => setSpec(e.target.value) }),
-            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: overwrite, disabled: !!busy, onChange: (e) => setOverwrite(e.target.checked) }), ' ', t('overwriteChk')),
-            h('button', { disabled: !!busy || !spec.trim(), onClick: () => run('install', async () => { setInstRes(await call(ctx, 'installApply', { spec: spec.trim(), overwrite })); setSpec(''); await load(); }) }, t('installGo'))),
-          instRes
-            ? h('div', { className: 'ssm-hint' }, `@${String(instRes.commit ?? '').slice(0, 7)} `,
-                ...(instRes.results ?? []).map((r) => h('span', { key: r.name, className: 'ssm-chip' }, `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}`)))
+            h('input', { className: 'ssm-input', placeholder: t('installSpecPh'), value: spec, disabled: locked, onChange: (e) => setSpec(e.target.value) }),
+            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: overwrite, disabled: locked, onChange: (e) => setOverwrite(e.target.checked) }), ' ', t('overwriteChk')),
+            h('button', { disabled: locked || !spec.trim(), title: busyTitle, onClick: () => { if (startLong(ctx, 'installApply', spec.trim(), { spec: spec.trim(), overwrite }, { onDone: () => load() })) setSpec(''); } }, t('installGo'))),
+          instDone
+            ? h('div', { className: 'ssm-hint' }, `@${String(instDone.commit ?? '').slice(0, 7)} `,
+                ...(instDone.results ?? []).map((r) => h('span', { key: r.name, className: 'ssm-chip' }, `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}`)))
             : null,
           h('div', { className: 'ssm-sec' }, t('migrateAgentsTitle')),
           h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
-            migA?.applied ? h('button', { disabled: !!busy, onClick: () => run('migAU', async () => { await call(ctx, 'migrateAgentsUndo', {}); setMigA(null); await load(); }) }, t('migrateUndo')) : null,
-            migA && !migA.applied ? h('button', { disabled: !!busy || !(migA.preview?.moves?.length), onClick: () => run('migAA', async () => { await call(ctx, 'migrateAgentsApply', {}); setMigA({ preview: null, applied: true }); await load(); }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
+            h('button', { disabled: locked, title: busyTitle, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
+            migA?.applied ? h('button', { disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'migrateAgentsUndo', null, {}, { onDone: (s) => { if (!s.ok) return; setMigA(null); load(); } }) }, t('migrateUndo')) : null,
+            migA && !migA.applied ? h('button', { disabled: locked || !(migA.preview?.moves?.length), title: busyTitle, onClick: () => startLong(ctx, 'migrateAgentsApply', null, {}, { onDone: (s) => { if (!s.ok) return; setMigA({ preview: null, applied: true }); load(); } }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
             !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsHint')) : null),
           migA?.preview
             ? h('div', { className: 'ssm-hint' },
@@ -1003,8 +1017,8 @@ window.__ModuleLoader__.load({
             : null,
           h('div', { className: 'ssm-sec' }, t('migrateTitle')),
           h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy, onClick: () => run('migP', async () => setMig({ preview: await call(ctx, 'migratePreview', {}), applied: false })) }, t('migratePreview')),
-            mig ? h('button', { disabled: !!busy, onClick: () => run('migA', async () => { const r = await call(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', {}); setMig(null); await load(); return r; }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
+            h('button', { disabled: locked, title: busyTitle, onClick: () => run('migP', async () => setMig({ preview: await call(ctx, 'migratePreview', {}), applied: false })) }, t('migratePreview')),
+            mig ? h('button', { disabled: locked, title: busyTitle, onClick: () => startLong(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', null, {}, { onDone: (s) => { if (!s.ok) return; setMig(null); load(); } }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
           mig?.preview
             ? h('div', { className: 'ssm-hint' },
                 `${t('migrateMoves')}: ${(mig.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(mig.preview.keep ?? []).map((k) => k.name).join(', ') || t('none')}`,
@@ -1013,11 +1027,11 @@ window.__ModuleLoader__.load({
         ) : null,
         tab === 'diag' ? h(React.Fragment, null,
           h('div', { className: 'ssm-row' },
-            h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', sess()))) }, t('diagRun')),
+            h('button', { disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', sess()))) }, t('diagRun')),
             diag?.fixable?.reclaimDeadLinks?.count
-              ? h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
+              ? h('button', { disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
               : null,
-            h('button', { disabled: !!busy || !bus.sessionId, onClick: () => run('rebuild', async () => { const r = await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); return r; }) }, t('fixRebuild')),
+            h('button', { disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('rebuild', async () => { const r = await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); return r; }) }, t('fixRebuild')),
             !bus.sessionId ? h('div', { className: 'ssm-hint' }, t('noSession')) : null),
           diag
             ? h('div', null, ...Object.entries({
