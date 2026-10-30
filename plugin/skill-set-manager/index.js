@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { parseSkillSetLine, parseToolArgs, TOOL_ACTIONS } from './lib/core/commandLine.js';
-import { buildRoots } from './lib/core/paths.js';
+import { buildRoots, projectSkillsDir } from './lib/core/paths.js';
 import { registerLibrary, readManifest, walkFiles, claimSource } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
 import { findProjectRoot } from './lib/core/projectRoot.js';
@@ -460,7 +460,7 @@ export function apply(ctx, config) {
       const managed = readManaged(loc.projectRoot) ?? { entries: {} };
       const reclaimed = [];
       const warnings = [];
-      const skillsDir = path.join(loc.projectRoot, '.dsh', 'skills');
+      const skillsDir = projectSkillsDir(loc.projectRoot);
       for (const name of Object.keys(managed.entries)) {
         const p = path.join(skillsDir, managed.entries[name]?.flat ? `${name}.md` : name);
         if (entryKind(p) !== 'missing') continue;

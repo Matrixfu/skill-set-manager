@@ -11,6 +11,7 @@ import { readBinding, bindingFile } from './binding.js';
 import { readManaged, writeManaged, managedFile } from './managed.js';
 import { planEffective, applyPlan } from './effective.js';
 import { entryKind, removeEntry } from './linkx.js';
+import { projectSkillsDir } from './paths.js';
 import { writeTextAtomic } from './atomic.js';
 
 export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImpl = fs } = {}) {
@@ -38,7 +39,7 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
     if (!set) { frozenProjects.push(projectRoot); continue; } // 冻结绑定：原样保留（§7.8）
     const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { entries: {} };
     if (managed.entries?.[name]) {
-      const entryPath = path.join(projectRoot, '.dsh', 'skills', name);
+      const entryPath = path.join(projectSkillsDir(projectRoot), name);
       try { removeEntry(entryPath, entryKind(entryPath, { fs: fsImpl })); } catch (e) { warnings.push(`${projectRoot}: ${e?.message ?? e}`); }
       delete managed.entries[name];
       writeManaged(projectRoot, managed, { fs: fsImpl });
@@ -78,7 +79,7 @@ export function unbindProject(projectRoot, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl });
   const removed = [];
   for (const name of Object.keys(managed?.entries ?? {})) {
-    const p = path.join(projectRoot, '.dsh', 'skills', name);
+    const p = path.join(projectSkillsDir(projectRoot), name);
     try { removeEntry(p, entryKind(p, { fs: fsImpl })); removed.push(name); } catch {}
   }
   try { fsImpl.rmSync(managedFile(projectRoot), { force: true }); } catch {}

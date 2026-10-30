@@ -64,7 +64,7 @@ function writeSkill(parentDir, name, desc = 'verify 夹具技能') {
   return dir;
 }
 function gitInit(dir) { execFileSync('git', ['init', '-q', dir], { stdio: 'ignore' }); return dir; }
-function gitProject(dir) { mkdirp(path.join(dir, '.dsh', 'skills')); return gitInit(dir); }
+function gitProject(dir) { mkdirp(path.join(dir, '.agents', 'skills')); return gitInit(dir); }
 
 /** 每 case 一套独立夹具：假 dshHome（库/技能集/全局生效区）+ 项目 A/B + 假 agentsHome。 */
 function makeFixture() {
@@ -88,8 +88,8 @@ async function withRoots(f, extra = {}) {
   return f.roots;
 }
 const skillDirNames = (projectRoot) =>
-  fs.readdirSync(path.join(projectRoot, '.dsh', 'skills'))
-    .filter((n) => { try { return fs.statSync(path.join(projectRoot, '.dsh', 'skills', n)).isDirectory(); } catch { return false; } })
+  fs.readdirSync(path.join(projectRoot, '.agents', 'skills'))
+    .filter((n) => { try { return fs.statSync(path.join(projectRoot, '.agents', 'skills', n)).isDirectory(); } catch { return false; } })
     .sort();
 const scanNames = async (f, projectRoot) => {
   const { scanSkills } = await core('resolver');
@@ -343,8 +343,8 @@ const CASES = [
       const { planEffective, applyPlan, selfCheck } = await core('effective');
       await writeBinding(f.projectA, 'set-a'); await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'set-a'));
       ok((await selfCheck(f.roots, f.projectA)).ok, '基线自检应通过');
-      fs.rmdirSync(path.join(f.projectA, '.dsh', 'skills', 'lib-b')); // 人为摘掉一个 managed 条目（模拟外部改动）
-      mkdirp(path.join(f.projectA, '.dsh', 'skills', 'ghost')); writeSkill(path.join(f.projectA, '.dsh', 'skills', 'ghost'), 'ghost');
+      fs.rmdirSync(path.join(f.projectA, '.agents', 'skills', 'lib-b')); // 人为摘掉一个 managed 条目（模拟外部改动）
+      mkdirp(path.join(f.projectA, '.agents', 'skills', 'ghost')); writeSkill(path.join(f.projectA, '.agents', 'skills', 'ghost'), 'ghost');
       const sc = await selfCheck(f.roots, f.projectA);
       ok(!sc.ok, '人为不一致 → selfCheck.ok 应为 false');
       has(sc.missing, 'lib-b', 'missing 应含被摘条目');
@@ -372,13 +372,13 @@ const CASES = [
         keys: async (t) => Object.keys(T).filter((k) => k.startsWith(t + ':')).map((k) => k.slice(t.length + 1)),
       };
       await pending.startOverride(store, f.roots, f.projectA, { add: ['lib-b'] });
-      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'lib-b')), '覆盖条目已进生效区');
+      ok(fs.existsSync(path.join(f.projectA, '.agents', 'skills', 'lib-b')), '覆盖条目已进生效区');
       const sc = await selfCheck(f.roots, f.projectA);
       ok(sc.ok, `selfCheck 不得把覆盖条目报成多出（活体误报 constitution）: ${sc.detail}`);
       // 活体回归②：切换/重建走 planEffective——它必须认识活动覆盖，否则覆盖条目被摘掉
       // 而覆盖标记还在 → 自检反报「缺失」（活体：重建后 missing: speckit-constitution）
       await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'set-a'));
-      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'lib-b')), '重建不得摘掉活动覆盖条目');
+      ok(fs.existsSync(path.join(f.projectA, '.agents', 'skills', 'lib-b')), '重建不得摘掉活动覆盖条目');
       ok((await selfCheck(f.roots, f.projectA)).ok, '重建后自检仍一致');
       // 常驻 = 全局生效区 junction（§5.3）：诊断不得把自家链报成重复名
       s.saveResident(f.roots, ['lib-b']);
@@ -403,7 +403,7 @@ const CASES = [
       await s.deleteSet(f.roots, 'frz');
       const sc = await selfCheck(f.roots, f.projectA);
       eq(sc.frozen, true, 'frozen 判定');
-      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'f1')), '冻结：生效清单原样保留');
+      ok(fs.existsSync(path.join(f.projectA, '.agents', 'skills', 'f1')), '冻结：生效清单原样保留');
       ok('f1' in (await readManaged(f.projectA)).entries, '冻结：托管清单不回收');
     },
   },
@@ -744,7 +744,7 @@ const CASES = [
       eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['beta']), 'A 精确回收 alpha 无孤儿');
       const { readManaged } = await core('managed');
       ok(!('alpha' in (await readManaged(f.projectA)).entries), 'A 托管清单同步');
-      eq(JSON.stringify(fs.readdirSync(path.join(f.projectB, '.dsh', 'skills')).filter((n) => n !== '.managed.json').sort()), JSON.stringify(['alpha']), '冻结项目条目原样保留（死链也不动，§7.8）');
+      eq(JSON.stringify(fs.readdirSync(path.join(f.projectB, '.agents', 'skills')).filter((n) => n !== '.managed.json').sort()), JSON.stringify(['alpha']), '冻结项目条目原样保留（死链也不动，§7.8）');
       const { loadSet } = await core('sets');
       eq(JSON.stringify((await loadSet(f.roots, 's1')).skills), JSON.stringify(['beta']), 's1 移除 alpha');
       const oplog = JSON.parse(fs.readFileSync(path.join(f.library, '.backups', 'oplog.json'), 'utf8'));
@@ -810,7 +810,7 @@ const CASES = [
       // 失效链接：项目内 junction 指向不存在库体
       const { makeEntry } = await core('linkx');
       writeSkill(f.library, 'ghostbody');
-      const deadLink = path.join(f.projectA, '.dsh', 'skills', 'dead');
+      const deadLink = path.join(f.projectA, '.agents', 'skills', 'dead');
       fs.mkdirSync(path.dirname(deadLink), { recursive: true });
       makeEntry(path.join(f.library, 'ghostbody'), deadLink);
       fs.rmSync(path.join(f.library, 'ghostbody'), { recursive: true, force: true }); // 本体消失 → 死链
@@ -836,10 +836,10 @@ const CASES = [
       await saveSet(f.roots, { slug: 's3', name: 'S3', skills: ['dup'] });
       writeBinding(f.projectB, 's3');
       writeManaged(f.projectB, { setSlug: 's3', entries: { dup: { kind: 'copy', from: 'skill-library', copied: true }, flatone: { kind: 'copy', from: 'skill-library', copied: true, flat: true }, gone1: { kind: 'junction', from: 'skill-library' } }, sessionOverride: { active: false, previous: null } });
-      fs.mkdirSync(path.join(f.projectB, '.dsh', 'skills', 'dup'), { recursive: true });
-      fs.writeFileSync(path.join(f.projectB, '.dsh', 'skills', 'dup', 'SKILL.md'), 'drifted\n');
+      fs.mkdirSync(path.join(f.projectB, '.agents', 'skills', 'dup'), { recursive: true });
+      fs.writeFileSync(path.join(f.projectB, '.agents', 'skills', 'dup', 'SKILL.md'), 'drifted\n');
       writeSkill(f.library, 'flatone'); writeSkill(f.library, 'gone1'); // gone1：库体在、盘上条目没了 → 外删
-      fs.writeFileSync(path.join(f.projectB, '.dsh', 'skills', 'flatone.md'), '---\nname: flatone\ndescription: flat\n---\n');
+      fs.writeFileSync(path.join(f.projectB, '.agents', 'skills', 'flatone.md'), '---\nname: flatone\ndescription: flat\n---\n');
       const d5 = dg.diagnose(f.roots, { projectRoot: f.projectB, cwd: f.projectB });
       ok(d5.groups.copies.some((r) => String(r.what).includes('漂移') || String(r.what).includes('drift') || r.level === 'warn'), '副本漂移检出');
       ok(!d5.groups.env.some((r) => String(r.what).includes('flatone')), 'flat 托管条目不误报 foreign（review m7）');
@@ -906,7 +906,7 @@ const CASES = [
       const { planEffective, applyPlan } = await core('effective');
       writeBinding(f.projectA, 's1');
       applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 's1'));
-      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'userown'); // 外来条目必须存活
+      writeSkill(path.join(f.projectA, '.agents', 'skills'), 'userown'); // 外来条目必须存活
       const lc = await core('lifecycle');
       const r = lc.unbindProject(f.projectA);
       eq(r.wasBound, true, 'wasBound');
@@ -917,7 +917,7 @@ const CASES = [
       eq(readBinding(f.projectA), null, 'binding 已删');
       ok(!fs.existsSync(bindingFile(f.projectA)), 'binding 文件消失');
       eq(readManaged(f.projectA), null, 'managed 已删');
-      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'userown', 'SKILL.md')), 'userown 内容完整');
+      ok(fs.existsSync(path.join(f.projectA, '.agents', 'skills', 'userown', 'SKILL.md')), 'userown 内容完整');
       const r2 = lc.unbindProject(f.projectA);
       eq(r2.wasBound, false, '幂等：再解绑不抛');
     },
@@ -963,15 +963,15 @@ const CASES = [
       applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 's1'));
       eq(JSON.stringify(skillDirNames(f.projectA)), JSON.stringify(['alpha', 'beta']), '前置：两条目齐');
       // 场景①：外删托管目录（台账仍记）→ plan 必须重新进 add
-      fs.rmSync(path.join(f.projectA, '.dsh', 'skills', 'alpha'), { recursive: true, force: true });
+      fs.rmSync(path.join(f.projectA, '.agents', 'skills', 'alpha'), { recursive: true, force: true });
       const p1 = await planEffective(f.roots, f.projectA, 's1');
       ok(p1.add.some((a) => a.name === 'alpha'), '外删条目回到 add（不再 keep 空转）');
       ok(p1.keep.includes('beta') && !p1.keep.includes('alpha'), 'keep 只留真存在项');
       const r1 = applyPlan(f.projectA, p1);
       eq(r1.applied.added, 1, 'added=1');
-      eq(entryKind(path.join(f.projectA, '.dsh', 'skills', 'alpha')), 'junction', '重建为 junction');
+      eq(entryKind(path.join(f.projectA, '.agents', 'skills', 'alpha')), 'junction', '重建为 junction');
       // 场景②：死 junction（本体没了）→ removeEntry 自判可摘 stub；makeEntry 重建
-      const betaStub = path.join(f.projectA, '.dsh', 'skills', 'beta');
+      const betaStub = path.join(f.projectA, '.agents', 'skills', 'beta');
       eq(entryKind(betaStub), 'junction', '前置：beta 是活 junction');
       fs.rmSync(path.join(f.library, 'beta'), { recursive: true, force: true }); // 库体消失 → 死链
       eq(entryKind(betaStub), 'missing', '死链 entryKind=missing');
@@ -1084,16 +1084,16 @@ const CASES = [
       // 未绑定勾选一个技能 = 本会话临时生效
       const r1 = await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
       setEq(r1.missingAdd, [], '未绑定起盘不得把可用技能报成缺体');
-      has(skillDirNames(f.projectA), 'ub-a', '未绑定勾选即写进项目 .dsh/skills');
+      has(skillDirNames(f.projectA), 'ub-a', '未绑定勾选即写进项目 .agents/skills');
       const mg = readManaged(f.projectA);
       eq(mg.setSlug, null, '未绑定覆盖：台账 setSlug 为 null（≠ 绑定）');
       setEq(mg.sessionOverride.added, ['ub-a'], '覆盖记录记的是新增');
       eq((await store.keys('pending')).length, 1, '先落 pending 标记（崩溃可还原）');
       // Review-Focus 1：同名外来条目不抢占
-      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'ub-b', '用户自有条目');
+      writeSkill(path.join(f.projectA, '.agents', 'skills'), 'ub-b', '用户自有条目');
       const r2 = await p.startOverride(store, f.roots, f.projectA, { add: ['ub-b'], sessionId: 's1' });
       setEq(r2.missingAdd, ['ub-b'], '同名外来条目：如实报缺体，不抢占');
-      eq(fs.readFileSync(path.join(f.projectA, '.dsh', 'skills', 'ub-b', 'SKILL.md'), 'utf8').includes('用户自有条目'), true, '外来条目原文不动');
+      eq(fs.readFileSync(path.join(f.projectA, '.agents', 'skills', 'ub-b', 'SKILL.md'), 'utf8').includes('用户自有条目'), true, '外来条目原文不动');
       lacks(Object.keys(readManaged(f.projectA).entries), 'ub-b', '外来条目不进托管台账');
       // 撤下勾选
       await p.startOverride(store, f.roots, f.projectA, { remove: ['ub-a'], sessionId: 's1' });
@@ -1108,12 +1108,12 @@ const CASES = [
       eq(await p.endOverrideIfActive(store, f.roots, f.projectA, 's1'), { ended: true, projectRoot: f.projectA }, '本会话结束即还原');
       eq(fs.existsSync(managedFile(f.projectA)), false, '台账已删：未绑定项目回到插件零写入');
       // Review-Focus 2：崩溃残留（留 pending 标记 → 启动无条件还原）
-      fs.rmSync(path.join(f.projectA, '.dsh', 'skills'), { recursive: true, force: true }); // 模拟从未有过该目录的干净项目
+      fs.rmSync(path.join(f.projectA, '.agents', 'skills'), { recursive: true, force: true }); // 模拟从未有过该目录的干净项目
       await p.startOverride(store, f.roots, f.projectA, { add: ['ub-a'], sessionId: 's1' });
       has(skillDirNames(f.projectA), 'ub-a', '还原前条目在盘');
       await p.restoreAllPending(store, f.roots);
-      eq(fs.existsSync(path.join(f.projectA, '.dsh', 'skills')), false, '本次创建的 .dsh/skills 空目录一并收回');
-      ok(fs.existsSync(path.join(f.projectA, '.dsh')), '.dsh 本身不动');
+      eq(fs.existsSync(path.join(f.projectA, '.agents', 'skills')), false, '本次创建的 .agents/skills 空目录一并收回');
+      ok(fs.existsSync(path.join(f.projectA, '.agents')), '.agents 本身不动（上层目录不属插件）');
       eq((await store.keys('pending')).length, 0, 'pending 标记已清');
       // Review-Focus 4：绑定不得粘临时条目
       const s = await core('sets');
@@ -1142,14 +1142,14 @@ const CASES = [
       setEq(sc.foreign, [], '临时条目不进 foreign');
       // 终审 Important 1（计划/设计空白）：未绑定 + 覆盖中，用户手写的项目技能不是偏差——
       // 插件对未绑定项目没有期望清单（ADR-0003），非台账条目归 foreign，不得计成「多出」把徽标拉红
-      writeSkill(path.join(f.projectB, '.dsh', 'skills'), 'own-keep', '用户手写的项目技能');
+      writeSkill(path.join(f.projectB, '.agents', 'skills'), 'own-keep', '用户手写的项目技能');
       const scOwn = selfCheck(f.roots, f.projectB);
       eq(scOwn.ok, true, '未绑定 + 覆盖：自有条目不得拉红（改动前必红：多出 own-keep）');
       setEq(scOwn.extra, [], '自有条目不进 extra');
       setEq(scOwn.foreign, ['own-keep'], '自有条目如实报成外来（只报告不动手，ADR-0003）');
       eq(scOwn.detail, '会话临时覆盖与目录一致', '未绑定覆盖态的正常文案不被自有条目污染');
-      fs.rmSync(path.join(f.projectB, '.dsh', 'skills', 'own-keep'), { recursive: true, force: true }); // 清掉夹具，后续断言不受干扰
-      fs.rmSync(path.join(f.projectB, '.dsh', 'skills', 'ub-a'), { recursive: true, force: true });
+      fs.rmSync(path.join(f.projectB, '.agents', 'skills', 'own-keep'), { recursive: true, force: true }); // 清掉夹具，后续断言不受干扰
+      fs.rmSync(path.join(f.projectB, '.agents', 'skills', 'ub-a'), { recursive: true, force: true });
       const sc2 = selfCheck(f.roots, f.projectB);
       eq(sc2.ok, false, '临时条目被外删 → 报异常');
       setEq(sc2.brokenLinks, ['ub-a'], '失效链接点名到条目');
@@ -1568,7 +1568,7 @@ const CASES = [
     async run(f) {
       await withRoots(f);
       writeSkill(f.library, 'lib-a');
-      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'foreign-entry'); // 手工塞进托管目录的外来条目
+      writeSkill(path.join(f.projectA, '.agents', 'skills'), 'foreign-entry'); // 手工塞进托管目录的外来条目
       const s = await core('sets'); await s.saveSet(f.roots, { slug: 'set-a', name: 'A', skills: ['lib-a'] });
       const { writeBinding } = await core('binding');
       const { planEffective, applyPlan } = await core('effective');
@@ -1604,16 +1604,16 @@ const CASES = [
       const c1 = await claimForeign(f.roots, f.projectA);
       eq(c1.claimed.map((x) => x.name).sort(), ['alpha', 'beta'], '两条自家链接被接管');
       const mg = (await readManaged(f.projectA)).entries;
-      eq(mg.alpha && mg.alpha.kind, entryKind(path.join(f.projectA, '.dsh', 'skills', 'alpha')), '台账 kind 与盘上实际一致');
+      eq(mg.alpha && mg.alpha.kind, entryKind(path.join(f.projectA, '.agents', 'skills', 'alpha')), '台账 kind 与盘上实际一致');
       ok(mg.alpha && mg.alpha.from, '台账记下来源（from）');
-      ok(fs.existsSync(path.join(f.projectA, '.dsh', 'skills', 'alpha', 'SKILL.md')), '接管未改动盘上条目（内容仍可读）');
+      ok(fs.existsSync(path.join(f.projectA, '.agents', 'skills', 'alpha', 'SKILL.md')), '接管未改动盘上条目（内容仍可读）');
       // 接管后重新生成恢复有效
       const p1 = await planEffective(f.roots, f.projectA, 's1');
       eq(p1.warnForeign.length, 0, '接管后不再报外来');
       eq(p1.keep.slice().sort(), ['alpha', 'beta'], '接管后 keep 命中（重新生成有对象了）');
       eq(selfCheck(f.roots, f.projectA).foreign.length, 0, '接管后 foreign 清零');
       // 边界①：不在本集里的外来条目不接管
-      writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'outsider');
+      writeSkill(path.join(f.projectA, '.agents', 'skills'), 'outsider');
       const c2 = await claimForeign(f.roots, f.projectA);
       eq(c2.claimed.length, 0, 'outsider/无失配 → 无可接管');
       has(c2.skipped.map((s) => s.name), 'outsider', '不在集里的 outsider 记入 skipped');
@@ -1623,7 +1623,7 @@ const CASES = [
       const s2 = await core('sets');
       await s2.saveSet(f.roots, { slug: 's2', name: 'S2', skills: ['gamma'] });
       writeBinding(f.projectA, 's2');
-      fs.mkdirSync(path.join(f.projectA, '.dsh', 'skills', 'gamma'), { recursive: true }); // 手工同名真目录
+      fs.mkdirSync(path.join(f.projectA, '.agents', 'skills', 'gamma'), { recursive: true }); // 手工同名真目录
       const c3 = await claimForeign(f.roots, f.projectA);
       eq(c3.claimed.length, 0, '同名真目录不被接管（他人所有）');
       has(c3.skipped.map((s) => s.name), 'gamma', 'gamma 记入 skipped');
@@ -1639,7 +1639,7 @@ const CASES = [
       const { writeBinding } = await core('binding');
       const { planEffective, applyPlan, selfCheck } = await core('effective');
       const { readManaged } = await core('managed');
-      const foreign = path.join(f.projectA, '.dsh', 'skills', 'alpha');
+      const foreign = path.join(f.projectA, '.agents', 'skills', 'alpha');
       mkdirp(foreign);
       fs.writeFileSync(path.join(foreign, 'SKILL.md'), '# user content\n');
       await writeBinding(f.projectA, 'doc');
@@ -1675,7 +1675,7 @@ const CASES = [
       await withRoots(f);
       const target = writeSkill(f.library, 'lib-copy');
       const { makeEntry, entryKind, removeEntry } = await core('linkx');
-      const link = path.join(f.projectA, '.dsh', 'skills', 'lib-copy');
+      const link = path.join(f.projectA, '.agents', 'skills', 'lib-copy');
       const real = await import('node:fs');
       const fake = Object.create(real);
       fake.symlinkSync = () => { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; };
@@ -1685,10 +1685,10 @@ const CASES = [
       fs.writeFileSync(path.join(target, 'SKILL.md'), 'changed-in-library\n');
       ok(!fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8').includes('changed-in-library'), '副本不随库演进');
       fs.writeFileSync(path.join(target, 'SKILL.md'), '---\nname: lib-copy\ndescription: x\n---\n');
-      const j = await makeEntry(target, path.join(f.projectA, '.dsh', 'skills', 'lib-copy-j'), {});
+      const j = await makeEntry(target, path.join(f.projectA, '.agents', 'skills', 'lib-copy-j'), {});
       eq(j.kind, 'junction', '默认可用时建 junction');
-      ok(fs.readFileSync(path.join(f.projectA, '.dsh', 'skills', 'lib-copy-j', 'SKILL.md'), 'utf8').includes('name:'), '经 junction 读 SKILL.md 透明');
-      removeEntry(link, 'copy'); removeEntry(path.join(f.projectA, '.dsh', 'skills', 'lib-copy-j'), 'junction');
+      ok(fs.readFileSync(path.join(f.projectA, '.agents', 'skills', 'lib-copy-j', 'SKILL.md'), 'utf8').includes('name:'), '经 junction 读 SKILL.md 透明');
+      removeEntry(link, 'copy'); removeEntry(path.join(f.projectA, '.agents', 'skills', 'lib-copy-j'), 'junction');
       ok(fs.existsSync(path.join(f.library, 'lib-copy', 'SKILL.md')), '删条目不伤库本体');
     },
   },
@@ -1699,7 +1699,7 @@ const CASES = [
       writeSkill(f.userDsh, 'Bad_Name');            // 非 kebab
       const nested = writeSkill(f.userDsh, 'nested-ok'); mkdirp(path.join(nested, 'sub'));
       fs.writeFileSync(path.join(nested, 'sub', 'SKILL.md'), '---\nname: hidden\ndescription: x\n---\n'); // 嵌套不被发现
-      writeSkill(f.userDsh, 'dup-name'); writeSkill(path.join(f.projectA, '.dsh', 'skills'), 'dup-name'); // 跨层同名
+      writeSkill(f.userDsh, 'dup-name'); writeSkill(path.join(f.projectA, '.agents', 'skills'), 'dup-name'); // 跨层同名
       const { scanSkills, dedupeWinners } = await core('resolver');
       const entries = await scanSkills(f.roots, f.projectA);
       lacks(entries.filter((e) => e.valid).map((e) => e.name), 'Bad_Name', '非 kebab 不算有效技能');
@@ -1720,7 +1720,7 @@ const CASES = [
       const { planEffective, applyPlan } = await core('effective');
       await writeBinding(f.projectA, 'sa');
       await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'sa'));
-      fs.rmdirSync(path.join(f.projectA, '.dsh', 'skills', 'm1')); // 外部手删 managed 条目
+      fs.rmdirSync(path.join(f.projectA, '.agents', 'skills', 'm1')); // 外部手删 managed 条目
       await applyPlan(f.projectA, await planEffective(f.roots, f.projectA, 'sb')); // 切换不抛错
       has(skillDirNames(f.projectA), 'm2', '切换后新条目就位');
       const { readManaged } = await core('managed');
@@ -1751,12 +1751,20 @@ const CASES = [
       fs.writeFileSync(g, '# skill-set-manager dev workspace\nnode_modules/\n');
       const r2 = await ensureGitignoreLine(f.projectA, { enabled: true });
       ok(r2.changed, '无关注释不阻止署名条目行');
-      ok(fs.readFileSync(g, 'utf8').split('\n').some((l) => l.trim() === '.dsh/skills/'), '条目行存在即生效');
+      ok(fs.readFileSync(g, 'utf8').split('\n').some((l) => l.trim() === '.agents/skills/'), '条目行存在即生效');
       const before = fs.readFileSync(g, 'utf8');
       await ensureGitignoreLine(f.projectA, { enabled: false });
       eq(fs.readFileSync(g, 'utf8'), before, '开关关闭不写不删');
       await ensureGitignoreLine(f.projectA, { enabled: false });
       eq(fs.readFileSync(g, 'utf8'), before, '开关关闭二次调用仍不动');
+      // 升级（2026-10-30）：旧署名块「marker + .dsh/skills/」原地改写，不追加第二组署名
+      fs.writeFileSync(g, `node_modules/\n# skill-set-manager: project skill entries (managed)\n.dsh/skills/\n`);
+      const r3 = await ensureGitignoreLine(f.projectA, { enabled: true });
+      ok(r3.changed, '旧条目升级会被改写');
+      const t3 = fs.readFileSync(g, 'utf8');
+      eq(t3.split('\n').filter((l) => l.includes('skill-set-manager')).length, 1, '升级后仍只有一组署名');
+      ok(!t3.split('\n').some((l) => l.trim() === '.dsh/skills/'), '旧条目行已消失');
+      ok(t3.split('\n').some((l) => l.trim() === '.agents/skills/'), '新条目行就位');
     },
   },
   {
@@ -1816,7 +1824,7 @@ const CASES = [
       const mg = await readManaged(f.projectA);
       ok(!mg.sessionOverride || (!(mg.sessionOverride.added?.length) && !(mg.sessionOverride.removed?.length)), 'sessionOverride 标记已清');
       // 无覆盖：ended:false 且托管清单一字不动（事件对未覆盖项目必须零副作用）
-      const file = path.join(f.projectA, '.dsh', 'skills', '.managed.json');
+      const file = path.join(f.projectA, '.agents', 'skills', '.managed.json');
       const before = fs.readFileSync(file, 'utf8');
       const r2 = await p.endOverrideIfActive(store, f.roots, f.projectA);
       eq(r2.ended, false, '无覆盖 → ended:false');

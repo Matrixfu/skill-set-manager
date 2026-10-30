@@ -10,6 +10,7 @@ import { resolveSkillTargets } from './resolver.js';
 import { readManaged, writeManaged } from './managed.js';
 import { readBinding } from './binding.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
+import { projectSkillsDir } from './paths.js';
 
 export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = fs } = {}) {
   // 项目目录只放集条目；常驻经全局生效区可见（§5.3），display 口径的并集在 sets.effectiveNames。
@@ -30,7 +31,7 @@ export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = 
   const warnMissing = [];
   const warnForeign = [];
   const rebuilding = new Set();
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const skillsDir = projectSkillsDir(projectRoot);
   for (const name of names) {
     const t = targets.get(name);
     if (!t) { warnMissing.push(name); continue; } // 悬空引用：警告，不写入
@@ -56,7 +57,7 @@ export function applyPlan(projectRoot, plan, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { setSlug: null, entries: {}, sessionOverride: null };
   const entries = { ...managed.entries };
   const warnings = [];
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const skillsDir = projectSkillsDir(projectRoot);
   for (const item of plan.remove) {
     removeEntry(path.join(skillsDir, item.name), item.kind, { fs: fsImpl });
     delete entries[item.name];
@@ -85,10 +86,10 @@ export function readbackCheck(roots, projectRoot, setSlug, { override = null, fs
   expected = expected.sort();
   const actual = [];
   let names2;
-  try { names2 = fsImpl.readdirSync(path.join(projectRoot, '.dsh', 'skills')); } catch { names2 = []; }
+  try { names2 = fsImpl.readdirSync(projectSkillsDir(projectRoot)); } catch { names2 = []; }
   for (const n of names2) {
     if (n.startsWith('.')) continue;
-    const kind = entryKind(path.join(projectRoot, '.dsh', 'skills', n), { fs: fsImpl });
+    const kind = entryKind(path.join(projectSkillsDir(projectRoot), n), { fs: fsImpl });
     if (kind === 'junction' || kind === 'dir' || kind === 'symlink') actual.push(n);
     else if (kind === 'file' && n.endsWith('.md')) actual.push(n.slice(0, -3)); // flat 复制条目
   }
@@ -121,7 +122,7 @@ export function selfCheck(roots, projectRoot, { fs: fsImpl = fs } = {}) {
     return { ...base, ok: false, frozen: true, detail: `冻结绑定：技能集「${binding.setSlug}」已删除，生效清单原样保留，请改绑` };
   }
   const rc = readbackCheck(roots, projectRoot, binding?.setSlug ?? null, { override, fs: fsImpl });
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const skillsDir = projectSkillsDir(projectRoot);
   const entries = managed?.entries ?? {};
   const brokenLinks = Object.keys(entries).filter((name) => {
     const k = entryKind(path.join(skillsDir, entries[name].flat ? `${name}.md` : name), { fs: fsImpl });
@@ -176,7 +177,7 @@ export async function claimForeign(roots, projectRoot, { fs: fsImpl = fs } = {})
     names = [...new Set([...names.filter((n) => !removed.has(n)), ...(ov.added ?? [])])];
   }
   const { targets } = await resolveSkillTargets(roots, projectRoot, names, { fs: fsImpl });
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const skillsDir = projectSkillsDir(projectRoot);
   const entries = { ...(managed?.entries ?? {}) };
   for (const name of names) {
     if (name in entries) continue; // 台账已有：不是失配条目

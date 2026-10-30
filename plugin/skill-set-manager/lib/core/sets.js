@@ -119,7 +119,7 @@ export function effectiveNames(roots, setSlug) {
 
 /** 从当前生效清单另存为（§5.4：第一次建集的主路径）。
  *  excludeResident（用户 2026-10-26）：常驻 = 全局生效，不该进项目集合
- *  （否则另存后绑定会把全局技能再写一份进项目 .dsh/skills）。 */
+ *  （否则另存后绑定会把全局技能再写一份进项目 .agents/skills）。 */
 export function saveAsSet(roots, { name, names, excludeResident = false }) {
   const slug = uniqueSlug(roots, slugify(name) || 'set');
   let skills = names ?? [];

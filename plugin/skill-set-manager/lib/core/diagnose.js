@@ -11,7 +11,7 @@ import { readManaged } from './managed.js';
 import { listSets, loadSet, loadResident } from './sets.js';
 import { entryKind } from './linkx.js';
 import { parseFrontmatter } from './resolver.js';
-import { SKILL_NAME_RE } from './paths.js';
+import { SKILL_NAME_RE, projectSkillsDir } from './paths.js';
 import { walkFiles } from './manifest.js';
 
 const row = (level, kind, what, where, fix) => ({ level, kind, what, where, fix });
@@ -27,7 +27,7 @@ function digestOf(dir, fsImpl) {
 export function diagnose(roots, { projectRoot = null, cwd = process.cwd(), workspaceScopeInstalled = false, providerEntries } = {}, { fs: fsImpl = fs } = {}) {
   const groups = { partition: [], copies: [], dangling: [], deadLinks: [], structure: [], env: [] };
   const zones = [roots.libraryRoot, roots.userDshRoot, roots.userAgentsRoot, ...roots.customDirs];
-  const skillsDirOf = (pr) => path.join(pr, '.dsh', 'skills');
+  const skillsDirOf = (pr) => projectSkillsDir(pr);
   // 集名口径（用户报告 2026-10-26：面板改名后诊断仍打 slug）：显示名优先，集文件缺失（冻结绑定）回落 slug
   const setLabel = (slug) => (slug ? (loadSet(roots, slug)?.name || slug) : slug);
 

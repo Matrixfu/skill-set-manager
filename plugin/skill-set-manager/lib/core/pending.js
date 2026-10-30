@@ -13,6 +13,7 @@ import { planEffective, applyPlan } from './effective.js';
 import { loadSet, RESIDENT_SLUG } from './sets.js';
 import { resolveSkillTargets } from './resolver.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
+import { projectSkillsDir } from './paths.js';
 
 /**
  * 净覆盖口径：台账 ∖ 集 = added；集 ∖ 台账 = removed。每次 startOverride 全量重算写回，
@@ -36,7 +37,7 @@ function netOverride(roots, setSlug, entries, prev, { addedThisCall = [], remove
 export async function startOverride(store, roots, projectRoot, { add = [], remove = [], sessionId = null } = {}, { fs: fsImpl = fs } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { setSlug: null, entries: {}, sessionOverride: null }; // 未绑定也可起盘：台账 setSlug 为 null（设计 2026-10-28）
   const snapshot = { setSlug: managed.setSlug, entries: structuredClone(managed.entries), sessionOverride: managed.sessionOverride };
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const skillsDir = projectSkillsDir(projectRoot);
   // 未绑定起盘时若该目录原本不存在，还原后连这个空目录一起收回（回到插件零写入）
   const createdSkillsDir = !fsImpl.existsSync(skillsDir);
   // 先落标记后动目录（§6.6 崩溃即设计前提）：标记在 = 可还原；目录动了没标记 = 不可还原
@@ -109,13 +110,13 @@ export async function endOverrideIfActive(store, roots, projectRoot, endingSessi
 
 /**
  * 未绑定还原（设计 2026-10-28）：本次覆盖加了什么就摘什么；台账空了连 `.managed.json`
- * 一起删，本次创建的空 `.dsh/skills` 目录也收回——项目回到「插件零写入」。
+ * 一起删，本次创建的空 `.agents/skills` 目录也收回——项目回到「插件零写入」。
  * 未绑定基线为空 ⇒ sessionOverride.removed 恒为空，无需补回条目。
  */
 function unboundRestore(projectRoot, rec) {
   const mg = readManaged(projectRoot);
   if (!mg?.sessionOverride) return false; // 没有覆盖痕迹：不动盘
-  const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+  const skillsDir = projectSkillsDir(projectRoot);
   for (const n of mg.sessionOverride.added ?? []) {
     const kind = mg.entries?.[n]?.kind;
     if (kind) removeEntry(path.join(skillsDir, n), kind);
@@ -135,7 +136,7 @@ async function restoreProject(roots, projectRoot, rec = null) {
   if (binding.setSlug !== RESIDENT_SLUG && !loadSet(roots, binding.setSlug)) {
     const mg = readManaged(projectRoot);
     if (mg?.sessionOverride) {
-      const skillsDir = path.join(projectRoot, '.dsh', 'skills');
+      const skillsDir = projectSkillsDir(projectRoot);
       for (const n of mg.sessionOverride.added ?? []) {
         const kind = mg.entries?.[n]?.kind;
         if (kind) removeEntry(path.join(skillsDir, n), kind);

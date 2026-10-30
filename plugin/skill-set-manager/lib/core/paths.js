@@ -21,6 +21,16 @@ export function defaultAgentsHome() {
   return process.env.DSH_AGENTS_HOME || path.join(os.homedir(), '.agents');
 }
 
+/**
+ * 项目生效目录（2026-10-30 迁移）：`<projectRoot>/.agents/skills`。
+ * 与 DSH 扫描层 `project-agents`（rank 200）同址，且是各 harness 共享的项目技能目录，
+ * 因此技能集条目在 DSH 之外的智能体软件里同样可见；旧的 `<projectRoot>/.dsh/skills`
+ * （rank 100）不再由插件写入。全部读写入口统一走本函数，避免路径口径漂移。
+ */
+export function projectSkillsDir(projectRoot) {
+  return path.join(projectRoot, '.agents', 'skills');
+}
+
 /** 显式装配全部根；生产 apply() 与验收脚本都走这里（core 不读 env）。 */
 export function buildRoots({ dshHome, agentsHome, customSkillDirs = [], crossHarnessResident = false } = {}) {
   dshHome = path.resolve(dshHome ?? defaultDshHome());
