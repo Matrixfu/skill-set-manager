@@ -44,6 +44,18 @@ function buildManifest(dir, name, { source = 'unknown', commit = null }, fsImpl)
   };
 }
 
+/**
+ * 检出根即技能（单技能仓库：SKILL.md 直接在检出根，没有「一层目录 = 一个技能」那层）时的技能名：
+ * **只认 frontmatter 里合法 kebab-case 的 name**，否则 null。名字不猜仓库名——猜错等于库条目名与
+ * manifest.name 分叉，更新认领还会拿错基线误覆盖本地文件（§7.3 目录名即技能名）。
+ */
+export function rootSkillName(dir, { fs: fsImpl = fs } = {}) {
+  let text;
+  try { text = fsImpl.readFileSync(path.join(dir, 'SKILL.md'), 'utf8'); } catch { return null; }
+  const name = String(parseFrontmatter(text)?.name ?? '').trim();
+  return SKILL_NAME_RE.test(name) ? name : null;
+}
+
 /** 读单个技能目录的 manifest；缺失/损坏返回 null。 */
 export function readManifest(dir, { fs: fsImpl = fs } = {}) {
   try { return JSON.parse(fsImpl.readFileSync(path.join(dir, '.manifest.json'), 'utf8')); }

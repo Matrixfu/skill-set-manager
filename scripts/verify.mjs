@@ -534,9 +534,100 @@ const CASES = [
       ok(!fs.readFileSync(path.join(f.library, 'alpha', 'SKILL.md'), 'utf8').includes('local-mod'), 'overwrite 后为上游内容');
       const nf = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, names: ['alpha', 'nope'], backup: async () => 'unused' });
       eq(JSON.stringify(nf.map((r) => `${r.name}:${r.ok ? 'ok' : r.reason}`).sort()), JSON.stringify(['alpha:exists', 'nope:not-found']), 'names 缺项报 not-found（review n2）');
+      // 0 个可安装技能不得当成功（用户报告 2026-10-30：kaankiziltug/logo-design-skill 的技能在
+      // skills/logo-design/，粘贴仓库根 → 一层扫描扫不到直接含 SKILL.md 的目录 → results=[] →
+      // 任务照常 ok，UI 显示「安装完成」但库里什么都没装）：names 为空时空扫描 = 业务错，且指路稀疏路径
+      const rootGot = await g.fetchRepo(g.parseRepoSpec('o/r'), { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghroot-')), git, url: pathToFileURL(repo).toString() });
+      const libBefore = fs.readdirSync(f.library).sort();
+      let emptyErr = '';
+      try { await g.installSkills(f.roots, { source: 'github:o/r', commit: rootGot.commit, skillsDir: rootGot.skillsDir, backup: async () => 'unused' }); } catch (e) { emptyErr = String(e?.message ?? e); }
+      ok(emptyErr.includes('稀疏路径'), `仓库根 0 个可安装技能应报业务错并指路稀疏路径，实得：${emptyErr || '（没抛错）'}`);
+      eq(JSON.stringify(fs.readdirSync(f.library).sort()), JSON.stringify(libBefore), '空扫描报错不落库任何东西（不半写）');
       let gerr = null;
       try { await g.fetchRepo(spec, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghx-')), git: () => { const e = new Error('spawn git ENOENT'); e.code = 'ENOENT'; throw e; }, url: 'file://nope' }); } catch (e) { gerr = e; }
       ok(gerr && /git/i.test(gerr.message), 'git 缺失 → 业务错含 git（Review Focus #1）');
+    },
+  },
+  {
+    id: 'github-root-skill', title: '仓库根即技能（SKILL.md 落在检出根）：安装落库 + 更新定位同口径（用户报告 2026-10-30：Moessif/code-video-showcase）',
+    async run(f) {
+      await withRoots(f);
+      // 上游形态：单技能仓库，SKILL.md 直接在仓库根（无「一层子目录 = 一个技能」那层）
+      const repo = fs.mkdtempSync(path.join(f.base, 'ghsolo-'));
+      fs.mkdirSync(path.join(repo, 'assets'), { recursive: true });
+      fs.writeFileSync(path.join(repo, 'SKILL.md'), '---\nname: solo-showcase\ndescription: 根级技能\n---\nbody v1\n');
+      fs.writeFileSync(path.join(repo, 'assets/demo.txt'), 'bin\n');
+      fs.writeFileSync(path.join(repo, 'README.md'), '#r\n');
+      execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+      execFileSync('git', ['-c', 'user.name=v', '-c', 'user.email=v@v', '-C', repo, 'commit', '-qm', 'v1'], { stdio: 'ignore' });
+      const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+      const url = pathToFileURL(repo).toString();
+      const g = await core('github');
+      const got = await g.fetchRepo(g.parseRepoSpec('o/r'), { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghsolowt-')), git, url });
+      ok(!fs.existsSync(path.join(got.skillsDir, 'solo-showcase')), '夹具成立：检出根下没有同名子目录');
+      // 安装：一层扫空手时认检出根自身，库名 = frontmatter name（§7.3 目录名即技能名）
+      const res = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'b' });
+      eq(JSON.stringify(res.map((r) => `${r.name}:${r.ok ? 'ok' : r.reason}`)), JSON.stringify(['solo-showcase:ok']), '检出根含 SKILL.md → 按 frontmatter name 装成单技能');
+      const solo = path.join(f.library, 'solo-showcase');
+      ok(fs.existsSync(path.join(solo, 'SKILL.md')), '库条目落地（库名 = frontmatter name）');
+      eq(fs.readFileSync(path.join(solo, 'assets/demo.txt'), 'utf8'), 'bin\n', '根级技能的子目录素材一起入库');
+      ok(!fs.existsSync(path.join(solo, '.git')), '检出根的 .git 对象库不跟进库条目（单技能仓库根 = 技能本体，VCS 元数据除外）');
+      const mf = JSON.parse(fs.readFileSync(path.join(solo, '.manifest.json'), 'utf8'));
+      eq(mf.name, 'solo-showcase', 'manifest.name 取 frontmatter name');
+      eq(mf.source, 'github:o/r', 'manifest.source'); eq(mf.commit, head, 'manifest.commit');
+      const again = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'b' });
+      ok(again.length === 1 && again[0].name === 'solo-showcase' && again[0].reason === 'exists', '根级技能同样 no-clobber');
+      const pin = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, names: ['solo-showcase'], backup: async () => 'b' });
+      eq(JSON.stringify(pin.map((r) => `${r.name}:${r.reason ?? 'ok'}`)), JSON.stringify(['solo-showcase:exists']), '按 pin 安装认得根级技能名（不再误报 not-found）');
+      const pinBad = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, names: ['nope'], backup: async () => 'b' });
+      eq(JSON.stringify(pinBad.map((r) => `${r.name}:${r.reason}`)), JSON.stringify(['nope:not-found']), 'names 不含根级技能时仍报 not-found（不得硬塞）');
+      // overwrite 同口径：先备份再替换
+      fs.writeFileSync(path.join(solo, 'SKILL.md'), 'local-mod');
+      let backed = 0;
+      const ow = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, overwrite: true, backup: async () => { backed++; return 'b'; } });
+      ok(ow.find((r) => r.name === 'solo-showcase')?.ok, 'overwrite 覆盖根级技能成功');
+      eq(backed, 1, 'overwrite 先备份');
+      ok(!fs.readFileSync(path.join(solo, 'SKILL.md'), 'utf8').includes('local-mod'), 'overwrite 后为上游内容');
+      // frontmatter 无合法 kebab name：不猜仓库名（猜错 = 库名与 manifest.name 分叉、更新认领拿错基线）
+      const anon = path.join(f.base, 'ghanon');
+      fs.mkdirSync(anon, { recursive: true });
+      fs.writeFileSync(path.join(anon, 'SKILL.md'), '---\ndescription: 无 name\n---\nbody\n');
+      const libBefore = fs.readdirSync(f.library).sort();
+      let anonErr = '';
+      try { await g.installSkills(f.roots, { source: 'github:o/anon', commit: head, skillsDir: anon, backup: async () => 'b' }); } catch (e) { anonErr = String(e?.message ?? e); }
+      ok(anonErr.includes('frontmatter'), `检出根含 SKILL.md 但 frontmatter 无合法 name → 报业务错说明真因，实得：${anonErr || '（没抛错）'}`);
+      eq(JSON.stringify(fs.readdirSync(f.library).sort()), JSON.stringify(libBefore), '不猜名也不半写（库里不得多出 anon 条目）');
+      // 检查更新侧（与安装侧同一条口径）：fetch 返回检出根当 skillsDir 时，upstreamDirOf 要认
+      // 「检出根即技能」自身；但根技能不等于别的技能——认错 = 拿错基线，升级会误覆盖本地文件
+      const u = await core('updates');
+      eq(u.upstreamDirOf(got.skillsDir, 'solo-showcase', fs), got.skillsDir, 'upstreamDirOf 认检出根即技能');
+      let rootMiss = '';
+      try { u.upstreamDirOf(got.skillsDir, 'other-skill', fs); } catch (e) { rootMiss = String(e?.message ?? e); }
+      ok(rootMiss.includes('上游不含技能 "other-skill"'), `根技能不得被当成别的技能，实得：${rootMiss || '（没抛错）'}`);
+      // 端到端：上游 v2（改 SKILL.md、增 new.md）→ 无子路径来源也能三份比对并升级到 HEAD
+      fs.writeFileSync(path.join(repo, 'SKILL.md'), '---\nname: solo-showcase\ndescription: 根级技能\n---\nbody v2\n');
+      fs.writeFileSync(path.join(repo, 'new.md'), 'added\n');
+      execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+      execFileSync('git', ['-c', 'user.name=v', '-c', 'user.email=v@v', '-C', repo, 'commit', '-qm', 'v2'], { stdio: 'ignore' });
+      const head2 = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const fetchRoot = async () => g.fetchRepo(g.parseRepoSpec('o/r'), { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghsolowt2-')), git, url });
+      const chk = await u.checkUpdate(f.roots, 'solo-showcase', { fetch: fetchRoot });
+      eq(chk.upToDate, false, '根级技能可比对出有新版本');
+      eq(chk.remote, head2, 'checkUpdate.remote == v2 HEAD');
+      const act = Object.fromEntries(chk.files.map((x) => [x.path, x.action]));
+      eq(act['SKILL.md'], 'update', '上游改 SKILL.md → update');
+      eq(act['new.md'], 'add', '上游新增 → add');
+      let bk2 = 0;
+      const ap = await u.applyUpdate(f.roots, 'solo-showcase', { fetch: fetchRoot, backup: async () => { bk2++; return 'bk'; } });
+      eq(bk2, 1, '升级前自动备份（§17#9/#10 前置）');
+      eq(JSON.stringify(ap.updated.sort()), JSON.stringify(['SKILL.md', 'new.md']), 'updated 落实两份');
+      ok(fs.readFileSync(path.join(solo, 'SKILL.md'), 'utf8').includes('body v2'), '升级后为上游内容');
+      ok(fs.existsSync(path.join(solo, 'new.md')), '上游新增文件已写入库条目');
+      eq(JSON.parse(fs.readFileSync(path.join(solo, '.manifest.json'), 'utf8')).commit, head2, 'manifest commit 前进到 v2');
+      const chk2 = await u.checkUpdate(f.roots, 'solo-showcase', { fetch: fetchRoot });
+      eq(chk2.upToDate, true, '升级后再查 → upToDate');
     },
   },
   {

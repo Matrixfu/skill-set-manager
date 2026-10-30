@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readManifest, writeSkillManifest, walkFiles } from './manifest.js';
+import { readManifest, writeSkillManifest, walkFiles, rootSkillName } from './manifest.js';
 import { writeTextAtomic } from './atomic.js';
 import { gitFailMessage } from './giterr.js';
 
@@ -63,6 +63,10 @@ function hasSkillMd(dir, fsImpl) {
 export function upstreamDirOf(skillsDir, name, fsImpl) {
   const direct = path.join(skillsDir, name);
   if (hasSkillMd(direct, fsImpl)) return direct;
+  // 检出根即技能（单技能仓库：SKILL.md 直接在检出根）——与安装侧 installSkills 的下探同口径。
+  // 只认 frontmatter name（rootSkillName）与库条目名一致的情形：名字对不上绝不把检出根当该技能，
+  // 认错基线 = 升级时拿别的技能的文件覆盖本地（§8.6 三份比对的根是「同一技能」）。
+  if (rootSkillName(skillsDir, { fs: fsImpl }) === name) return skillsDir;
   let entries = [];
   try { entries = fsImpl.readdirSync(skillsDir, { withFileTypes: true }); } catch { /* 上游目录读不到 → 走下面的报错 */ }
   const hits = [];
