@@ -76,6 +76,7 @@ window.__ModuleLoader__.load({
         effTitle: '生效清单', candidates: '候选', notActive: '未生效',
         ovBanner: '临时覆盖中 · 剔除 {n} 项 · 加入 {m} 项',
         grayResident: '全局常驻', grayForeign: '外来常驻', grayProvider: '插件/Preset 提供', grayItems: '项',
+        otherSec: '其他（不受技能集管控）',
         descPh: '描述（可空）', emptySearch: '没有匹配的技能', emptyList: '当前没有生效技能', updatedAt: '更新于',
         ariaExpand: '展开', ariaCollapse: '收起', ariaPick: '勾选',
       },
@@ -142,6 +143,7 @@ window.__ModuleLoader__.load({
         effTitle: 'Effective list', candidates: 'Candidates', notActive: 'not active',
         ovBanner: 'Session override active · {n} removed · {m} added',
         grayResident: 'Global resident', grayForeign: 'Foreign resident', grayProvider: 'Plugin / preset-provided', grayItems: 'items',
+        otherSec: 'Other (outside skill-set control)',
         descPh: 'Description (optional)', emptySearch: 'no matching skills', emptyList: 'no skills are active right now', updatedAt: 'updated',
         ariaExpand: 'expand', ariaCollapse: 'collapse', ariaPick: 'tick',
       },
@@ -491,7 +493,7 @@ window.__ModuleLoader__.load({
           (st.sets ?? []).length === 0 ? h('div', { className: 'ssm-p-desc' }, t('empty')) : null,
           ...(st.sets ?? []).map((s) => h('div', { key: s.slug, className: 'ssm-p-setrow' + (st.binding?.setSlug === s.slug ? ' ssm-p-setrow-cur' : '') },
             h('div', { className: 'ssm-p-row' },
-              h('button', { className: 'ssm-p-pick', disabled: busy || st.binding?.setSlug === s.slug, title: st.binding?.setSlug === s.slug ? undefined : t('switchTo'), 'aria-label': t('ariaPick'), onClick: () => doSwitch(s.slug) },
+              h('button', { className: 'ssm-p-pick', disabled: busy || st.binding?.setSlug === s.slug, title: st.binding?.setSlug === s.slug ? undefined : t('switchTo'), onClick: () => doSwitch(s.slug) },
                 h('span', { className: 'ssm-p-setname' }, s.name),
                 st.binding?.setSlug === s.slug ? h(PBadge, { kind: 'brand', text: t('current') }) : null,
                 h(PBadge, { kind: 'muted', text: `${(s.skills ?? []).length} ${t('skillsCount')}` }),
@@ -665,14 +667,19 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'ssm-grow' }, null),
                 h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')))
             : null,
-          !bound ? h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h(Icon, { n: 'alert' }), t('draftHint')) : null,
+          !bound ? h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h(Icon, { n: 'linkOff' }), t('draftHint')) : null,
           qq
             ? h(React.Fragment, null,
-                ...(() => { // 搜索两段视图（3.4）：生效中 = 生效行过滤；候选 = 库−生效（未绑定再剔常驻，草稿语义照旧）
+                ...(() => { // 搜索两段视图（3.4）+「其他」灰段（review#5：搜常驻/插件名不再假阴性，旧灰行命中能力保留）
                   const hitSet = new Set(hits.map((l) => l.name));
                   const act = effNames.filter((n) => hitSet.has(n));
                   const cand = (st.library ?? []).filter((l) => !eff.has(l.name) && (bound || (!resident.has(l.name) && !foreignRes.has(l.name)))).filter((l) => hitSet.has(l.name));
-                  if (!act.length && !cand.length) return [h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptySearch'))];
+                  const other = hits
+                    .filter((l) => !act.includes(l.name) && !cand.some((c) => c.name === l.name) && (resident.has(l.name) || foreignRes.has(l.name) || providerSet.has(l.name)))
+                    .map((l) => SkillRow({ key: 'oth-' + l.name, l, on: null, ro: true,
+                      badges: [{ kind: 'muted', text: resident.has(l.name) ? t('grayResident') : foreignRes.has(l.name) ? t('grayForeign') : t('grayProvider') }],
+                      title: resident.has(l.name) ? t('residentRow') : foreignRes.has(l.name) ? t('foreignRow') : t('providerRowGo') }));
+                  if (!act.length && !cand.length && !other.length) return [h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptySearch'))];
                   return [
                     ...(act.length ? [
                       h('div', { className: 'ssm-p-seclabel' }, t('effTitle'), ' ', String(act.length)),
@@ -681,6 +688,10 @@ window.__ModuleLoader__.load({
                     ...(cand.length ? [
                       h('div', { className: 'ssm-p-seclabel' }, t('candidates'), ' ', String(cand.length)),
                       ...cand.map((l) => SkillRow({ key: l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })),
+                    ] : []),
+                    ...(other.length ? [
+                      h('div', { className: 'ssm-p-seclabel' }, t('otherSec'), ' ', String(other.length)),
+                      ...other,
                     ] : [])];
                 })())
             : h(React.Fragment, null,
@@ -1231,7 +1242,7 @@ window.__ModuleLoader__.load({
 .ssm-p-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center;padding:0 12px 12px;pointer-events:auto}
 .ssm-p-panel{width:min(760px,94vw);max-height:78vh;overflow:auto;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:0 14px 10px;display:flex;flex-direction:column;gap:10px;box-shadow:0 16px 48px rgba(0,0,0,.4);font-size:13px;animation:ssm-pop .12s ease-out}
 @keyframes ssm-pop{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
-@media (prefers-reduced-motion:reduce){.ssm-p-panel{animation:none}}
+@media (prefers-reduced-motion:reduce){.ssm-p-panel{animation:none}.ssm-p-skel{animation:none}}
 .ssm-p-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;margin:0 -14px;padding:10px 14px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l2);border-radius:14px 14px 0 0;font-size:15px}
 .ssm-p-cur{font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-p-rootline{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-secondary);min-width:0}
@@ -1250,7 +1261,7 @@ window.__ModuleLoader__.load({
 .ssm-p-check input[type=checkbox]{margin-top:3px;flex:none;accent-color:var(--dsw-alias-brand-primary)}
 .ssm-p-pick:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:6px}
 .ssm-p-search:focus-visible{outline:none;border-color:var(--dsw-alias-brand-primary)}
-.ssm-p-check:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ssm-p-check:has(input:focus-visible){outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 .ssm-p-icon{flex:none}
 .ssm-p-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:0}
 .ssm-p-icon-btn:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-primary)}
@@ -1262,18 +1273,20 @@ window.__ModuleLoader__.load({
 .ssm-p-collapse{display:flex;align-items:center;gap:8px;width:100%;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);padding:5px 6px;border:0;border-radius:8px;background:0;cursor:pointer;text-align:left}
 .ssm-p-collapse:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent);color:var(--dsw-alias-label-primary)}
 .ssm-p-collapse:focus-visible{outline:2px solid var(--dsw-alias-brand-primary)}
+.ssm-p-collapse[aria-expanded="true"]>svg:last-of-type{transform:rotate(180deg)}
 .ssm-p-skel{height:34px;border-radius:8px;background:linear-gradient(90deg,color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent) 25%,color-mix(in srgb,var(--dsw-alias-label-primary) 16%,transparent) 50%,color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent) 75%);background-size:200% 100%;animation:ssm-skel 1.2s linear infinite}
 @keyframes ssm-skel{from{background-position:100% 0}to{background-position:-100% 0}}
 .ssm-p-actions{display:flex;align-items:center;gap:2px;border-top:1px solid var(--dsw-alias-border-l2);padding-top:6px;margin-top:2px}
 .ssm-p-actions .ssm-p-icon-btn{opacity:1}
-.ssm-p-row .ssm-p-icon-btn,.ssm-p-setrow .ssm-p-icon-btn{opacity:0;transition:opacity .12s}
-.ssm-p-row:hover .ssm-p-icon-btn,.ssm-p-row:focus-within .ssm-p-icon-btn,.ssm-p-setrow:hover .ssm-p-icon-btn,.ssm-p-setrow:focus-within .ssm-p-icon-btn{opacity:1}
-@media (prefers-reduced-motion:reduce){.ssm-p-row .ssm-p-icon-btn,.ssm-p-setrow .ssm-p-icon-btn{opacity:1;transition:none}}
+.ssm-p-setrow>.ssm-p-row .ssm-p-icon-btn{opacity:0;transition:opacity .12s}
+.ssm-p-setrow:hover>.ssm-p-row .ssm-p-icon-btn,.ssm-p-setrow:focus-within>.ssm-p-row .ssm-p-icon-btn{opacity:1}
+@media (prefers-reduced-motion:reduce){.ssm-p-setrow>.ssm-p-row .ssm-p-icon-btn{opacity:1;transition:none}}
 .ssm-p-setrow{border-radius:8px;padding:5px 6px;display:flex;flex-direction:column;gap:2px}
 .ssm-p-setrow:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent)}
 .ssm-p-setrow-cur{border-left:2px solid var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent)}
-.ssm-p-pick{flex:1;display:flex;align-items:center;gap:8px;min-width:0;background:0;border:0;color:var(--dsw-alias-label-primary);cursor:pointer;padding:2px 0;text-align:left;font:inherit;font-size:13px}
-.ssm-p-pick:disabled{cursor:default}
+.ssm-p-row .ssm-p-pick{flex:1;display:flex;align-items:center;gap:8px;min-width:0;background:0;border:0;color:var(--dsw-alias-label-primary);cursor:pointer;padding:2px 0;text-align:left;font:inherit;font-size:13px}
+.ssm-p-row .ssm-p-pick:disabled{cursor:default}
+.ssm-p-row .ssm-p-pick:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:6px}
 .ssm-p-setname{font-weight:600;color:var(--dsw-alias-label-primary);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-p-banner button{font:inherit;font-size:11px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;padding:2px 8px;cursor:pointer;opacity:.85}
 .ssm-p-banner button:hover{opacity:1}
@@ -1281,6 +1294,8 @@ window.__ModuleLoader__.load({
 .ssm-p-search:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .ssm-p-row>button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 .ssm-p-row>.ssm-p-icon-btn{background:transparent;border-color:transparent;color:var(--dsw-alias-label-secondary);width:24px;height:24px;padding:0}
+.ssm-p-row>button:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent)}
+.ssm-p-row>.ssm-p-icon-btn:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-primary)}
 .ssm-p-rowwrap{display:flex;flex-direction:column;gap:1px;border-radius:8px;padding:1px 0}
 .ssm-p-rowwrap:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent)}
 .ssm-p-gray{opacity:.55}
