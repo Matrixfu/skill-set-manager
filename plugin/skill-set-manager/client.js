@@ -509,37 +509,38 @@ window.__ModuleLoader__.load({
                   h('button', { disabled: busy || !renameDraft.trim(), onClick: () => run(async () => { const name = renameDraft.trim(); if (name !== s.name) await call(ctx, 'renameSet', { slug: s.slug, name }); if (descDraft !== (s.description ?? '')) await call(ctx, 'saveSet', { set: { slug: s.slug, name, description: descDraft, skills: s.skills ?? [] } }); setRenaming(null); }) }, '✓'),
                   h('button', { disabled: busy, onClick: () => setRenaming(null) }, '×'))
               : null,
-          // 编辑成员表单（§5#2「从技能库勾选技能加入技能集」）：saveSet 写回；当前绑定集随即 bind 收敛
-          // ——该路径由 verify case edit-members 固化（摘旧加新、台账无残留、自检绿）。
+          // 编辑成员抽屉（Task 4，spec §6.5）：chips → 同款 SkillRow；顶部描述输入（§6.6 入口③）；saveSet 写回语义不变
+          // ——该路径仍由 verify case edit-members 固化（摘旧加新、台账无残留、自检绿）。
           edit?.slug === s.slug
-            ? h('div', { className: 'ssm-io' },
-                h('div', { className: 'ssm-sec' }, t('editTitle'), ' ', s.name),
-                h('div', { className: 'ssm-row' },
-                  h('input', { className: 'ssm-input', placeholder: t('searchPh'), value: mq, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setMq(e.target.value) }),
-                  mq ? h('button', { disabled: busy, onClick: () => setMq('') }, '×') : null),
-                h('div', { className: 'ssm-chips' },
-                  ...searchRows(
-                    // 常驻 = 所有集自动包含（§17#3）→ 不进成员候选（用户报告 2026-10-26，与另存为 excludeResident 同口径）；
-                    // 已存进本集的常驻名仍列出并标注，避免保存时被静默剔除
-                    [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])]
-                      .filter((n) => !(resident.has(n) || foreignRes.has(n)) || (s.skills ?? []).includes(n))
-                      .sort()
-                      .map((n) => {
-                        const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
-                        return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
-                      }),
-                    mq,
-                  ).map((row) => {
-                    const n = row.name;
-                    return h('label', { key: n, className: 'ssm-chip' + (edit.picked[n] ? ' ssm-on' : ''), title: row.descriptionZh ?? undefined },
-                      h('input', { type: 'checkbox', checked: !!edit.picked[n], disabled: busy, onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [n]: !edit.picked[n] } }) }), ' ', n,
-                      (st.library ?? []).some((l) => l.name === n) ? null : h('span', { className: 'ssm-warn-inline' }, ` ${t('memberMissing')}`),
-                      (resident.has(n) || foreignRes.has(n)) ? h('span', { className: 'ssm-n' }, ` ${t('memberResidentTag')}`) : null);
-                  })),
+            ? h('div', { className: 'ssm-p-card' },
+                h('div', { className: 'ssm-p-card-title' }, t('editTitle'), ' ', s.name,
+                  h('span', { className: 'ssm-grow' }, null),
+                  h(Icon, { n: 'search', s: 12 }),
+                  h('input', { className: 'ssm-p-search', placeholder: t('searchPh'), value: mq, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setMq(e.target.value) }),
+                  mq ? h('button', { className: 'ssm-p-icon-btn', disabled: busy, 'aria-label': t('none'), onClick: () => setMq('') }, h(Icon, { n: 'x', s: 12 })) : null),
+                h('div', { className: 'ssm-p-row' },
+                  h('input', { className: 'ssm-input', placeholder: t('descPh'), value: edit.desc ?? '', disabled: busy, 'aria-label': t('descPh'), onChange: (e) => setEdit({ ...edit, desc: e.target.value }) })),
+                ...searchRows(
+                  // 常驻 = 所有集自动包含（§17#3）→ 不进成员候选（用户报告 2026-10-26，与另存为 excludeResident 同口径）；
+                  // 已存进本集的常驻名仍列出并标注，避免保存时被静默剔除
+                  [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])]
+                    .filter((n) => !(resident.has(n) || foreignRes.has(n)) || (s.skills ?? []).includes(n))
+                    .sort()
+                    .map((n) => {
+                      const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
+                      return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
+                    }),
+                  mq,
+                ).map((row) => SkillRow({ key: row.name, l: row, on: !!edit.picked[row.name],
+                  badges: [
+                    ...((st.library ?? []).some((l) => l.name === row.name) ? [] : [{ kind: 'warn', text: t('memberMissing') }]),
+                    ...((resident.has(row.name) || foreignRes.has(row.name)) ? [{ kind: 'muted', text: t('memberResidentTag') }] : []),
+                  ],
+                  onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [row.name]: !edit.picked[row.name] } }) })),
                 h('div', { className: 'ssm-hint' }, t('memberHint')),
                 h('div', { className: 'ssm-row' },
                   h('button', { disabled: busy, onClick: () => run(async () => {
-                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: s.description ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n]) } });
+                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: edit.desc ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n]) } }); // 描述随保存一并写回（§6.6 入口③，host 透传）
                     if (st.binding?.setSlug === s.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 立即收敛生效清单，不留「改了但没生效」窗口
                     setEdit(null);
                   }) }, t('saveBtn')),
@@ -1276,6 +1277,8 @@ window.__ModuleLoader__.load({
 .ssm-p-banner button:hover{opacity:1}
 .ssm-p-search{flex:0 1 220px;min-width:120px;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:3px 10px}
 .ssm-p-search:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.ssm-p-row>button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
+.ssm-p-row>.ssm-p-icon-btn{background:transparent;border-color:transparent;color:var(--dsw-alias-label-secondary);width:24px;height:24px;padding:0}
 .ssm-p-rowwrap{display:flex;flex-direction:column;gap:1px;border-radius:8px;padding:1px 0}
 .ssm-p-rowwrap:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent)}
 .ssm-p-gray{opacity:.55}
