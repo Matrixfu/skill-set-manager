@@ -491,7 +491,7 @@ window.__ModuleLoader__.load({
           (st.sets ?? []).length === 0 ? h('div', { className: 'ssm-p-desc' }, t('empty')) : null,
           ...(st.sets ?? []).map((s) => h('div', { key: s.slug, className: 'ssm-p-setrow' + (st.binding?.setSlug === s.slug ? ' ssm-p-setrow-cur' : '') },
             h('div', { className: 'ssm-p-row' },
-              h('button', { className: 'ssm-p-pick', disabled: busy || st.binding?.setSlug === s.slug, title: st.binding?.setSlug === s.slug ? undefined : t('switchTo'), onClick: () => doSwitch(s.slug) },
+              h('button', { className: 'ssm-p-pick', disabled: busy || st.binding?.setSlug === s.slug, title: st.binding?.setSlug === s.slug ? undefined : t('switchTo'), 'aria-label': t('ariaPick'), onClick: () => doSwitch(s.slug) },
                 h('span', { className: 'ssm-p-setname' }, s.name),
                 st.binding?.setSlug === s.slug ? h(PBadge, { kind: 'brand', text: t('current') }) : null,
                 h(PBadge, { kind: 'muted', text: `${(s.skills ?? []).length} ${t('skillsCount')}` }),
@@ -1248,6 +1248,8 @@ window.__ModuleLoader__.load({
 .ssm-p-check{display:flex;align-items:flex-start;gap:8px;border-radius:8px;padding:4px 6px;cursor:pointer}
 .ssm-p-check:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent)}
 .ssm-p-check input[type=checkbox]{margin-top:3px;flex:none;accent-color:var(--dsw-alias-brand-primary)}
+.ssm-p-pick:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:6px}
+.ssm-p-search:focus-visible{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .ssm-p-check:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 .ssm-p-icon{flex:none}
 .ssm-p-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:0}
