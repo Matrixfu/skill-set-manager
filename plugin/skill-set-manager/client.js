@@ -335,6 +335,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false);
       const [confirm, setConfirm] = React.useState(null); // {kind:'switch'|'del', slug}
       const [draft, setDraft] = React.useState('');
+      const [saveOpen, setSaveOpen] = React.useState(false); // 另存为收进操作条（Task 2），展开成一行输入
+      const [saveDesc, setSaveDesc] = React.useState('');
+      const [descDraft, setDescDraft] = React.useState(''); // 改名行的描述输入（spec §6.6）
       const [renaming, setRenaming] = React.useState(null); // slug | null（面板内改名，Electron 无 window.prompt）
       const [renameDraft, setRenameDraft] = React.useState('');
       const [io, setIo] = React.useState(null); // {mode:'export'|'import', text, copied?}
@@ -408,9 +411,9 @@ window.__ModuleLoader__.load({
           h('button', { className: 'ssm-p-icon-btn', onClick: onClose, 'aria-label': t('close') }, h(Icon, { n: 'x' }))),
         h(TaskStrip, { t, tasks }), // 面板顶部一条：导入块（io）被关掉后，进度与结果仍在这行上（设计 §5）
         st.projectRoot ? h('div', { className: 'ssm-p-rootline' }, h('span', { title: st.projectRoot }, t('projectRoot'), '：', st.projectRoot), st.rootDrift ? h(PBadge, { kind: 'warn', text: t('rootDrift') }) : null) : null,
-        st.presetWarn ? h('div', { className: 'ssm-warn' }, st.presetWarn) : null,
+        st.presetWarn ? h('div', { className: 'ssm-p-banner ssm-p-banner-warn' }, h(Icon, { n: 'alert' }), st.presetWarn) : null,
         sc.ok === false && !sc.unbound
-          ? h('div', { className: sc.frozen ? 'ssm-warn' : 'ssm-err' }, sc.detail, ' ',
+          ? h('div', { className: `ssm-p-banner ${sc.frozen ? 'ssm-p-banner-warn' : 'ssm-p-banner-error'}` }, h(Icon, { n: 'alert' }), sc.detail, ' ',
               sc.frozen ? null : h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'bind', { sessionId, slug: st.binding?.setSlug })) }, t('regen')),
               // 接管（认领）：台账与盘上失配时 regen 只会空转（planEffective 一律判外来而跳过），
               // 唯一恢复通道是把自家链接补回台账——只在确实有外来条目时出现（活体实锤 2026-10-27）
@@ -425,7 +428,7 @@ window.__ModuleLoader__.load({
                   }) }, t('pruneMissing'))
                 : null)
           : null,
-        error ? h('div', { className: 'ssm-err' }, error) : null,
+        error ? h('div', { className: 'ssm-p-banner ssm-p-banner-error' }, h(Icon, { n: 'alert' }), error) : null,
         confirm?.kind === 'switch'
           ? h('div', { className: 'ssm-confirm' }, t('confirmSwitch'), ' ', st.projectRoot, ' ',
               h('button', { autoFocus: true, disabled: busy, onClick: () => run(() => call(ctx, 'switchSet', { sessionId, slug: confirm.slug })) }, t('switchTo')),
@@ -436,25 +439,29 @@ window.__ModuleLoader__.load({
               h('button', { autoFocus: true, disabled: busy, className: 'ssm-danger', onClick: () => run(() => call(ctx, 'deleteSet', { slug: confirm.slug })) }, t('del')),
               h('button', { onClick: () => setConfirm(null) }, '×'))
           : null,
-        h('div', { className: 'ssm-sec' }, t('sets')),
-        (st.sets ?? []).length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
-        ...(st.sets ?? []).map((s) => h(React.Fragment, { key: s.slug },
-          h('div', { className: 'ssm-row' + (st.binding?.setSlug === s.slug ? ' ssm-on' : '') },
-            h('button', { className: 'ssm-pick', disabled: busy || st.binding?.setSlug === s.slug, onClick: () => doSwitch(s.slug) },
-              h('span', null, s.name), h('span', { className: 'ssm-n' }, `${(s.skills ?? []).length} ${t('skillsCount')}`),
-              st.binding?.setSlug === s.slug ? h('span', { className: 'ssm-cur-tag' }, t('current')) : null),
-            h('span', { className: 'ssm-grow' }, null),
-            h('button', { disabled: busy, onClick: () => setEdit({ slug: s.slug, picked: Object.fromEntries((s.skills ?? []).map((n) => [n, true])) }) }, t('editMembers')),
-            h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'copySet', { slug: s.slug })) }, t('copy')),
-            h('button', { disabled: busy, onClick: () => { setRenaming(s.slug); setRenameDraft(s.name); } }, t('rename')),
-            h('button', { disabled: busy, onClick: async () => { try { const j = await call(ctx, 'exportSet', { slug: s.slug }); setIo({ mode: 'export', text: JSON.stringify(j, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, t('exportJson')),
-            h('button', { disabled: busy, className: 'ssm-danger', onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, t('del'))),
-          renaming === s.slug
-            ? h('div', { className: 'ssm-row' },
-                h('input', { className: 'ssm-input', autoFocus: true, value: renameDraft, disabled: busy, onChange: (e) => setRenameDraft(e.target.value) }),
-                h('button', { disabled: busy || !renameDraft.trim() || renameDraft.trim() === s.name, onClick: () => run(() => call(ctx, 'renameSet', { slug: s.slug, name: renameDraft.trim() })).then(() => setRenaming(null)) }, '✓'),
-                h('button', { disabled: busy, onClick: () => setRenaming(null) }, '×'))
-            : null,
+        h('div', { className: 'ssm-p-card' },
+          h('div', { className: 'ssm-p-card-title' }, t('sets'), (st.sets ?? []).length ? h(PBadge, { kind: 'muted', text: String((st.sets ?? []).length) }) : null),
+          (st.sets ?? []).length === 0 ? h('div', { className: 'ssm-p-desc' }, t('empty')) : null,
+          ...(st.sets ?? []).map((s) => h('div', { key: s.slug, className: 'ssm-p-setrow' + (st.binding?.setSlug === s.slug ? ' ssm-p-setrow-cur' : '') },
+            h('div', { className: 'ssm-p-row' },
+              h('button', { className: 'ssm-p-pick', disabled: busy || st.binding?.setSlug === s.slug, title: st.binding?.setSlug === s.slug ? undefined : t('switchTo'), onClick: () => doSwitch(s.slug) },
+                h('span', { className: 'ssm-p-setname' }, s.name),
+                st.binding?.setSlug === s.slug ? h(PBadge, { kind: 'brand', text: t('current') }) : null,
+                h(PBadge, { kind: 'muted', text: `${(s.skills ?? []).length} ${t('skillsCount')}` }),
+                s.updatedAt ? h('span', { className: 'ssm-p-desc' }, `${t('updatedAt')} ${String(s.updatedAt).slice(0, 10)}`) : null),
+              h('span', { className: 'ssm-grow' }, null),
+              h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('editMembers'), 'aria-label': t('editMembers'), onClick: () => setEdit({ slug: s.slug, picked: Object.fromEntries((s.skills ?? []).map((n) => [n, true])), desc: s.description ?? '' }) }, h(Icon, { n: 'users' })),
+              h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('copy'), 'aria-label': t('copy'), onClick: () => run(() => call(ctx, 'copySet', { slug: s.slug })) }, h(Icon, { n: 'copy' })),
+              h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('rename'), 'aria-label': t('rename'), onClick: () => { setRenaming(s.slug); setRenameDraft(s.name); setDescDraft(s.description ?? ''); } }, h(Icon, { n: 'pencil' })),
+              h('button', { className: 'ssm-p-icon-btn ssm-p-icon-danger', disabled: busy, title: t('del'), 'aria-label': t('del'), onClick: () => setConfirm({ kind: 'del', slug: s.slug }) }, h(Icon, { n: 'trash' }))),
+            s.description ? h('div', { className: 'ssm-p-desc' }, s.description) : null,
+            renaming === s.slug
+              ? h('div', { className: 'ssm-p-row' },
+                  h('input', { className: 'ssm-input', autoFocus: true, value: renameDraft, disabled: busy, 'aria-label': t('rename'), onChange: (e) => setRenameDraft(e.target.value) }),
+                  h('input', { className: 'ssm-input', placeholder: t('descPh'), value: descDraft, disabled: busy, 'aria-label': t('descPh'), onChange: (e) => setDescDraft(e.target.value) }),
+                  h('button', { disabled: busy || !renameDraft.trim(), onClick: () => run(async () => { const name = renameDraft.trim(); if (name !== s.name) await call(ctx, 'renameSet', { slug: s.slug, name }); if (descDraft !== (s.description ?? '')) await call(ctx, 'saveSet', { set: { slug: s.slug, name, description: descDraft, skills: s.skills ?? [] } }); setRenaming(null); }) }, '✓'),
+                  h('button', { disabled: busy, onClick: () => setRenaming(null) }, '×'))
+              : null,
           // 编辑成员表单（§5#2「从技能库勾选技能加入技能集」）：saveSet 写回；当前绑定集随即 bind 收敛
           // ——该路径由 verify case edit-members 固化（摘旧加新、台账无残留、自检绿）。
           edit?.slug === s.slug
@@ -491,18 +498,31 @@ window.__ModuleLoader__.load({
                   }) }, t('saveBtn')),
                   h('button', { disabled: busy, onClick: () => setEdit(null) }, '×')))
             : null)),
-        h('div', { className: 'ssm-row' },
-          h('input', { className: 'ssm-input', placeholder: t('newName'), value: draft, onChange: (e) => setDraft(e.target.value) }),
-          h('button', { disabled: busy || !draft.trim() || (!bound && !managed.length), title: !bound && !managed.length ? t('draftHint') : undefined, onClick: () => run(async () => {
-            const name = draft.trim();
-            // 未绑定走当前临时清单（候选已剔常驻）；已绑定隐式 = 生效清单，host 端剔常驻（save-as-resident CASE）
-            const s = await call(ctx, 'saveAsFromEffective', { sessionId, name, ...(bound ? {} : { names: [...managed] }) });
-            if (!bound && s?.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 存集即生效：bind 先丢临时覆盖（dropOverrideOnBind），本项目只出现所选技能
-            setDraft(''); // 新建集已落盘；刷新同上走 reload()（用户报告：保存成功却弹「操作失败: load is not defined」）
-          }) }, t('saveAs')),
-          h('button', { disabled: busy, onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, t('importJson'))),
+          h('div', { className: 'ssm-p-actions' },
+            saveOpen
+              ? h('div', { className: 'ssm-p-row', style: { width: '100%' } },
+                  h('input', { className: 'ssm-input', autoFocus: true, placeholder: t('newName'), value: draft, disabled: busy, 'aria-label': t('newName'), onChange: (e) => setDraft(e.target.value) }),
+                  h('input', { className: 'ssm-input', placeholder: t('descPh'), value: saveDesc, disabled: busy, 'aria-label': t('descPh'), onChange: (e) => setSaveDesc(e.target.value) }),
+                  h('button', { disabled: busy || !draft.trim() || (!bound && !managed.length), onClick: () => run(async () => {
+                    const name = draft.trim();
+                    // 未绑定走当前临时清单（候选已剔常驻）；已绑定隐式 = 生效清单，host 端剔常驻（save-as-resident CASE）
+                    const s = await call(ctx, 'saveAsFromEffective', { sessionId, name, ...(bound ? {} : { names: [...managed] }) });
+                    if (saveDesc.trim() && s?.slug) await call(ctx, 'saveSet', { set: { slug: s.slug, name, description: saveDesc.trim(), skills: s.skills ?? [] } }); // 描述补写入（spec §6.6，host 透传）
+                    if (!bound && s?.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 存集即生效（dropOverrideOnBind）
+                    setDraft(''); setSaveDesc(''); setSaveOpen(false);
+                  }) }, '✓'),
+                  h('button', { disabled: busy, onClick: () => { setSaveOpen(false); setDraft(''); setSaveDesc(''); } }, '×'))
+              : null,
+            h('button', { className: 'ssm-p-icon-btn', disabled: busy || (!bound && !managed.length), title: !bound && !managed.length ? t('draftHint') : t('saveAs'), 'aria-label': t('saveAs'), onClick: () => setSaveOpen(true) }, h(Icon, { n: 'download' })),
+            h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('importJson'), 'aria-label': t('importJson'), onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, h(Icon, { n: 'upload' })),
+            h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('exportJson'), 'aria-label': t('exportJson'), onClick: async () => { try { const arr = await Promise.all((st.sets ?? []).map((x) => call(ctx, 'exportSet', { slug: x.slug }))); setIo({ mode: 'export', text: JSON.stringify({ sets: arr.flatMap((j) => j.sets ?? []) }, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, h(Icon, { n: 'copy' })),
+            st.undoAvailable ? h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('undo'), 'aria-label': t('undo'), onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, h(Icon, { n: 'undo' })) : null,
+            h('span', { className: 'ssm-grow' }, null),
+            st.binding?.setSlug ? h('button', { className: 'ssm-p-icon-btn ssm-p-icon-danger', disabled: busy, title: t('unbindGo'), 'aria-label': t('unbindGo'), onClick: () => setConfirmUnbind(true) }, h(Icon, { n: 'linkOff' })) : null),
+        ),
+        // 另存为/导入行已收进技能集卡底部操作条（Task 2，spec §6.3）
         io
-          ? h('div', { className: 'ssm-io' },
+          ? h('div', { className: 'ssm-p-card' },
               h('textarea', {
                 className: 'ssm-textarea', rows: 8, spellCheck: false,
                 readOnly: io.mode === 'export' || !!io.preview, value: io.text, disabled: busy,
@@ -577,14 +597,12 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'ssm-grow' }, null),
                 h('button', { disabled: busy, onClick: () => setIo(null) }, '×')))
           : null,
-        st.binding?.setSlug ? (confirmUnbind
+        st.binding?.setSlug && confirmUnbind
           ? h('div', { className: 'ssm-confirm' }, t('confirmUnbind'), ' ',
               h('button', { autoFocus: true, disabled: busy, className: 'ssm-danger', onClick: () => run(() => call(ctx, 'unbind', { sessionId })) }, t('unbindGo')),
               h('button', { onClick: () => setConfirmUnbind(false) }, '×'))
-          : h('div', { className: 'ssm-row' }, h('button', { disabled: busy, className: 'ssm-danger', onClick: () => setConfirmUnbind(true) }, t('unbindGo'))))
           : null,
         (sc.foreign?.length ? h('div', { className: 'ssm-hint' }, t('foreignLine'), '：', (sc.foreign ?? []).join(', ')) : null),
-        st.undoAvailable ? h('div', { className: 'ssm-row' }, h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, t('undo'))) : null,
         // P3 搜索框（设计 §6.3）：技能集区之后、三区之前；非空 query → 结果列表替换三区
         h('div', { className: 'ssm-row' },
           h('input', { className: 'ssm-input', placeholder: t('searchPh'), value: q, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setQ(e.target.value) }),
@@ -1216,6 +1234,14 @@ window.__ModuleLoader__.load({
 .ssm-p-row .ssm-p-icon-btn,.ssm-p-setrow .ssm-p-icon-btn{opacity:0;transition:opacity .12s}
 .ssm-p-row:hover .ssm-p-icon-btn,.ssm-p-row:focus-within .ssm-p-icon-btn,.ssm-p-setrow:hover .ssm-p-icon-btn,.ssm-p-setrow:focus-within .ssm-p-icon-btn{opacity:1}
 @media (prefers-reduced-motion:reduce){.ssm-p-row .ssm-p-icon-btn,.ssm-p-setrow .ssm-p-icon-btn{opacity:1;transition:none}}
+.ssm-p-setrow{border-radius:8px;padding:5px 6px;display:flex;flex-direction:column;gap:2px}
+.ssm-p-setrow:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent)}
+.ssm-p-setrow-cur{border-left:2px solid var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent)}
+.ssm-p-pick{flex:1;display:flex;align-items:center;gap:8px;min-width:0;background:0;border:0;color:var(--dsw-alias-label-primary);cursor:pointer;padding:2px 0;text-align:left;font:inherit;font-size:13px}
+.ssm-p-pick:disabled{cursor:default}
+.ssm-p-setname{font-weight:600;color:var(--dsw-alias-label-primary);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ssm-p-banner button{font:inherit;font-size:11px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;padding:2px 8px;cursor:pointer;opacity:.85}
+.ssm-p-banner button:hover{opacity:1}
 `;
 
     return {
