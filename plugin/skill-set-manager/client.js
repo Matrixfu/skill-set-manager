@@ -338,6 +338,7 @@ window.__ModuleLoader__.load({
       const [saveOpen, setSaveOpen] = React.useState(false); // 另存为收进操作条（Task 2），展开成一行输入
       const [saveDesc, setSaveDesc] = React.useState('');
       const [descDraft, setDescDraft] = React.useState(''); // 改名行的描述输入（spec §6.6）
+      const [openZones, setOpenZones] = React.useState({}); // 折叠灰区展开态（spec §6.3：常驻/外来常驻/插件提供）
       const [renaming, setRenaming] = React.useState(null); // slug | null（面板内改名，Electron 无 window.prompt）
       const [renameDraft, setRenameDraft] = React.useState('');
       const [io, setIo] = React.useState(null); // {mode:'export'|'import', text, copied?}
@@ -401,6 +402,52 @@ window.__ModuleLoader__.load({
       const LibBadges = ({ lib }) => h(React.Fragment, null,
         lib.source && lib.source !== 'unknown' ? h('span', { className: 'ssm-n' }, ` ${String(lib.source).replace('github:', '').slice(0, 20)}`) : null,
         lib.localModified ? h('span', { className: 'ssm-warn-inline' }, ` ${t('modifiedTag')}`) : null);
+      // —— 生效清单卡数据面（Task 3，spec §6.4）：徽章口径与右栏 rp* / LibBadges 同源 ——
+      const brokenSet = new Set(sc.brokenLinks ?? []);
+      const missingSet = new Set(st.effective?.missing ?? []);
+      const foreignSet = new Set(sc.foreign ?? []);
+      const ov = st.sessionOverride ?? {};
+      const srcOf = (n) => (st.library ?? []).find((l) => l.name === n);
+      // 生效行集合（甲案）：JSON 生效 ∪ 托管台账 ∪ 盘上外来，剔常驻（§5.4），字母序
+      const effNames = [...new Set([...(st.effective?.names ?? []).filter((n) => !resident.has(n)), ...managed, ...foreignSet])].sort();
+      const rowModel = (n) => {
+        const l = srcOf(n) ?? { name: n, source: 'unknown', description: null, descriptionZh: null };
+        const badges = [];
+        if (managed.includes(n)) badges.push({ kind: 'brand', text: t('managedTag') });
+        if (l.localModified) badges.push({ kind: 'warn', text: t('modifiedTag') });
+        if (missingSet.has(n)) badges.push({ kind: 'error', text: t('rpMissing') });
+        if (brokenSet.has(n)) badges.push({ kind: 'error', text: t('rpDead') });
+        if (foreignSet.has(n)) badges.push({ kind: 'muted', text: t('rpForeign') });
+        const title = l.source && l.source !== 'unknown' ? `${l.name} · ${l.source}${l.commit ? '@' + String(l.commit).slice(0, 7) : ''}` : (l.descriptionZh ?? l.name);
+        return { l, badges, title };
+      };
+      // 同款列表行（Task 4 成员抽屉复用）：on=null → 只读无复选框；ro → 灰区只读行；removed → 删除线
+      const SkillRow = ({ key, l, on, ro, removed, onChange, badges, title }) => {
+        const desc = l.descriptionZh
+          ? h('div', { className: 'ssm-p-desc', title: l.description ?? undefined }, l.descriptionZh)
+          : l.description
+            ? h('div', { className: 'ssm-p-desc', title: l.description }, l.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
+            : null;
+        return h('div', { key, className: 'ssm-p-rowwrap' + (ro ? ' ssm-p-gray' : '') },
+          h('label', { className: 'ssm-p-check', title: title ?? l.descriptionZh ?? undefined },
+            on == null ? null : h('input', { type: 'checkbox', checked: on === true, disabled: busy, onChange: () => onChange?.() }),
+            h('span', { className: 'ssm-p-name' + (removed ? ' ssm-p-strike' : '') }, l.name),
+            ...(badges ?? []).map((b) => h(PBadge, { key: b.text, kind: b.kind, text: b.text })),
+            h('span', { className: 'ssm-grow' }, null)),
+          desc);
+      };
+      // 折叠灰区一行（3.3）：默认收起「图标 标签 · N 项 ▸」，展开 = 只读同款行 + 既有 hint 文案
+      const ZoneRow = (zone, label, icon, names, hint) => names.length
+        ? h(React.Fragment, { key: 'zone-' + zone },
+            h('button', { className: 'ssm-p-collapse', disabled: busy, 'aria-expanded': openZones[zone] ? 'true' : 'false', 'aria-label': openZones[zone] ? t('ariaCollapse') : t('ariaExpand'), onClick: () => setOpenZones({ ...openZones, [zone]: !openZones[zone] }) },
+              h(Icon, { n: icon, s: 13 }), label, ' · ', String(names.length), ' ', t('grayItems'),
+              h('span', { className: 'ssm-grow' }, null), h(Icon, { n: 'chevron', s: 12 })),
+            openZones[zone]
+              ? h(React.Fragment, null,
+                  ...names.map((n) => SkillRow({ key: 'z-' + n, l: srcOf(n) ?? { name: n, source: '', description: null, descriptionZh: null }, on: null, ro: true, badges: [], title: hint })),
+                  h('div', { className: 'ssm-hint' }, hint))
+              : null)
+        : null;
       return h('div', { className: 'ssm-p-panel', role: 'dialog', 'aria-label': t('panel'), onClick: (e) => e.stopPropagation() },
         h('div', { className: 'ssm-p-head' },
           h(Dot, { st: state }),
@@ -603,65 +650,50 @@ window.__ModuleLoader__.load({
               h('button', { onClick: () => setConfirmUnbind(false) }, '×'))
           : null,
         (sc.foreign?.length ? h('div', { className: 'ssm-hint' }, t('foreignLine'), '：', (sc.foreign ?? []).join(', ')) : null),
-        // P3 搜索框（设计 §6.3）：技能集区之后、三区之前；非空 query → 结果列表替换三区
-        h('div', { className: 'ssm-row' },
-          h('input', { className: 'ssm-input', placeholder: t('searchPh'), value: q, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setQ(e.target.value) }),
-          q ? h('button', { disabled: busy, onClick: () => setQ('') }, '×') : null),
-        qq
-          ? h(React.Fragment, null,
-              h('div', { className: 'ssm-sec' }, `${hits.length} ${t('hitCount')}`),
-              bound ? null : h('div', { className: 'ssm-hint' }, t('unboundHint')),
-              hits.length ? null : h('div', { className: 'ssm-empty' }, t('none')),
-              // 中文用途第二行（用户点验反馈 2026-10-26：弹窗与设置页同款，窄面板不挤右侧）
-              ...hits.map((l) => {
-                const desc = l.descriptionZh
-                  ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' }, title: l.description ?? undefined }, l.descriptionZh)
-                  : l.description
-                    ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0', maxWidth: 'none' }, title: l.description }, l.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
-                    : null;
-                const isRes = resident.has(l.name) || foreignRes.has(l.name);
-                if (isRes || providerSet.has(l.name)) return h('div', { key: l.name, className: 'ssm-srow ssm-gray' }, // 灰行只读、无复选框（反目标项）
-                  h('div', { className: 'ssm-row' },
-                    h('span', null, l.name),
-                    h('span', { className: 'ssm-n' }, ' ', isRes ? (resident.has(l.name) ? t('residentRow') : t('foreignRow')) : t('providerRow')),
-                    h('span', { className: 'ssm-grow' }, null),
-                    h('span', { className: 'ssm-n' }, isRes ? t('goSettings') : t('providerRowGo'))), // T0 静态裁定：无编程跳转 → 纯文案（插件行指向插件设置）
-                  desc);
-                const on = bound ? eff.has(l.name) : !!st.managed?.[l.name]; // 未绑定：勾上态 = 已在盘上临时生效（台账）
-                return h('div', { key: l.name, className: 'ssm-srow' },
-                  h('div', { className: 'ssm-row' },
-                    h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
-                      h('input', { type: 'checkbox', checked: on, disabled: busy, title: l.descriptionZh ?? undefined,
-                        onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l }))),
-                  desc);
-              }))
-          : h(React.Fragment, null,
-              // 未绑定时整段隐藏（设计 2026-10-28）：临时条目已在下方「临时覆盖」区以勾上态呈现，不重复一节
-              ...(bound ? [
-                h('div', { className: 'ssm-sec' }, t('managedSec')),
-                h('div', { className: 'ssm-chips' }, managed.length ? null : h('span', { className: 'ssm-empty' }, '—'),
-                  ...managed.map((n) => h('label', { key: n, className: 'ssm-chip' },
-                    h('input', { type: 'checkbox', checked: true, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }), ' ', n))),
-              ] : []),
-              // 常驻大平铺段已删（P3 设计 §6.3）：常驻管理移设置页「全局技能集」tab；弹窗内仅搜索结果灰行
-              h('div', { className: 'ssm-sec' }, t('override'), st.sessionOverrideActive ? h('span', { className: 'ssm-cur-tag' }, t('overrideOn')) : null),
-              h('div', { className: 'ssm-chips' },
-                ...(bound
-                  ? (st.library ?? []).filter((l) => !eff.has(l.name)).map((l) => h('label', { key: l.name, className: 'ssm-chip', title: l.descriptionZh ?? undefined },
-                      h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [l.name] })) }), ' ', l.name, h(LibBadges, { lib: l })))
-                  // 未绑定（设计 2026-10-28）：候选 = 库 − 常驻全局；勾选即本会话临时生效（host 起盘 setSlug:null 台账），要固化走「另存为当前清单」
-                  : (st.library ?? []).filter((l) => !resident.has(l.name) && !foreignRes.has(l.name)).map((l) => {
-                      const on = managed.includes(l.name);
-                      return h('label', { key: l.name, className: 'ssm-chip' + (on ? ' ssm-on' : ''), title: l.descriptionZh ?? undefined },
-                        h('input', { type: 'checkbox', checked: on, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(on ? { remove: [l.name] } : { add: [l.name] }) })) }), ' ', l.name, h(LibBadges, { lib: l }));
-                    })),
-                  // 被覆盖剔除的集成员（用户 2026-10-26：testt 4 技能项目只见 3，被剔项从三区消失）——显示并可直接勾回
-                  ...((st.sessionOverride?.removed) ?? []).map((n) => h('label', { key: 'ovr-' + n, className: 'ssm-chip', title: t('ovRestoreTip') },
-                    h('input', { type: 'checkbox', checked: false, disabled: busy, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [n] })) }), ' ', n,
-                    h('span', { className: 'ssm-n' }, ' ', t('ovRemoved')))),
-                st.sessionOverrideActive ? h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')) : null),
-              h('div', { className: 'ssm-hint' }, bound ? (st.sessionOverrideActive ? t('overrideHint') : t('hintP2')) : t('draftHint')),
-              h('div', { className: 'ssm-hint' }, t('settingsHint'))));
+        // 生效清单卡（甲案，spec §6.4）：搜索框并进标题行；默认视图 = 生效行 + 折叠灰区；搜索 = 生效中/候选两段
+        h('div', { className: 'ssm-p-card' },
+          h('div', { className: 'ssm-p-card-title' },
+            t('effTitle'), h(PBadge, { kind: 'muted', text: String(effNames.length) }),
+            h('span', { className: 'ssm-grow' }, null),
+            h(Icon, { n: 'search', s: 12 }),
+            h('input', { className: 'ssm-p-search', placeholder: t('searchPh'), value: q, disabled: busy, 'aria-label': t('searchPh'), onChange: (e) => setQ(e.target.value) }),
+            q ? h('button', { className: 'ssm-p-icon-btn', disabled: busy, 'aria-label': t('none'), onClick: () => setQ('') }, h(Icon, { n: 'x', s: 12 })) : null),
+          bound && st.sessionOverrideActive
+            ? h('div', { className: 'ssm-p-banner ssm-p-banner-warn' }, h(Icon, { n: 'alert' }),
+                t('ovBanner').replace('{n}', String((ov.removed ?? []).length)).replace('{m}', String((ov.added ?? []).length)),
+                h('span', { className: 'ssm-grow' }, null),
+                h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')))
+            : null,
+          !bound ? h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h(Icon, { n: 'alert' }), t('draftHint')) : null,
+          qq
+            ? h(React.Fragment, null,
+                ...(() => { // 搜索两段视图（3.4）：生效中 = 生效行过滤；候选 = 库−生效（未绑定再剔常驻，草稿语义照旧）
+                  const hitSet = new Set(hits.map((l) => l.name));
+                  const act = effNames.filter((n) => hitSet.has(n));
+                  const cand = (st.library ?? []).filter((l) => !eff.has(l.name) && (bound || (!resident.has(l.name) && !foreignRes.has(l.name)))).filter((l) => hitSet.has(l.name));
+                  if (!act.length && !cand.length) return [h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptySearch'))];
+                  return [
+                    ...(act.length ? [
+                      h('div', { className: 'ssm-p-seclabel' }, t('effTitle'), ' ', String(act.length)),
+                      ...act.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : eff.has(n), badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(eff.has(n) ? { remove: [n] } : { add: [n] }) })) }); }),
+                    ] : []),
+                    ...(cand.length ? [
+                      h('div', { className: 'ssm-p-seclabel' }, t('candidates'), ' ', String(cand.length)),
+                      ...cand.map((l) => SkillRow({ key: l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })),
+                    ] : [])];
+                })())
+            : h(React.Fragment, null,
+                effNames.length ? null : h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptyList')),
+                // 勾选语义照抄现 chips：勾上取消 = startOverride remove；未勾勾上 = add（不许反）
+                ...effNames.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : true, badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }); }),
+                // 被覆盖剔除的集成员（用户 2026-10-26）：挪列表底部，删除线 + 「已被剔除」，勾回 = add
+                ...(ov.removed ?? []).map((n) => { const { l, badges } = rowModel(n); return SkillRow({ key: 'ovr-' + n, l, on: false, removed: true, badges: [...badges, { kind: 'warn', text: t('ovRemoved') }], title: t('ovRestoreTip'), onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [n] })) }); }),
+                ZoneRow('res', t('grayResident'), 'globe', [...resident].sort(), t('residentRow')),
+                ZoneRow('fres', t('grayForeign'), 'foreign', [...foreignRes].sort(), t('foreignRow')),
+                // unmanaged=null（host 未提供该字段）→ 整段不渲染（3.3）
+                st.unmanaged ? ZoneRow('prov', t('grayProvider'), 'box', (st.unmanaged ?? []).map((e) => e.name).sort(), t('providerRowGo')) : null),
+          h('div', { className: 'ssm-hint' }, bound ? (st.sessionOverrideActive ? t('overrideHint') : t('hintP2')) : t('hintP2')),
+          h('div', { className: 'ssm-hint' }, t('settingsHint'))));
     }
 
     function Dot({ st }) {
@@ -1242,6 +1274,16 @@ window.__ModuleLoader__.load({
 .ssm-p-setname{font-weight:600;color:var(--dsw-alias-label-primary);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-p-banner button{font:inherit;font-size:11px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;padding:2px 8px;cursor:pointer;opacity:.85}
 .ssm-p-banner button:hover{opacity:1}
+.ssm-p-search{flex:0 1 220px;min-width:120px;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:3px 10px}
+.ssm-p-search:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.ssm-p-rowwrap{display:flex;flex-direction:column;gap:1px;border-radius:8px;padding:1px 0}
+.ssm-p-rowwrap:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent)}
+.ssm-p-gray{opacity:.55}
+.ssm-p-name{color:var(--dsw-alias-label-primary);font-size:13px;flex:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ssm-p-strike{text-decoration:line-through;color:var(--dsw-alias-label-secondary)}
+.ssm-p-seclabel{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px}
+.ssm-p-empty{display:flex;align-items:center;gap:8px;padding:14px 6px;color:var(--dsw-alias-label-secondary);font-size:12px}
+.ssm-p-banner-muted{color:var(--dsw-alias-label-secondary);background:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);border-color:var(--dsw-alias-border-l2)}
 `;
 
     return {
