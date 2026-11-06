@@ -1705,7 +1705,7 @@ const CASES = [
       lacks(entries.filter((e) => e.valid).map((e) => e.name), 'Bad_Name', '非 kebab 不算有效技能');
       lacks(entries.map((e) => e.name), 'hidden', '嵌套 SKILL.md 不被发现');
       const w = dedupeWinners(entries.filter((e) => e.name === 'dup-name'));
-      eq([...w.values()][0].rank, 100, '同名冲突项目层(rank 100)胜');
+      eq([...w.values()][0].rank, 200, '同名冲突项目 .agents/skills(rank 200)胜（2026-10-30 起项目层随迁 rank 200，旧断言期望 100 是迁移遗留）');
     },
   },
   {
@@ -2191,6 +2191,43 @@ const CASES = [
       ok(/T: 25000 \* Math\.max\(1,/.test(body), '导入耗时预期按所选技能数放大');
       const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
       ok(gl.includes('**长任务（Long Operation）**'), 'GLOSSARY 收录术语');
+    },
+  },
+  {
+    id: 'slash-cache-refresh',
+    title: '生效清单落盘后补发 plugin-manager/changed 清 `/` 菜单技能缓存（用户 2026-11-06）',
+    async run() {
+      // 根因（asar 源码取证）：`/` 菜单「技能」组 = dsh-client-ui-skill client 按会话缓存的 skills/list 快照
+      // （fetches Map，单飞），失效点只有 agent-preset/selected、plugin-manager/changed、connection/reset——
+      // 上游没订阅 skills/change，且 skills/change 不在 dsh-api-remotes 的转发白名单里，菜单因此永不刷新。
+      // 插件侧修法 = 每次生效清单成功落盘后 host `ctx.emit('plugin-manager/changed')`：该事件在转发白名单
+      // （API_REMOTE_FORWARDED_EVENTS），且 asar 全库检索只有 ui-skill clearAll 订阅（副作用为零）。
+      const hostSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'index.js'), 'utf8');
+      ok(/emit\('plugin-manager\/changed', \{ reason: 'skill-set-manager' \}\)/.test(hostSrc), '补发事件名/载荷 = 白名单里的 plugin-manager/changed');
+      ok(/queueMicrotask\(\(\) => \{[\s\S]*?slashClearQueued = false;/.test(hostSrc), 'queueMicrotask 合并：同轮多次写盘只发一次');
+      ok(/if \(slashClearQueued\) return;/.test(hostSrc), '在队即返回（幂等合并）');
+      ok(/catch \(e\) \{ ctx\.logger\.warn\(`skill-set-manager：\/ 菜单缓存失效事件发送失败/.test(hostSrc), 'emit 失败只 warn：不连带炸 RPC 结果');
+      // 每个会改「生效区盘上内容」的方法都必须在成功路径补发；bind 是唯一绑定写点（switchSet 复用 bind，不得双发）。
+      const seg = (name) => {
+        const from = hostSrc.indexOf(`async ${name}(`);
+        ok(from > 0, `找到方法 ${name}`);
+        const rest = hostSrc.slice(from);
+        const to = rest.search(/\n    (?:async\s|\w+\(|\/\*\*)/);
+        return rest.slice(0, to < 0 ? rest.length : to);
+      };
+      for (const name of ['bind', 'undoSwitch', 'startOverride', 'endOverride', 'setResident', 'unbind',
+        'uninstallSkill', 'reclaimDeadLinks', 'rebuildManaged', 'migrateApply', 'migrateUndo',
+        'migrateAgentsApply', 'migrateAgentsUndo'])
+        ok(/emitSlashCacheClear\(\)/.test(seg(name)), `${name} 落盘后补发 / 菜单缓存失效`);
+      ok(!/emitSlashCacheClear\(\)/.test(seg('switchSet')), 'switchSet 不双发（bind 是唯一绑定写点）');
+      ok(/if \(ended\) emitSlashCacheClear\(\);/.test(hostSrc), 'endOverride 无覆盖可撤时不发（零写盘不发事件）');
+      // 面板文案：旧「新会话前不同步」警示已被同步语义取代，中英双语一致（client 字典无 linter，静态钉）。
+      const client = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js'), 'utf8');
+      const zh = client.slice(client.indexOf('      zh: {'), client.indexOf('      en: {'));
+      const en = client.slice(client.indexOf('      en: {'), client.indexOf('    function Panel('));
+      ok(/hintP2: '[^']*同步刷新'/.test(zh), 'zh hintP2 改为「操作后即同步」');
+      ok(/hintP2: '[^']*refreshes right after/.test(en), 'en hintP2 同款口径');
+      ok(!zh.includes('新会话前不同步') && !en.includes('new sessions only'), '旧「新会话才同步」警示已退役（双语）');
     },
   },
 ];

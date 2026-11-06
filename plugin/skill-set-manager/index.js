@@ -53,6 +53,24 @@ export function apply(ctx, config) {
   });
   let storePromise;
   const storeOf = () => (storePromise ??= openDomain(ctx, { fallbackDir: roots.dshHome }));
+
+  // `/` 菜单「技能」组是 client 按会话缓存的 skills/list 快照（dsh-client-ui-skill/lib/client.js 的 fetches Map），
+  // 上游没有订阅 skills/change 失效（skills/change 也不在 dsh-api-remotes 的转发生效事件白名单里），
+  // 所以插件切集后菜单不刷新——这是上游缺口，不是本插件写盘没生效（全名调用走 host 现扫，一直是对的）。
+  // 插件侧唯一可靠触发「清全部缓存」的事件 = 'plugin-manager/changed'：它就在转发白名单
+  // （dsh-api-remotes/lib/index.js 的 API_REMOTE_FORWARDED_EVENTS），且 asar 全库检索只有
+  // ui-skill 的 clearAll 订阅它（无其他消费方，副作用为零）。生效清单每次成功落盘后补发一次，
+  // `/` 菜单即在当前会话重新拉取；上游日后补 skills/change 订阅时本发法仍幂等无害。
+  let slashClearQueued = false;
+  const emitSlashCacheClear = () => {
+    if (slashClearQueued) return; // 同一宏任务内多次写盘合并为一次事件（如 uninstallSkill 内顺带 syncResident）
+    slashClearQueued = true;
+    queueMicrotask(() => {
+      slashClearQueued = false;
+      try { ctx.emit('plugin-manager/changed', { reason: 'skill-set-manager' }); }
+      catch (e) { ctx.logger.warn(`skill-set-manager：/ 菜单缓存失效事件发送失败: ${e?.message ?? e}`); }
+    });
+  };
   const trInflight = new Set(); // M1 互斥（终审 2026-10-26）：autoTranslate 后台批与手动 translateRun 不叠加同条目重复出网
 
   // Remote 命名空间 = 操作唯一实现（§14）；fetch 兜底通道共用同一清单。
@@ -184,7 +202,9 @@ export function apply(ctx, config) {
 
     async setResident(req) {
       sets.saveResident(roots, req.names ?? []);
-      return await syncResident(roots);
+      const synced = await syncResident(roots);
+      emitSlashCacheClear(); // 常驻链接增删在 `~/.agents/skills/`，也在生效区，菜单必须跟
+      return synced;
     }
 
     async saveAsFromEffective(req) {
@@ -260,6 +280,7 @@ export function apply(ctx, config) {
       const result = applyPlan(loc.projectRoot, plan);
       ensureGitignoreLine(loc.projectRoot, { enabled: config.gitignoreLine });
       await (await storeOf()).put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); // P1a 索引：deleteSet/uninstall 全量推导
+      emitSlashCacheClear(); // 切集落盘即让 `/` 菜单重新拉取（switchSet/undo 之外的入口也覆盖：bind 是唯一绑定写点）
       return { ...result, plan, projectRoot: loc.projectRoot };
     }
 
@@ -275,20 +296,25 @@ export function apply(ctx, config) {
     async undoSwitch(req) {
       const store = await storeOf();
       const loc = await this.locate(req);
-      return { restored: await applyUndo(store, roots, loc.projectRoot) };
+      const restored = await applyUndo(store, roots, loc.projectRoot);
+      emitSlashCacheClear();
+      return { restored };
     }
 
     async startOverride(req) {
       const store = await storeOf();
       const loc = await this.locate(req);
       const snap = await startOverride(store, roots, loc.projectRoot, { add: req.add ?? [], remove: req.remove ?? [], sessionId: req.sessionId ?? null });
+      emitSlashCacheClear(); // 未绑定态「勾选即起盘」也写 `.agents/skills/`（2026-10-28），菜单同样要跟
       return { snapshot: snap };
     }
 
     async endOverride(req) {
       const store = await storeOf();
       const loc = await this.locate(req);
-      return { ended: await endOverride(store, roots, loc.projectRoot) };
+      const ended = await endOverride(store, roots, loc.projectRoot);
+      if (ended) emitSlashCacheClear();
+      return { ended };
     }
 
     /** 库登记 + 候选清单（建集勾选数据源）+ P1a manifest 摘要字段。 */
@@ -407,6 +433,7 @@ export function apply(ctx, config) {
       try {
         if (dropResidentName(roots, req.name)) await syncResident(roots);
       } catch (e) { ctx.logger.warn(`skill-set-manager 常驻名单剔除失败: ${e?.message ?? e}`); }
+      emitSlashCacheClear(); // 卸载回收各项目/常驻托管条目 = 生效清单变化，菜单要跟（queueMicrotask 合并防与 syncResident 双发）
       return res;
     }
 
@@ -472,6 +499,7 @@ export function apply(ctx, config) {
       let rebuilt = null;
       const slug = readBinding(loc.projectRoot)?.setSlug;
       if (slug) rebuilt = applyPlan(loc.projectRoot, await planEffective(roots, loc.projectRoot, slug));
+      if (reclaimed.length || rebuilt) emitSlashCacheClear(); // 摘死链 + 重建都可能改生效清单
       return { reclaimed, rebuilt, warnings };
     }
 
@@ -490,6 +518,7 @@ export function apply(ctx, config) {
           + (w.kind === 'junction' || w.kind === 'symlink' ? '——与当前集同名，可用「接管」认领回台账' : '——请改名或移除该条目后重试')),
         ...(plan.warnMissing ?? []).map((n) => `${n}: 库/生效区解析不到（悬空引用），未生成`),
       ];
+      emitSlashCacheClear(); // 重建改了生效清单（含空转时也无害：幂等清缓存）
       return { ...result, warnings: [...(result.warnings ?? []), ...planWarn], plan };
     }
 
@@ -519,11 +548,15 @@ export function apply(ctx, config) {
 
     async migrateApply() {
       const pv = migrate.preview(roots);
-      return migrate.apply(roots, { moves: pv.moves, ledger: this._migrateLedger() });
+      const res = await migrate.apply(roots, { moves: pv.moves, ledger: this._migrateLedger() });
+      emitSlashCacheClear(); // 迁移把旧生效区条目搬进库 = 生效清单变化
+      return res;
     }
 
     async migrateUndo() {
-      return migrate.undo(roots, { ledger: this._migrateLedger() });
+      const res = await migrate.undo(roots, { ledger: this._migrateLedger() });
+      emitSlashCacheClear();
+      return res;
     }
 
     // ---- P3：~/.agents/skills 存量迁移（设计 §5.7/§6.6；ledger 独立域，不与旧向导互踩） ----
@@ -540,11 +573,15 @@ export function apply(ctx, config) {
     }
 
     async migrateAgentsApply() {
-      return migrate.applyAgents(roots, { ledger: this._migrateAgentsLedger() });
+      const res = await migrate.applyAgents(roots, { ledger: this._migrateAgentsLedger() });
+      emitSlashCacheClear(); // 跨 harness 通用区同样在生效区，搬动即改清单
+      return res;
     }
 
     async migrateAgentsUndo() {
-      return migrate.undoAgents(roots, { ledger: this._migrateAgentsLedger() });
+      const res = await migrate.undoAgents(roots, { ledger: this._migrateAgentsLedger() });
+      emitSlashCacheClear();
+      return res;
     }
 
     // ---- P3：翻译数据面（设计 §6.1/§5.8——llm 主路由，translator 在场才兜底） ----
@@ -658,6 +695,7 @@ export function apply(ctx, config) {
       const store = await storeOf();
       await store.delete('bindings', projectKey(loc.projectRoot));
       await store.delete('pending', projectKey(loc.projectRoot)); // 解绑即撤掉临时覆盖标记：条目已回收，别留待还原的悬账
+      emitSlashCacheClear(); // 解绑回收了托管条目，菜单要跟着缩
       return { ...res, projectRoot: loc.projectRoot };
     }
   }
