@@ -700,6 +700,22 @@ window.__ModuleLoader__.load({
                 ...effNames.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : true, badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, remove: [n] })) }); }),
                 // 被覆盖剔除的集成员（用户 2026-10-26）：挪列表底部，删除线 + 「已被剔除」，勾回 = add
                 ...(ov.removed ?? []).map((n) => { const { l, badges } = rowModel(n); return SkillRow({ key: 'ovr-' + n, l, on: false, removed: true, badges: [...badges, { kind: 'warn', text: t('ovRemoved') }], title: t('ovRestoreTip'), onChange: () => run(() => call(ctx, 'startOverride', { sessionId, add: [n] })) }); }),
+                // 候选折叠段（用户报告 2026-11-06：默认视图候选只能靠搜索、入口太深）：点开=旧「临时覆盖」区同款可勾选列表
+                // 口径与搜索视图候选段一致：bound = 库−生效；未绑定 = 库−常驻−外来常驻，勾上=add、取消=remove（草稿语义照旧）
+                (() => {
+                  const cand = (st.library ?? []).filter((l) => !eff.has(l.name) && (bound || (!resident.has(l.name) && !foreignRes.has(l.name))));
+                  return cand.length
+                    ? h(React.Fragment, null,
+                        h('button', { className: 'ssm-p-collapse', disabled: busy, 'aria-expanded': openZones.cand ? 'true' : 'false', 'aria-label': openZones.cand ? t('ariaCollapse') : t('ariaExpand'), onClick: () => setOpenZones({ ...openZones, cand: !openZones.cand }) },
+                          h(Icon, { n: 'search', s: 13 }), t('candidates'), ' · ', String(cand.length), ' ', t('grayItems'),
+                          h('span', { className: 'ssm-grow' }, null), h(Icon, { n: 'chevron', s: 12 })),
+                        openZones.cand
+                          ? h(React.Fragment, null,
+                              ...cand.map((l) => SkillRow({ key: 'cand-' + l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })),
+                              h('div', { className: 'ssm-hint' }, t('hintP2')))
+                          : null)
+                    : null;
+                })(),
                 ZoneRow('res', t('grayResident'), 'globe', [...resident].sort(), t('residentRow')),
                 ZoneRow('fres', t('grayForeign'), 'foreign', [...foreignRes].sort(), t('foreignRow')),
                 // unmanaged=null（host 未提供该字段）→ 整段不渲染（3.3）
