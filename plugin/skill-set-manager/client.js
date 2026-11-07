@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
     const DICTS = {
       zh: {
         chip: '技能集', panel: '技能集管理器', close: '关闭', sets: '技能集', projectRoot: '项目根',
-        rootDrift: '（≠ 会话目录——切换影响该仓库全部会话）', resident: '全局常驻（不受管控）',
+        rootDrift: '（≠ 会话目录——切换影响该仓库全部会话）', // 「全局常驻」纯文本行口径随美化退役（死键 resident 已删，呈现见 residentRow/徽章族）
         managedSec: '技能集提供（受管）', override: '临时覆盖', overrideOn: '临时覆盖中', endOverride: '结束覆盖',
         ovRemoved: '已被剔除', ovRestoreTip: '重新勾选即恢复本会话生效', overrideHint: '临时覆盖中：在「受管」区取消勾选 = 仅本会话剔除（不改技能集）；重新勾选或「结束覆盖」即恢复；要从集合里永久移除请用集合区「编辑成员」',
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
         noSession: '先在对话页打开一个会话',
         settingsLabel: '技能集管理器', tabLibrary: '库', tabOps: '安装与更新', tabDiag: '诊断',
         filterPh: '按名称/来源过滤', managedTag: '受管', unmanagedTag: '未登记', modifiedTag: '本地改动',
-        backupsTitle: '回收站', restoreGo: '恢复', checkUp: '检查更新', applyUp: '应用更新', checkingUp: '检查更新中…', applyingUp: '应用更新中…',
+        backupsTitle: '回收站', restoreGo: '恢复', applyUp: '应用更新', checkingUp: '检查更新中…', applyingUp: '应用更新中…', // 死键 checkUp 已删（行内图标钮用 sAriaCheckUpd，无其它使用者）
         upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过', noContentDiff: '内容已一致', claimNoCommit: '来源为认领，未记 commit',
         uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
         installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
@@ -86,7 +86,7 @@ window.__ModuleLoader__.load({
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
-        rootDrift: '(≠ session dir — switching affects every session in this repo)', resident: 'Global resident (unmanaged)',
+        rootDrift: '(≠ session dir — switching affects every session in this repo)', // 死键 resident 已删（无使用者，见 zh 侧同注）
         managedSec: 'Set-provided (managed)', override: 'Session override', overrideOn: 'Override active', endOverride: 'End override',
         ovRemoved: 'removed by override', ovRestoreTip: 'Tick again to restore for this session', overrideHint: 'Override active: unticking in the managed area removes it for this session only (the set is unchanged); tick again or "End override" to restore; to remove from the set permanently use "Edit members" in the sets area',
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
         noSession: 'Open a conversation session first',
         settingsLabel: 'Skill Sets', tabLibrary: 'Library', tabOps: 'Install & update', tabDiag: 'Diagnose',
         filterPh: 'Filter by name/source', managedTag: 'managed', unmanagedTag: 'untracked', modifiedTag: 'locally modified',
-        backupsTitle: 'Trash', restoreGo: 'Restore', checkUp: 'Check update', applyUp: 'Apply update', checkingUp: 'Checking…', applyingUp: 'Applying…',
+        backupsTitle: 'Trash', restoreGo: 'Restore', applyUp: 'Apply update', checkingUp: 'Checking…', applyingUp: 'Applying…', // 死键 checkUp 已删（见 zh 侧同注）
         upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped', noContentDiff: 'contents already match', claimNoCommit: 'source claimed without a recorded commit',
         uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
         installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
@@ -270,7 +270,7 @@ window.__ModuleLoader__.load({
           task.status === 'running' ? h('span', { className: 'ssm-spin' }, null) : null,
           h('span', { className: 'ssm-cur' }, t(SLOW_OPS[task.op].label)),
           task.target ? h('span', { className: 'ssm-n' }, task.target) : null,
-          // 失败不在这行重复「操作失败」：下方 .ssm-err 行已带同一个 key 的前缀（终审 N3）
+          // 失败不在这行重复「操作失败」：下方 error 横幅已带同一个 key 的前缀（终审 N3）
           h('span', { className: 'ssm-n' }, task.status === 'running' ? t(taskStageKey(task, now)) : task.status === 'ok' ? t('opDone') : null),
           h('span', { className: 'ssm-grow' }, null),
           h('span', { className: 'ssm-n' }, t('taskElapsed').replace('{n}', `${secs}`)),
@@ -278,10 +278,11 @@ window.__ModuleLoader__.load({
           tasks.running ? null : h('button', { className: 'ssm-p-icon-btn', onClick: () => clearTask(), title: t('taskDismiss') }, h(Icon, { n: 'x' }))),
         h('div', { className: 'ssm-bar' },
           h('div', { className: task.status === 'err' ? 'ssm-bar-fill ssm-bar-err' : task.status === 'ok' ? 'ssm-bar-fill ssm-bar-ok' : 'ssm-bar-fill', style: { width: pct + '%' } })),
-        task.status === 'err' ? h('div', { className: 'ssm-err' }, `${t('opFailed')}: ${String(task.error?.message ?? task.error ?? '')}`) : null,
-        task.note ? h('div', { className: 'ssm-hint' }, task.note) : null,
+        // 明细行换 .ssm-p-banner 语态（Task 2 转交项：横幅壳下不再挂旧 .ssm-err/.ssm-warn 小底行；文案与语义零改动，⚠ 由 alert 图标承载）
+        task.status === 'err' ? h('div', { className: 'ssm-p-banner ssm-p-banner-error' }, h(Icon, { n: 'alert' }), `${t('opFailed')}: ${String(task.error?.message ?? task.error ?? '')}`) : null,
+        task.note ? h('div', { className: 'ssm-p-descwrap' }, task.note) : null,
         // warnings 必须逐行可见：台账失配态下盘上什么都没做，理由只存在于 warnings（历史教训 2026-10-27）
-        ...(task.warnings ?? []).map((w, i) => h('div', { key: 'tw' + i, className: 'ssm-warn' }, `⚠ ${w}`)));
+        ...(task.warnings ?? []).map((w, i) => h('div', { key: 'tw' + i, className: 'ssm-p-banner ssm-p-banner-warn' }, h(Icon, { n: 'alert' }), w)));
     }
 
     /** Remote 面优先（RemoteResult 归一化）；任何失败退同源 fetch（同一 host 实现）。 */
@@ -341,20 +342,29 @@ window.__ModuleLoader__.load({
     /**
      * 共享行壳（spec 2026-11-07 §6.2）：设置页/右栏共用的行卡骨架（Task 6 起弹框 SkillRow 也收口到这里）。
      * 槽位：leading（复选框/色点）+ 名称 + 徽章组（PBadge 数组）+ 第二行 desc + 第三行 sub + 尾部动作条 actions；
-     * gray=灰态（.ssm-p-gray 语汇）、removed=删除线、onClick=整行点击（右栏开 SKILL.md，tabIndex+role 键盘可达）。
+     * gray=灰态（.ssm-p-gray 语汇）、removed=删除线、onClick=整行点击（右栏开 SKILL.md、composer 勾选行；
+     * tabIndex + role + onKeyDown（Enter/Space 触发 onClick）键盘可达，AC#13；focus 环见 .ssm-p-rowcard-click）。
      * 行形态同款 .ssm-p-row：hover 底色 8%、:focus-visible brand 环、hover/focus-within 显形动作条；
      * 常驻动作（confirm 态）不在「.ssm-p-row 直接子级 .ssm-p-icon-btn」显形选择器覆盖范围内，天然常显。
-     * desc/sub 传 React 元素时原样透传（调用方可自带 .ssm-p-desc 与 title），纯内容则包 .ssm-p-desc。
+     * desc/sub 传 React 元素时原样透传（调用方可自带 .ssm-p-desc 与 title），纯内容则包 .ssm-p-desc；空串同样跳过（空行不渲染空 div）。
      * 顶层段声明（client-scope）：Panel/SettingsSection/RightPanel 三段都要消费，不能塞进某段内部。
      * t 预留：Task 3/5/6 的 aria/文案收口再消费。
      * title=非点击行的 hover 提示（库行 = 来源 @commit(7)，spec 2026-11-07 §6.5）；onClick 行 clickTitle 优先、缺省回落 title。
      */
     function RowShell({ t, name, badges, desc, sub, actions, gray, onClick, clickTitle, leading, removed, title }) {
-      const line = (v) => v == null ? null
+      const line = (v) => v == null || v === '' ? null
         : typeof v === 'object' && v && v.$$typeof ? v : h('div', { className: 'ssm-p-desc' }, v);
       return h('div', {
         className: 'ssm-p-rowcard' + (gray ? ' ssm-p-gray' : '') + (onClick ? ' ssm-p-rowcard-click' : ''),
-        ...(onClick ? { tabIndex: 0, role: 'button', onClick, title: clickTitle ?? title } : (title ? { title } : {})),
+        // Enter/Space 触发整行点击（Task 6.2 a11y：修右栏/设置页行卡 Enter 不触发的遗留）；Space 阻止页面滚动；
+        // 只认行自身的焦点（target!==currentTarget 即放行），行内控件（composer 复选框）保持原生键盘语义不被劫持
+        ...(onClick ? {
+          tabIndex: 0, role: 'button', onClick, title: clickTitle ?? title,
+          onKeyDown: (e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e); }
+          },
+        } : (title ? { title } : {})),
       },
         h('div', { className: 'ssm-p-row' },
           leading ?? null,
@@ -455,19 +465,21 @@ window.__ModuleLoader__.load({
         return { l, badges, title };
       };
       // 同款列表行（Task 4 成员抽屉复用）：on=null → 只读无复选框；ro → 灰区只读行；removed → 删除线
+      // Task 6.1 收口（spec 2026-11-07 §6.2）：骨架换成共享 RowShell——同一批 .ssm-p-* 原子件，DOM 由 rowwrap 换行卡；
+      // 勾选语义照旧：原 label 包整行（点名字=勾选）现由行 onClick 承接——点复选框本身走 input onChange，
+      // 点击目标命中 input 即跳过，绝不双跑 RPC；busy 时不挂 onClick=整行不可点，同「被禁 input 的 label 不激活」口径。
       const SkillRow = ({ key, l, on, ro, removed, onChange, badges, title }) => {
         const desc = l.descriptionZh
           ? h('div', { className: 'ssm-p-desc', title: l.description ?? undefined }, l.descriptionZh)
           : l.description
             ? h('div', { className: 'ssm-p-desc', title: l.description }, l.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
             : null;
-        return h('div', { key, className: 'ssm-p-rowwrap' + (ro ? ' ssm-p-gray' : '') },
-          h('label', { className: 'ssm-p-check', title: title ?? l.descriptionZh ?? undefined },
-            on == null ? null : h('input', { type: 'checkbox', checked: on === true, disabled: busy, onChange: () => onChange?.() }),
-            h('span', { className: 'ssm-p-name' + (removed ? ' ssm-p-strike' : '') }, l.name),
-            ...(badges ?? []).map((b) => h(PBadge, { key: b.text, kind: b.kind, text: b.text })),
-            h('span', { className: 'ssm-grow' }, null)),
-          desc);
+        return h(RowShell, {
+          key, t, name: l.name, badges, desc, gray: !!ro, removed,
+          title: title ?? l.descriptionZh ?? undefined,
+          leading: on == null ? null : h('input', { type: 'checkbox', checked: on === true, disabled: busy, 'aria-label': l.name, onChange: () => onChange?.() }),
+          ...(on != null && !busy ? { onClick: (e) => { if (e.target?.closest?.('input')) return; onChange?.(); } } : {}),
+        });
       };
       // 折叠灰区一行（3.3）：默认收起「图标 标签 · N 项 ▸」，展开 = 只读同款行 + 既有 hint 文案
       const ZoneRow = (zone, label, icon, names, hint) => names.length
@@ -790,7 +802,7 @@ window.__ModuleLoader__.load({
       const [token, setToken] = React.useState(bus.token); // 刷新信号快照（⇥ 再点/面板操作即刷新，见 bus.refresh）
       const [openProv, setOpenProv] = React.useState(false); // 插件/Preset 灰段折叠态（spec §6.9 同款灰区语汇：默认收起，纯呈现态）
       const sessionId = scope?.sessionId ?? null;
-      React.useEffect(() => { setSt(null); setDg(null); setDgErr(null); setToken(bus.token); }, [sessionId]); // scope 切换先清旧数据（含旧会话的刷新信号），防瞬态串会话
+      React.useEffect(() => { setSt(null); setDg(null); setDgErr(null); setToken(bus.token); setOpenProv(false); }, [sessionId]); // scope 切换先清旧数据（含旧会话的刷新信号）、插件灰段收回默认收起（纯呈现态，Task 5 转交），防瞬态串会话
       React.useEffect(() => { // 订阅刷新信号：bus.refresh 只广播当前会话，token 变即触发下方重载
         const fn = () => setToken(bus.token);
         bus.subs.add(fn);
@@ -867,7 +879,8 @@ window.__ModuleLoader__.load({
         st ? h('div', null, ...names.map(row)) : null,
         // 插件/Preset 灰段（用户疑问 2026-10-26）：运行时注入、不在生效清单内，只读不可勾；null = 服务不可知不渲染。
         // 折叠语汇同款 composer 灰区（§6.9）：默认收起「图标 标签 + 计数胶囊 ▸」，展开 = 灰态只读行 + 既有 hint（providerHint 文案照旧）。
-        (st?.unmanaged?.length ?? -1) >= 0 ? h(React.Fragment, null,
+        // 计数钮只在有条目时渲染（对齐 composer ZoneRow 的 names.length 口径；unmanaged=null=不可知也不渲染）
+        st?.unmanaged?.length ? h(React.Fragment, null,
           h('button', { className: 'ssm-p-collapse', 'aria-expanded': openProv ? 'true' : 'false', 'aria-label': openProv ? t('ariaCollapse') : t('ariaExpand'), onClick: () => setOpenProv(!openProv) },
             h(Icon, { n: 'box', s: 13 }), t('providerSec'), h(PBadge, { kind: 'muted', text: String(st.unmanaged.length) }),
             h('span', { className: 'ssm-grow' }, null), h(Icon, { n: 'chevron', s: 12 })),
@@ -920,11 +933,9 @@ window.__ModuleLoader__.load({
     }
     function PBadge({ kind, text }) { return h('span', { className: `ssm-p-tag ssm-p-tag-${kind}` }, text); }
 
-    function Tag({ text, warn }) { return h('span', { className: 'ssm-tag' + (warn ? ' ssm-tag-warn' : '') }, text); }
-
     /**
      * 设置页（§10.1.4 settings.section：注册仅 id/order/label，ownerProps 只给 close；
-     * 三页签自绘）。数据全部走同一 host Remote 面（call 兜底 fetch）——无第二实现（#15）。
+     * 四页签自绘（库/全局技能集/安装与更新/诊断））。数据全部走同一 host Remote 面（call 兜底 fetch）——无第二实现（#15）。
      */
     /** 保留理由 → 人话：resident = 插件自家常驻链（不是同名冲突，用户报告 2026-10-26）；
      *  未知 reason 原样显示，避免新版 core 加了分类而字典缺键时 UI 空白。 */
@@ -1214,7 +1225,8 @@ window.__ModuleLoader__.load({
               h('label', { className: 'ssm-p-check' }, h('input', { type: 'checkbox', checked: overwrite, disabled: locked, onChange: (e) => setOverwrite(e.target.checked) }), t('overwriteChk')),
               h('button', { className: 'ssm-s-btn', disabled: locked || !spec.trim(), title: busyTitle, onClick: () => { if (startLong(ctx, 'installApply', spec.trim(), { spec: spec.trim(), overwrite }, { noteOf: (s) => { const rs = s.ok ? s.value?.results ?? [] : []; const bad = rs.filter((r) => !r.ok).length; return bad ? t('opPartial').replace('{n}', String(rs.length - bad)).replace('{m}', String(bad)) : null; }, onDone: () => load() })) setSpec(''); } }, t('installGo'))),
             // 安装结果胶囊换 .ssm-p-tag-muted（§6.6）；commit 短哈希与逐条 ✓/× reason 文案照旧
-            instDone ? h('div', { className: 'ssm-p-row' }, h('span', { className: 'ssm-p-desc' }, `@${String(instDone.commit ?? '').slice(0, 7)}`),
+            // 安装结果徽章行允许换行（Task 5 转交：多条结果时 .ssm-p-row 不换行 → 徽章 flex:none 撑出横溢）
+            instDone ? h('div', { className: 'ssm-p-row ssm-s-wrap' }, h('span', { className: 'ssm-p-desc' }, `@${String(instDone.commit ?? '').slice(0, 7)}`),
               ...(instDone.results ?? []).map((r) => h(PBadge, { key: r.name, kind: 'muted', text: `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}` }))) : null),
           h('div', { className: 'ssm-p-card' },
             h('div', { className: 'ssm-p-card-title' }, t('migrateAgentsTitle')),
@@ -1277,58 +1289,30 @@ window.__ModuleLoader__.load({
 .ssm-dot-ok{background:var(--dsw-alias-state-success-primary,#22c55e)}.ssm-dot-red{background:var(--dsw-alias-state-error-primary,#e5484d)}.ssm-dot-idle{background:var(--dsw-alias-label-secondary)}
 .ssm-cur{color:var(--dsw-alias-label-primary);font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-badge{min-width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-state-error-primary,#e5484d);color:#fff;font-size:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
-.ssm-head{display:flex;align-items:center;gap:8px}
-.ssm-x{background:0;border:0;color:inherit;font-size:15px;cursor:pointer;padding:2px 6px}
 .ssm-grow{flex:1}
-.ssm-root{font-size:11px;color:var(--dsw-alias-label-secondary);word-break:break-all}
 .ssm-warn-inline{color:var(--dsw-alias-state-warn-primary,#f5a623)}
 .ssm-spin{display:inline-block;width:.7em;height:.7em;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:ssm-spin .7s linear infinite;vertical-align:-1px;margin-right:5px}
 @keyframes ssm-spin{to{transform:rotate(360deg)}}
-.ssm-task{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)} /* 长任务条（用户 2026-10-29：按了安装界面毫无反应） */
 .ssm-bar{height:5px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);overflow:hidden}
 .ssm-bar-fill{height:100%;border-radius:999px;background:var(--dsw-alias-brand-primary);transition:width .4s}
 .ssm-bar-ok{background:var(--dsw-alias-state-success-primary,#22c55e)}
 .ssm-bar-err{background:var(--dsw-alias-state-error-primary,#e5484d)}
-.ssm-warn,.ssm-err{font-size:11px;padding:4px 6px;border-radius:6px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f5a623) 18%,transparent)}
-.ssm-err{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 16%,transparent)}
-.ssm-sec{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px;display:flex;gap:6px;align-items:center}
+.ssm-warn{font-size:11px;padding:4px 6px;border-radius:6px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f5a623) 18%,transparent)} /* 只剩 io 预览警告行在用；.ssm-err 随 TaskStrip 明细行迁 banner 语态退役（Task 6.3） */
 .ssm-hint{font-size:10px;color:var(--dsw-alias-label-secondary)}
 .ssm-row{display:flex;align-items:center;gap:4px;font-size:12px}
-.ssm-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
 .ssm-n{color:var(--dsw-alias-label-secondary);font-size:11px}
 .ssm-row button{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌色软底（用户 2026-10-26：要一眼可辨的按钮；原 :not() 豁免随其目标类删除一并简化，同款复刻见新区 .ssm-s-btn） */
 .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
-.ssm-row button.ssm-danger,.ssm-settings .ssm-row button.ssm-danger,.ssm-confirm button.ssm-danger,.ssm-settings .ssm-confirm button.ssm-danger{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 16%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent)} /* 高危操作（解绑/卸载/删除）错误色（用户 2026-10-26） */
-.ssm-row button.ssm-danger:hover,.ssm-settings .ssm-row button.ssm-danger:hover,.ssm-confirm button.ssm-danger:hover,.ssm-settings .ssm-confirm button.ssm-danger:hover{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 28%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary) 75%, transparent)}
+.ssm-row button.ssm-danger,.ssm-confirm button.ssm-danger{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 16%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent)} /* 高危操作（解绑/卸载/删除）错误色（用户 2026-10-26）；.ssm-settings … 片段随设置页迁移退役（Task 6.3：多选择器规则只摘死片段） */
+.ssm-row button.ssm-danger:hover,.ssm-confirm button.ssm-danger:hover{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 28%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary) 75%, transparent)}
 .ssm-input{flex:1;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 7px;min-width:0}
 .ssm-io{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .ssm-textarea{width:100%;box-sizing:border-box;resize:vertical;font:11px/1.5 ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px}
 .ssm-ok{font-size:11px;color:var(--dsw-alias-state-success-primary,#22c55e)}
 .ssm-confirm{font-size:11px;padding:5px 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
-.ssm-gray{opacity:.55}
-.ssm-desc-en{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
-.ssm-empty{font-size:11px;color:var(--dsw-alias-label-secondary)}
-.ssm-settings{display:flex;flex-direction:column;gap:8px;padding:4px 2px;max-width:920px}
-.ssm-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}
-.ssm-tab{font:inherit;font-size:12px;border:0;background:0;color:var(--dsw-alias-label-secondary);padding:6px 10px;cursor:pointer;border-radius:6px 6px 0 0}
-.ssm-tab:hover{color:var(--dsw-alias-label-primary)}
-.ssm-tab-on{color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}
-.ssm-srow{display:flex;flex-direction:column;gap:3px;padding:5px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
-.ssm-tag{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);flex:none}
-.ssm-tag-warn{color:var(--dsw-alias-state-warn-primary,#f5a623);border-color:currentColor}
-.ssm-diag-row{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;flex-wrap:wrap}
-.ssm-lvl{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-label-secondary)}
-.ssm-lvl-warn{background:var(--dsw-alias-state-warn-primary,#f5a623)}
-.ssm-lvl-error{background:var(--dsw-alias-state-error-primary,#e5484d)}
-.ssm-lvl-info{background:var(--dsw-alias-brand-primary)}
-.ssm-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
-.ssm-click{cursor:pointer}
-.ssm-click:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);border-radius:6px}
-.ssm-settings .ssm-row button{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer}
-.ssm-settings .ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
-.ssm-settings .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
-/* 面板美化（spec 2026-11-06 · ADR-0004）：新结构全部 .ssm-p-* 新类，旧 .ssm-* 不动（设置页/右栏零波及） */
+/* 面板美化（spec 2026-11-06 · ADR-0004）：新结构全部 .ssm-p-* 原子件 + 页面布局类 .ssm-s-*（spec 2026-11-07 §6.1 白名单）；
+   旧 .ssm-* 只留 composer Panel/TaskStrip 仍在用的（§5.5 使用矩阵）——设置页/右栏迁移后归零的旧类与 .ssm-settings 后代规则已于 Task 6.3 删除，残留检查进 ui-gates ⑤ */
 .ssm-p-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center;padding:0 12px 12px;pointer-events:auto}
 .ssm-p-panel{width:min(760px,94vw);max-height:78vh;overflow:auto;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:0 14px 10px;display:flex;flex-direction:column;gap:10px;box-shadow:0 16px 48px rgba(0,0,0,.4);font-size:13px;animation:ssm-pop .12s ease-out}
 @keyframes ssm-pop{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
@@ -1386,8 +1370,6 @@ window.__ModuleLoader__.load({
 .ssm-p-row>.ssm-p-icon-btn{background:transparent;border-color:transparent;color:var(--dsw-alias-label-secondary);width:24px;height:24px;padding:0}
 .ssm-p-row>button:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent)}
 .ssm-p-row>.ssm-p-icon-btn:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-primary)}
-.ssm-p-rowwrap{display:flex;flex-direction:column;gap:1px;border-radius:8px;padding:1px 0}
-.ssm-p-rowwrap:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent)}
 .ssm-p-gray{opacity:.55}
 .ssm-p-name{color:var(--dsw-alias-label-primary);font-size:13px;flex:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-p-strike{text-decoration:line-through;color:var(--dsw-alias-label-secondary)}
@@ -1401,6 +1383,10 @@ window.__ModuleLoader__.load({
 .ssm-p-rowcard:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
 .ssm-p-rowcard-click{cursor:pointer}
 .ssm-p-rowcard-click:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+/* composer 行卡（Task 6.1 收口）leading 槽裸复选框：首行居中（原 .ssm-p-check label 的 margin-top:3px 顶对齐语汇随 label 退役）、focus 环、禁用不手型 */
+.ssm-p-rowcard>.ssm-p-row>input[type=checkbox]{margin:0;flex:none;accent-color:var(--dsw-alias-brand-primary);cursor:pointer}
+.ssm-p-rowcard>.ssm-p-row>input[type=checkbox]:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ssm-p-rowcard>.ssm-p-row>input[type=checkbox]:disabled{cursor:default}
 .ssm-p-rowcard>.ssm-p-row>.ssm-p-icon-btn{opacity:0;transition:opacity .12s}
 .ssm-p-rowcard:hover>.ssm-p-row>.ssm-p-icon-btn,.ssm-p-rowcard:focus-within>.ssm-p-row>.ssm-p-icon-btn{opacity:1}
 @media (prefers-reduced-motion:reduce){.ssm-p-rowcard>.ssm-p-row>.ssm-p-icon-btn{opacity:1;transition:none}}
@@ -1425,14 +1411,16 @@ window.__ModuleLoader__.load({
 .ssm-p-lvl-warn{background:var(--dsw-alias-state-warn-primary,#f5a623)}
 .ssm-p-lvl-error{background:var(--dsw-alias-state-error-primary,#e5484d)}
 .ssm-p-lvl-info{background:var(--dsw-alias-brand-primary)}
-.ssm-p-descwrap{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:normal} /* 旧 .ssm-hint 文本语态复刻：长名单/路径/where/fix 不截断（.ssm-p-desc 是 nowrap 兜底） */
+.ssm-p-descwrap{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:normal} /* 长文本语态（11px 次级色；旧 .ssm-hint 是 10px，收口时升一档，spec 2026-11-07 §6.5/§6.8）：长名单/路径/where/fix 不截断（.ssm-p-desc 是 nowrap 兜底） */
 .ssm-p-warn{font-size:11px;color:var(--dsw-alias-state-warn-primary,#f5a623);white-space:normal} /* 旧 .ssm-warn-inline 复刻：迁移预览警告行 */
-/* 右栏详情 tab（spec 2026-11-07 §6.9）：sticky 头 + 行卡 + 紧凑诊断；宽度由 betterSidebar 决定，本组类只管内（§5.7）——管内边距/滚动照旧 .ssm-rp 现值 */
+/* 右栏详情 tab（spec 2026-11-07 §6.9）：sticky 头 + 行卡 + 紧凑诊断；宽度由 betterSidebar 决定，本组类只管内（§5.7）——管内边距/滚动值照旧搬自旧 .ssm-rp（该类已随迁移退役） */
 .ssm-s-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
 .ssm-s-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;margin:0 -8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)} /* 头伸出管内边距成通栏（同款 .ssm-p-head 手法）；opaque 底遮住滚动穿行的内容 */
 .ssm-s-dgrow{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;flex-wrap:wrap} /* 旧 .ssm-diag-row 复刻：诊断摘要紧凑行（5 组 × 前 3 条，不含 where/fix） */
 .ssm-p-ok{font-size:11px;color:var(--dsw-alias-state-success-primary,#22c55e)} /* 旧 .ssm-ok 复刻：rpSelf ok 语态 ✓ */
 .ssm-p-err{font-size:11px;color:var(--dsw-alias-state-error-primary,#e5484d);white-space:normal} /* 旧 .ssm-err 文本语态复刻（与 .ssm-p-warn 同族）：rpSelf detail 行 */
+/* 多徽章结果行换行防横溢（Task 5 转交：ops 安装结果行；徽章 .ssm-p-tag 是 flex:none，长名单撑破 920px 卡宽） */
+.ssm-s-wrap{flex-wrap:wrap}
 `;
 
     return {
