@@ -342,8 +342,10 @@ window.__ModuleLoader__.load({
     /**
      * 共享行壳（spec 2026-11-07 §6.2）：设置页/右栏共用的行卡骨架（Task 6 起弹框 SkillRow 也收口到这里）。
      * 槽位：leading（复选框/色点）+ 名称 + 徽章组（PBadge 数组）+ 第二行 desc + 第三行 sub + 尾部动作条 actions；
-     * gray=灰态（.ssm-p-gray 语汇）、removed=删除线、onClick=整行点击（右栏开 SKILL.md、composer 勾选行；
-     * tabIndex + role + onKeyDown（Enter/Space 触发 onClick）键盘可达，AC#13；focus 环见 .ssm-p-rowcard-click）。
+     * gray=灰态（.ssm-p-gray 语汇）、removed=删除线、onClick=整行点击（右栏开 SKILL.md、composer 勾选行）；
+     * 无 leading 的行加 tabIndex + role=button + onKeyDown（Enter/Space 触发 onClick）键盘可达（AC#13，focus 环见 .ssm-p-rowcard-click）；
+     * 有 leading（行首已是可聚焦控件——composer 生效清单的裸复选框）则不挂 role/tabIndex/onKeyDown：复选框作唯一 tab 停靠点，
+     * 避免每行两个停靠点、且读屏器把 button 当叶子节点吞掉内层勾选态（终审 Important 1）；行 onClick 鼠标路径与 cursor/clickTitle 照旧。
      * 行形态同款 .ssm-p-row：hover 底色 8%、:focus-visible brand 环、hover/focus-within 显形动作条；
      * 常驻动作（confirm 态）不在「.ssm-p-row 直接子级 .ssm-p-icon-btn」显形选择器覆盖范围内，天然常显。
      * desc/sub 传 React 元素时原样透传（调用方可自带 .ssm-p-desc 与 title），纯内容则包 .ssm-p-desc；空串同样跳过（空行不渲染空 div）。
@@ -357,13 +359,18 @@ window.__ModuleLoader__.load({
       return h('div', {
         className: 'ssm-p-rowcard' + (gray ? ' ssm-p-gray' : '') + (onClick ? ' ssm-p-rowcard-click' : ''),
         // Enter/Space 触发整行点击（Task 6.2 a11y：修右栏/设置页行卡 Enter 不触发的遗留）；Space 阻止页面滚动；
-        // 只认行自身的焦点（target!==currentTarget 即放行），行内控件（composer 复选框）保持原生键盘语义不被劫持
+        // 只认行自身的焦点（target!==currentTarget 即放行），行内控件保持原生键盘语义不被劫持。
+        // leading 有值 = 行首已是可聚焦控件（composer 复选框）：不再挂 role=button/tabIndex/onKeyDown，复选框作唯一 tab 停靠点
+        // （终审 Important 1：旧版一行双停靠点 + AT 扁平化）；onClick（鼠标）与 title/clickTitle 照旧，无 leading 的行键盘行为不变。
         ...(onClick ? {
-          tabIndex: 0, role: 'button', onClick, title: clickTitle ?? title,
-          onKeyDown: (e) => {
-            if (e.target !== e.currentTarget) return;
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e); }
-          },
+          ...(leading == null ? {
+            tabIndex: 0, role: 'button',
+            onKeyDown: (e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e); }
+            },
+          } : {}),
+          onClick, title: clickTitle ?? title,
         } : (title ? { title } : {})),
       },
         h('div', { className: 'ssm-p-row' },
@@ -1172,7 +1179,7 @@ window.__ModuleLoader__.load({
                 // 卸载二次确认（§6.5）：banner 语态 + 常驻可见——动作条是 hover 显形，确认条不能被藏；文案与流程照旧
                 confirmUn === x.name
                   ? h('div', { className: 'ssm-p-banner ssm-p-banner-error' }, h(Icon, { n: 'alert' }), t('confirmUn'), ' ', x.name, ' ',
-                      h('button', { autoFocus: true, disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'uninstallSkill', x.name, { name: x.name }, { onDone: (s) => { if (!s.ok) return; setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); load(); } }) }, t('uninstallGo')),
+                      h('button', { className: 'ssm-p-banner-cta', autoFocus: true, disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'uninstallSkill', x.name, { name: x.name }, { onDone: (s) => { if (!s.ok) return; setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); load(); } }) }, t('uninstallGo')),
                       h('button', { onClick: () => setConfirmUn(null) }, '×'))
                   : null,
                 // 回收站展开（§6.5）：行卡同款 + 备份标签胶囊 muted + 恢复按钮品牌软底复刻
@@ -1269,7 +1276,7 @@ window.__ModuleLoader__.load({
               partition: t('diagPartition'), copies: t('diagCopies'), dangling: t('diagDangling'),
               deadLinks: t('diagDeadLinks'), structure: t('diagStructure'), env: t('diagEnv'),
             }).map(([g, label]) => h('div', { key: g, className: 'ssm-p-card' },
-              h('div', { className: 'ssm-p-card-title' }, label, h('span', { className: 'ssm-p-desc' }, `${(diag.groups?.[g] ?? []).length}`)),
+              h('div', { className: 'ssm-p-card-title' }, label, h(PBadge, { kind: 'muted', text: String((diag.groups?.[g] ?? []).length) })),
               (diag.groups?.[g] ?? []).length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'check' }), t('sEmptyDiag')) : null,
               // what 首行、where/fix 二三行展示保留（§13#7 可复制修复动作 = 可选中复制的文本行，语态照旧、不新增机制）
               ...(diag.groups?.[g] ?? []).map((r, i) => h('div', { key: i, className: 'ssm-p-rowcard' },
@@ -1364,6 +1371,9 @@ window.__ModuleLoader__.load({
 .ssm-p-setname{font-weight:600;color:var(--dsw-alias-label-primary);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-p-banner button{font:inherit;font-size:11px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;padding:2px 8px;cursor:pointer;opacity:.85}
 .ssm-p-banner button:hover{opacity:1}
+.ssm-p-banner .ssm-p-banner-cta{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 26%,transparent);border-color:var(--dsw-alias-state-error-primary,#e5484d);color:var(--dsw-alias-label-primary);opacity:1} /* 卸载二次确认的破坏性动作钮强调变体（终审 Minor 2）：error 软底实心，与同条 × 取消（透明描边）视觉可辨 */
+.ssm-p-banner .ssm-p-banner-cta:hover{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 38%,transparent);opacity:1}
+.ssm-p-banner .ssm-spin{margin:0} /* 转圈自带 margin-right:5px 与 banner gap:8px 叠加多约 13px（终审 Minor 观感）：banner 内归零，间距交给 gap 统一 */
 .ssm-p-search{flex:0 1 220px;min-width:120px;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:3px 10px}
 .ssm-p-search:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .ssm-p-row>button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
@@ -1381,6 +1391,7 @@ window.__ModuleLoader__.load({
 .ssm-p-task-row{display:flex;align-items:center;gap:6px;font-size:12px}
 .ssm-p-rowcard{display:flex;flex-direction:column;gap:1px;border-radius:8px;padding:4px 6px}
 .ssm-p-rowcard:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+.ssm-p-rowcard.ssm-p-gray:not(.ssm-p-rowcard-click):hover{background:transparent} /* 灰态只读行（无 onClick：设置页外来常驻行 / 右栏 provider 灰行）不显 hover 底（终审 Minor 6）：不可点的灰行用 hover 暗示可交互是误导；带 -click 的可点灰行不受此收窄影响 */
 .ssm-p-rowcard-click{cursor:pointer}
 .ssm-p-rowcard-click:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 /* composer 行卡（Task 6.1 收口）leading 槽裸复选框：首行居中（原 .ssm-p-check label 的 margin-top:3px 顶对齐语汇随 label 退役）、focus 环、禁用不手型 */

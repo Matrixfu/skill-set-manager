@@ -85,7 +85,7 @@ else {
     const oldRegion = src.slice(cssStart, mIdx);
     if (oldRegion.includes('ssm-p-')) fails.push('css-sep: 旧区出现 ssm-p-（新类写进了旧区，隔离标记形同虚设）');
     // ⑤b 退役类残留（spec 2026-11-07 §5.5 矩阵 + Task 6.3 清理清单）：这些类在设置页/右栏迁移后归零、已删；
-    //    CSS 全区（剥注释，历史提及不算）不得再出现，JS 的 className 字面也不得再引用——防「删了又长回来」的机械证明。
+    //    CSS 全区（剥注释，历史提及不算）不得再出现，JS 区所有字符串字面量也不得再引用——防「删了又长回来」的机械证明。
     const DELETED = [
       // composer 改版（2026-11-06）前就退役的弹框旧类
       'ssm-overlay', 'ssm-panel', 'ssm-pick', 'ssm-cur-tag', 'ssm-chips', 'ssm-chip',
@@ -101,9 +101,37 @@ else {
     for (const cls of DELETED) {
       if (new RegExp('\\.' + cls + '(?![\\w-])').test(cssAll)) fails.push(`css-clean: CSS 残留已删类 .${cls}（清理清单已删，不该再出现）`);
     }
-    for (const mm of src.slice(0, cssStart).matchAll(/className:\s*(['"`])([^'"`]*)\1/g)) {
-      for (const tok of mm[2].split(/\s+/)) {
-        if (DELETED.includes(tok.replace(/^\./, ''))) fails.push(`css-clean: JS className 字面仍引用已删类 ${tok}`);
+    // JS 扫描口径（终审 Minor 1 增强）：旧实现只吃完整 `className:'…'` 引号字面，
+    // 漏 `'a' + (c?'b':'')` 的拼接尾与 `` x ${c?'b':''} `` 模板串内片段（假绿方向）。
+    // 改为对 JS 区（CSS 区外）逐字符串字面量扫描：带注释/转义意识的分词器取出每个引号/模板串的内容
+    // （模板串连 ${…} 内的嵌套串一并纳入，正是旧版漏掉的片段），再按词边界匹配 DELETED 类
+    // （尾界 (?![\w-]) 照旧；前界 (?<![\w-]) 防 ssm-p-* 新类误吃 ssm-* 旧类）。当前实况无引用，增强后仍须 PASS。
+    function jsStringLiterals(text) {
+      const out = [];
+      let i = 0, q = null, esc = false, start = 0, lineC = false, blockC = false;
+      while (i < text.length) {
+        const c = text[i], n = text[i + 1];
+        if (lineC) { if (c === '\n') lineC = false; i++; continue; }
+        if (blockC) { if (c === '*' && n === '/') { blockC = false; i += 2; } else i++; continue; }
+        if (q) {
+          if (esc) { esc = false; i++; continue; }
+          if (c === '\\') { esc = true; i++; continue; }
+          if (c === q) { out.push(text.slice(start, i)); q = null; i++; continue; }
+          i++; continue;
+        }
+        if (c === '/' && n === '/') { lineC = true; i += 2; continue; }
+        if (c === '/' && n === '*') { blockC = true; i += 2; continue; }
+        if (c === "'" || c === '"' || c === '`') { q = c; start = i + 1; i++; continue; }
+        i++;
+      }
+      return out;
+    }
+    for (const lit of jsStringLiterals(src.slice(0, cssStart))) {
+      for (const cls of DELETED) {
+        if (new RegExp('(?<![\\w-])' + cls + '(?![\\w-])').test(lit)) {
+          fails.push(`css-clean: JS 字符串仍引用已删类 .${cls}`);
+          break;
+        }
       }
     }
     const newRegion = src.slice(mIdx, src.indexOf('`', mIdx));
