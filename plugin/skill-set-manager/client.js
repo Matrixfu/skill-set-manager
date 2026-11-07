@@ -788,6 +788,7 @@ window.__ModuleLoader__.load({
       const [dgErr, setDgErr] = React.useState(null);
       const [err, setErr] = React.useState(null);
       const [token, setToken] = React.useState(bus.token); // 刷新信号快照（⇥ 再点/面板操作即刷新，见 bus.refresh）
+      const [openProv, setOpenProv] = React.useState(false); // 插件/Preset 灰段折叠态（spec §6.9 同款灰区语汇：默认收起，纯呈现态）
       const sessionId = scope?.sessionId ?? null;
       React.useEffect(() => { setSt(null); setDg(null); setDgErr(null); setToken(bus.token); }, [sessionId]); // scope 切换先清旧数据（含旧会话的刷新信号），防瞬态串会话
       React.useEffect(() => { // 订阅刷新信号：bus.refresh 只广播当前会话，token 变即触发下方重载
@@ -807,7 +808,7 @@ window.__ModuleLoader__.load({
         } catch (e) { setErr(`${t('loadFailed')}: ${e?.message ?? e}`); }
       }, [ctx, sessionId]);
       React.useEffect(() => { if (visible !== false) load(); }, [load, visible, token]); // parked 时暂停拉取（计划 T0 口径，review m3）；token=bus 刷新信号：tab 常驻挂载下 ⇥ 再点/面板切集都靠它触发重载（用户报告 2026-10-27）
-      if (!sessionId) return h('div', { className: 'ssm-rp' }, t('rpNoSession'));
+      if (!sessionId) return h('div', { className: 'ssm-s-rp' }, t('rpNoSession')); // 早退只渲染 rpNoSession（数据机制照旧）
       const sc = st?.selfCheck ?? {};
       const resident = new Set(st?.resident ?? []);
       const managed = st?.managed ?? {};
@@ -827,40 +828,60 @@ window.__ModuleLoader__.load({
       const row = (n) => {
         const l = libMap.get(n);
         const open = l?.skillMd && onOpenFile ? () => onOpenFile(l.skillMd) : null;
-        return h('div', { key: n, className: 'ssm-row' + (open ? ' ssm-click' : ''), title: open ? t('rpClick') : '', onClick: open ?? undefined },
-          h('span', null, n), ' ',
-          n in managed ? h(Tag, { text: t('managedTag') }) : null, ' ',
-          resident.has(n) ? h(Tag, { text: t('resident') }) : null, ' ',
-          foreign.has(n) ? h(Tag, { text: t('rpForeign'), warn: true }) : null, ' ',
-          broken.has(n) ? h(Tag, { text: t('rpDead'), warn: true }) : null, ' ',
-          missing.has(n) ? h(Tag, { text: t('rpMissing'), warn: true }) : null);
+        // 徽章组统一到弹框口径（spec §6.9）：受管 brand / 全局常驻 muted / 外来 muted / 失效 error / 缺失 error / 本地改动 warn
+        const badges = [];
+        if (n in managed) badges.push({ kind: 'brand', text: t('managedTag') });
+        if (resident.has(n)) badges.push({ kind: 'muted', text: t('grayResident') });
+        if (foreign.has(n)) badges.push({ kind: 'muted', text: t('rpForeign') });
+        if (broken.has(n)) badges.push({ kind: 'error', text: t('rpDead') });
+        if (missing.has(n)) badges.push({ kind: 'error', text: t('rpMissing') });
+        if (l?.localModified) badges.push({ kind: 'warn', text: t('rpModified') }); // 漂移补齐：右栏此前不显「本地改动」
+        // 第二行中文用途（漂移补齐，与库页签 §6.5 同款回退：未翻译显英文 + 待翻译角标）
+        const desc = l?.descriptionZh
+          ? h('div', { className: 'ssm-p-desc', title: l.description ?? undefined }, l.descriptionZh)
+          : l?.description
+            ? h('div', { className: 'ssm-p-desc', title: l.description }, l.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
+            : null;
+        // 点击开 SKILL.md 与 title=rpClick 照旧（RowShell 点击态：tabIndex+role 键盘可达）
+        return h(RowShell, { key: n, t, name: n, badges, desc, ...(open ? { onClick: open, clickTitle: t('rpClick') } : {}) });
       };
+      // 诊断摘要保持紧凑（spec §6.9）：5 组 × 前 3 条、仅 label: what，不展开 where/fix；角色点换已入库 .ssm-p-lvl*
       const dgRows = dg ? Object.entries({ dangling: t('diagDangling'), deadLinks: t('diagDeadLinks'), copies: t('diagCopies'), structure: t('diagStructure'), env: t('diagEnv') })
-        .flatMap(([g, label]) => (dg.groups?.[g] ?? []).slice(0, 3).map((r, i) => h('div', { key: `${g}${i}`, className: 'ssm-diag-row' },
-          h('span', { className: `ssm-lvl ssm-lvl-${r.level}` }, null), h('span', null, `${label}: ${r.what}`)))) : [];
+        .flatMap(([g, label]) => (dg.groups?.[g] ?? []).slice(0, 3).map((r, i) => h('div', { key: `${g}${i}`, className: 'ssm-s-dgrow' },
+          h('span', { className: `ssm-p-lvl ssm-p-lvl-${r.level}` }, null), h('span', null, `${label}: ${r.what}`)))) : [];
       const dgCount = dg ? Object.entries(dg.groups).filter(([k]) => k !== 'partition').reduce((a, [, v]) => a + v.length, 0) : 0;
-      return h('div', { className: 'ssm-rp' },
-        h('div', { className: 'ssm-head' },
+      return h('div', { className: 'ssm-s-rp' },
+        // sticky 头部（spec §6.9）：集名（或 noBinding）+ frozen warn 徽章 + grow + ⟳ 图标钮（aria）；管内滚动时头不滚走
+        h('div', { className: 'ssm-s-head' },
           h('b', null, t('rpEffective')), ' ', st?.set?.name ?? st?.binding?.setSlug ?? t('noBinding'),
-          sc.frozen ? h('span', { className: 'ssm-warn-inline' }, t('rpFrozen')) : null,
+          sc.frozen ? h(PBadge, { kind: 'warn', text: t('rpFrozen') }) : null,
           h('span', { className: 'ssm-grow' }, null),
-          h('button', { className: 'ssm-x', onClick: load, title: t('regen') }, '⟳')),
-        h('div', { className: 'ssm-root' }, st?.projectRoot ?? ''),
-        err ? h('div', { className: 'ssm-err' }, err) : null,
-        !st && !err ? h('div', { className: 'ssm-empty' }, '…') : null, // 未到位≠空：不得先渲染空态（review m4）
-        st && !st.binding?.setSlug && (st.resident ?? []).length ? h('div', { className: 'ssm-empty' }, t('rpGlobalActiveUnbound').replace('{n}', st.resident.length)) : null,
-        st && (!st.binding?.setSlug ? !(st.resident ?? []).length : names.length === 0) ? h('div', { className: 'ssm-empty' }, t('rpEmpty')) : null,
-        st && bound && (st.resident ?? []).length ? h('div', { className: 'ssm-hint' }, t('rpGlobalActiveHint').replace('{n}', st.resident.length)) : null, // 未绑定时由上方专属文案告知，不重复
+          h('button', { className: 'ssm-p-icon-btn', onClick: load, title: t('regen'), 'aria-label': t('sAriaReload') }, h(Icon, { n: 'refresh' }))),
+        st?.projectRoot ? h('div', { className: 'ssm-p-rootline' }, h('span', { title: st.projectRoot }, t('projectRoot'), '：', st.projectRoot)) : null,
+        err ? h('div', { className: 'ssm-p-banner ssm-p-banner-error' }, h(Icon, { n: 'alert' }), err) : null,
+        // 空态三态（§6.9）：未到位保留「…」文本行（未到位≠空：不得先渲染空态，review m4）；未绑定/空清单图标化
+        !st && !err ? h('div', { className: 'ssm-p-empty' }, '…') : null,
+        st && !st.binding?.setSlug && (st.resident ?? []).length ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'globe', s: 16 }), t('rpGlobalActiveUnbound').replace('{n}', st.resident.length)) : null,
+        st && (!st.binding?.setSlug ? !(st.resident ?? []).length : names.length === 0) ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('rpEmpty')) : null,
+        st && bound && (st.resident ?? []).length ? h('div', { className: 'ssm-p-descwrap' }, t('rpGlobalActiveHint').replace('{n}', st.resident.length)) : null, // 未绑定时由上方专属文案告知，不重复；常驻计数 hint 保留
         st ? h('div', null, ...names.map(row)) : null,
         // 插件/Preset 灰段（用户疑问 2026-10-26）：运行时注入、不在生效清单内，只读不可勾；null = 服务不可知不渲染。
+        // 折叠语汇同款 composer 灰区（§6.9）：默认收起「图标 标签 + 计数胶囊 ▸」，展开 = 灰态只读行 + 既有 hint（providerHint 文案照旧）。
         (st?.unmanaged?.length ?? -1) >= 0 ? h(React.Fragment, null,
-          h('div', { className: 'ssm-sec' }, t('providerSec'), ' ', h('span', { className: 'ssm-n' }, `(${st.unmanaged.length})`)),
-          h('div', { className: 'ssm-hint' }, t('providerHint')),
-          ...st.unmanaged.map((e) => h('div', { key: `p-${e.name}`, className: 'ssm-row ssm-gray', title: e.source ?? undefined },
-            h('span', null, e.name), ' ', h(Tag, { text: e.provider })))) : null,
-        h('div', { className: 'ssm-sec' }, t('rpSelf'), ' ', !st ? '—' : sc.ok === false ? h('span', { className: sc.frozen ? 'ssm-warn-inline' : 'ssm-err' }, sc.detail) : h('span', { className: 'ssm-ok' }, '✓')),
-        h('div', { className: 'ssm-sec' }, t('rpDiag'), ' ', h('span', { className: 'ssm-n' }, dg ? `${dgCount}` : dgErr ? `⚠ ${t('rpDiagFail')}` : '—')),
-        dgErr ? h('div', { className: 'ssm-hint' }, dgErr) : null,
+          h('button', { className: 'ssm-p-collapse', 'aria-expanded': openProv ? 'true' : 'false', 'aria-label': openProv ? t('ariaCollapse') : t('ariaExpand'), onClick: () => setOpenProv(!openProv) },
+            h(Icon, { n: 'box', s: 13 }), t('providerSec'), h(PBadge, { kind: 'muted', text: String(st.unmanaged.length) }),
+            h('span', { className: 'ssm-grow' }, null), h(Icon, { n: 'chevron', s: 12 })),
+          openProv ? h(React.Fragment, null,
+            ...st.unmanaged.map((e) => h(RowShell, { key: `p-${e.name}`, t, gray: true, name: e.name, badges: [{ kind: 'muted', text: e.provider }], title: e.source ?? undefined })),
+            h('div', { className: 'ssm-p-descwrap' }, t('providerHint'))) : null) : null,
+        // rpSelf 自检行语态（§6.9）：ok→ok 语态 ✓、detail→error 语态、frozen→warn PBadge（detail 行随冻结保留，warn 语态）
+        h('div', { className: 'ssm-p-card-title' }, t('rpSelf'),
+          !st ? '—' : sc.ok === false ? (sc.frozen ? h(PBadge, { kind: 'warn', text: t('rpFrozen') }) : null) : h('span', { className: 'ssm-p-ok' }, '✓')),
+        sc.ok === false ? h('div', { className: sc.frozen ? 'ssm-p-warn' : 'ssm-p-err' }, sc.detail) : null,
+        // 节标题计数随 composer 同场景口径：PBadge muted（§7 裁量项）；rpDiagFail/dgErr 文案照旧
+        h('div', { className: 'ssm-p-card-title' }, t('rpDiag'),
+          dg ? h(PBadge, { kind: 'muted', text: String(dgCount) }) : dgErr ? `⚠ ${t('rpDiagFail')}` : '—'),
+        dgErr ? h('div', { className: 'ssm-p-descwrap' }, dgErr) : null,
         ...dgRows);
     }
 
@@ -882,6 +903,7 @@ window.__ModuleLoader__.load({
       download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
       upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
       undo: 'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+      refresh: 'M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10', // 右栏 ⟳ 刷新钮（feather rotate-cw 同款）
       linkOff: 'M9 17H7a5 5 0 0 1 0-10h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8M3 3l18 18',
       search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16M21 21l-4.35-4.35',
       chevron: 'M6 9l6 6 6-6',
@@ -1405,6 +1427,12 @@ window.__ModuleLoader__.load({
 .ssm-p-lvl-info{background:var(--dsw-alias-brand-primary)}
 .ssm-p-descwrap{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:normal} /* 旧 .ssm-hint 文本语态复刻：长名单/路径/where/fix 不截断（.ssm-p-desc 是 nowrap 兜底） */
 .ssm-p-warn{font-size:11px;color:var(--dsw-alias-state-warn-primary,#f5a623);white-space:normal} /* 旧 .ssm-warn-inline 复刻：迁移预览警告行 */
+/* 右栏详情 tab（spec 2026-11-07 §6.9）：sticky 头 + 行卡 + 紧凑诊断；宽度由 betterSidebar 决定，本组类只管内（§5.7）——管内边距/滚动照旧 .ssm-rp 现值 */
+.ssm-s-rp{display:flex;flex-direction:column;gap:6px;height:100%;overflow:auto;padding:6px 8px;font-size:12px}
+.ssm-s-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;margin:0 -8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)} /* 头伸出管内边距成通栏（同款 .ssm-p-head 手法）；opaque 底遮住滚动穿行的内容 */
+.ssm-s-dgrow{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;flex-wrap:wrap} /* 旧 .ssm-diag-row 复刻：诊断摘要紧凑行（5 组 × 前 3 条，不含 where/fix） */
+.ssm-p-ok{font-size:11px;color:var(--dsw-alias-state-success-primary,#22c55e)} /* 旧 .ssm-ok 复刻：rpSelf ok 语态 ✓ */
+.ssm-p-err{font-size:11px;color:var(--dsw-alias-state-error-primary,#e5484d);white-space:normal} /* 旧 .ssm-err 文本语态复刻（与 .ssm-p-warn 同族）：rpSelf detail 行 */
 `;
 
     return {
