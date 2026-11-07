@@ -986,11 +986,11 @@ window.__ModuleLoader__.load({
         return c;
       };
       // 等待期不禁用页签（用户 2026-10-29：装一个仓库要几十秒，连切页签都做不到）
-      const tabBtn = (id, label) => h('button', { className: 'ssm-tab' + (tab === id ? ' ssm-tab-on' : ''), onClick: () => setTab(id) }, label);
-      return h('div', { className: 'ssm-settings' },
-        h('div', { className: 'ssm-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('global', t('tabGlobal')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
+      const tabBtn = (id, label) => h('button', { className: 'ssm-s-tab' + (tab === id ? ' ssm-s-tab-on' : ''), onClick: () => setTab(id) }, label); // 页签不加 disabled（spec §5.4/AC#1）；文案沿用 tab* 键（verify 字面锚点）
+      return h('div', { className: 'ssm-s-settings' },
+        h('div', { className: 'ssm-s-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('global', t('tabGlobal')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
         h(TaskStrip, { t, tasks }), // 条子挂在页签下方：切到任何页签都看得见（Review Focus #1/#5）
-        msg ? h('div', { className: msg.kind === 'err' ? 'ssm-err' : 'ssm-ok' }, msg.text) : null,
+        msg ? h('div', { className: `ssm-p-banner ${msg.kind === 'err' ? 'ssm-p-banner-error' : 'ssm-p-banner-ok'}` }, h(Icon, { n: msg.kind === 'err' ? 'alert' : 'check' }), msg.text) : null, // msg 换 banner 语态：成功 ok 底、失败 error 底（spec §6.4）
         tab === 'library' ? h(React.Fragment, null,
           h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('filterPh'), value: filter, onChange: (e) => setFilter(e.target.value) }),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
@@ -1354,6 +1354,14 @@ window.__ModuleLoader__.load({
 @media (prefers-reduced-motion:reduce){.ssm-p-rowcard>.ssm-p-row>.ssm-p-icon-btn{opacity:1;transition:none}}
 .ssm-s-btn{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌软底复刻：供 .ssm-s-* 界面使用，承接旧区按钮软底选择器的 :not() 豁免职责（spec §5.5/§6.1） */
 .ssm-s-btn:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
+/* 设置页壳 + 页签分段控件 + msg 横幅（spec 2026-11-07 §6.4）：软底分段页签（选中 brand 14% 药丸、纯文字）+ banner ok 语态；根布局照旧 920px */
+.ssm-s-settings{display:flex;flex-direction:column;gap:8px;padding:4px 2px;max-width:920px}
+.ssm-s-tabs{display:flex;align-self:flex-start;gap:4px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.ssm-s-tab{font:inherit;font-size:12px;border:0;background:0;color:var(--dsw-alias-label-secondary);padding:5px 12px;border-radius:999px;cursor:pointer}
+.ssm-s-tab:hover{color:var(--dsw-alias-label-primary)}
+.ssm-s-tab-on{color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
+.ssm-s-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ssm-p-banner-ok{color:var(--dsw-alias-state-success-primary,#22c55e);background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#22c55e) 12%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#22c55e) 40%,transparent)} /* 成功语态复刻（spec §6.4 msg ok 底；warn/error/muted 见上） */
 `;
 
     return {
