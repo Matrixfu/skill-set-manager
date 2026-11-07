@@ -8,7 +8,7 @@ import path from 'node:path';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { parseSkillSetLine, parseToolArgs, TOOL_ACTIONS } from './lib/core/commandLine.js';
 import { buildRoots, projectSkillsDir } from './lib/core/paths.js';
-import { registerLibrary, readManifest, walkFiles, claimSource } from './lib/core/manifest.js';
+import { registerLibrary, readManifest, localModified, backfillManifestStats, claimSource } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
 import { findProjectRoot } from './lib/core/projectRoot.js';
 import { readBinding, writeBinding } from './lib/core/binding.js';
@@ -327,11 +327,11 @@ export function apply(ctx, config) {
         if (n.startsWith('.')) continue;
         const dir = path.join(roots.libraryRoot, n);
         const mf = readManifest(dir);
-        let localModified = false;
-        if (mf?.files) {
-          const now = walkFiles(dir);
-          localModified = Object.keys(mf.files).some((p) => mf.files[p] !== now[p]) || Object.keys(now).some((p) => now[p] !== mf.files[p]);
-        }
+        // 「本地改动」走 core 的 stats 廉价口径：stat 未变即不读盘。旧口径每次打开面板/设置页都
+        // 把整库 sha256 一遍（本机实测 96 技能 11386 文件 451.8MB ≈ 1.5s，且是同步 fs，
+        // 期间 host 事件循环整个卡住），这就是「点技能集要等 2~3 秒」的根因。
+        const modified = localModified(dir, mf);
+        if (mf && !mf.stats) backfillManifestStats(dir, mf); // 升级前的旧 manifest 无 stats：补一次，之后一律走快路径
         const hasSkillMd = fs.existsSync(path.join(dir, 'SKILL.md'));
         library.push({
           name: n,
@@ -340,7 +340,7 @@ export function apply(ctx, config) {
           hasSkillMd,
           skillMd: hasSkillMd ? path.join(dir, 'SKILL.md') : null, // 右栏点击打开的绝对路径（P1b-T0）
           managed: !!mf,
-          localModified,
+          localModified: modified,
           backupCount: bk.listBackups(roots, n).length,
         });
       }

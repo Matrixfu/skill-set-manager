@@ -63,6 +63,22 @@ function writeSkill(parentDir, name, desc = 'verify 夹具技能') {
   fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---\n\nverify 夹具，可安全删除。\n`);
   return dir;
 }
+/**
+ * 计数 fs 垫片：只数「技能内容文件」的 readFileSync（.manifest.json 不计）。
+ * staleness 快路径的口径断言用它：未改动的技能不得被读盘（读全库内容 = 面板打开 2~3 秒的根因）。
+ */
+function countingReadFs() {
+  const box = { content: 0, paths: [] };
+  box.fs = {
+    readdirSync: (p, o) => fs.readdirSync(p, o),
+    statSync: (p) => fs.statSync(p),
+    readFileSync: (p, enc) => {
+      if (!String(p).endsWith('.manifest.json')) { box.content++; box.paths.push(String(p)); }
+      return fs.readFileSync(p, enc);
+    },
+  };
+  return box;
+}
 function gitInit(dir) { execFileSync('git', ['init', '-q', dir], { stdio: 'ignore' }); return dir; }
 function gitProject(dir) { mkdirp(path.join(dir, '.agents', 'skills')); return gitInit(dir); }
 
@@ -437,6 +453,66 @@ const CASES = [
       eq(m3.commit, 'dead00', 'writeSkillManifest commit');
       ok(Object.keys(m3.files).includes('SKILL.md'), 'writeSkillManifest files 逐文件');
       eq(JSON.parse(fs.readFileSync(path.join(f.library, 'lib-c', '.manifest.json'), 'utf8')).commit, 'dead00', 'writeSkillManifest 落盘');
+    },
+  },
+  {
+    id: 'lib-staleness', title: '库列表 staleness：manifest 记 size+mtime，未改动技能不得读盘（面板/设置页打开的热路径）',
+    async run(f) {
+      await withRoots(f);
+      const dir = writeSkill(f.library, 'lib-a');
+      fs.writeFileSync(path.join(dir, 'extra.txt'), 'x');
+      mkdirp(path.join(dir, 'assets'));
+      fs.writeFileSync(path.join(path.join(dir, 'assets'), 'big.bin'), 'y'.repeat(4096));
+      const { registerLibrary, readManifest, localModified } = await core('manifest');
+      await registerLibrary(f.roots);
+      const mf = readManifest(dir);
+      ok(mf && mf.files, '登记后应有 manifest');
+      ok(mf.stats && Object.keys(mf.stats).length === Object.keys(mf.files).length, 'manifest.stats 逐文件 size:mtime（廉价 staleness 基线）');
+      for (const v of Object.values(mf.stats)) ok(/^\d+:\d+$/.test(String(v)), `stats 值为 size:mtime 口径（实际 ${v}）`);
+      eq(localModified(dir, mf), false, '未改动 → 非本地改动');
+
+      // 症状本体：开面板/开设置页都要扫库，未改动的技能一次内容读都不该发生
+      const counter = countingReadFs();
+      eq(localModified(dir, mf, { fs: counter.fs }), false, 'staleness 快路径仍判未改动');
+      eq(counter.content, 0, '未改动技能的内容读次数（应为 0：全库读盘 452MB 就是 2~3 秒的来源）');
+
+      // stat 不匹配必须回读内容再判：只 touch 不得假红
+      const p = path.join(dir, 'extra.txt');
+      const st0 = fs.statSync(p);
+      fs.utimesSync(p, new Date(st0.atimeMs), new Date(st0.mtimeMs + 5000));
+      eq(localModified(dir, mf), false, '只改 mtime 不改内容 → 仍非本地改动（不得假红）');
+
+      // 真改动 / 新增 / 删除都要红
+      fs.writeFileSync(p, 'x changed and longer');
+      eq(localModified(dir, mf), true, '内容改动 → 本地改动');
+      fs.writeFileSync(path.join(dir, 'new.txt'), 'n');
+      eq(localModified(dir, mf), true, '新增文件 → 本地改动');
+      fs.rmSync(path.join(dir, 'new.txt'));
+      fs.writeFileSync(p, 'x');
+      fs.utimesSync(p, new Date(st0.atimeMs), new Date(st0.mtimeMs));
+      eq(localModified(dir, mf), false, '改回基线内容 → 回落非本地改动');
+      fs.rmSync(path.join(dir, 'assets', 'big.bin'));
+      eq(localModified(dir, mf), true, '删除基线文件 → 本地改动');
+
+      // 旧 manifest（升级前没有 stats）必须照常判，且补 stats 后不再读盘
+      const legacy = { ...mf }; delete legacy.stats;
+      const c1 = countingReadFs();
+      eq(localModified(dir, legacy, { fs: c1.fs }), true, '无 stats 的旧 manifest：全量哈希兜底仍能判改动');
+      ok(c1.content > 0, '无 stats 时回退全量哈希（一次性代价）');
+      fs.writeFileSync(path.join(dir, 'assets', 'big.bin'), 'y'.repeat(4096));
+      const { backfillManifestStats } = await core('manifest');
+      await backfillManifestStats(dir, readManifest(dir));
+      const mf2 = readManifest(dir);
+      ok(mf2.stats && Object.keys(mf2.stats).length === Object.keys(mf2.files).length, 'backfillManifestStats 补齐 stats');
+      eq(mf2.dirDigest, mf.dirDigest, '补 stats 不动 dirDigest（基线摘要口径不变）');
+      eq(mf2.files['extra.txt'], mf.files['extra.txt'], '补 stats 不动 files 基线哈希');
+
+      // host 侧接缝：libraryList 不得再全库哈希（改了 core 但 host 没接上 = 依旧慢）
+      const hostSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'index.js'), 'utf8');
+      const i0 = hostSrc.indexOf('async libraryList');
+      const libList = hostSrc.slice(i0, hostSrc.indexOf('认领来源（§8.1）', i0));
+      ok(i0 >= 0 && libList.includes('localModified('), 'index.js libraryList 走 core localModified 廉价口径');
+      ok(!libList.includes('walkFiles('), 'libraryList 不再 walkFiles 全库哈希（452MB 读盘 = 2~3 秒）');
     },
   },
   {

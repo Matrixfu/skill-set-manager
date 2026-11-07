@@ -7,6 +7,7 @@
  *   ④ 所有 h(Icon, { n: '字面' }) 的 n ∈ ICON_PATHS（图标引用完整性）；
  *   ⑤ CSS 隔离：旧 .ssm-* 规则区零 ssm-p- 污染、新区只含 .ssm-p- / .ssm-s- / .ssm-chip-btn 三类新前缀（同一视觉轨道的机械证明，spec 2026-11-07 §6.1），
  *      并证明退役旧类（§5.5 矩阵 + Task 6.3 清理清单）既没在 CSS 里长回来、也没被 JS className 字面引用。
+ *   ⑥ 面板秒开：Panel 首屏吃 chip 预拉的 bus 快照（seed），且 seed 传入前比对 sessionId。
  * 用法: node scripts/ui-gates.mjs  （退出码 0=全绿；FAIL 列明细）
  */
 import fs from 'node:fs';
@@ -148,6 +149,12 @@ else {
     }
   }
 }
+
+// ⑥ 面板秒开（性能回归 2026-11-07）：开面板不得再从 null 起等一轮 RPC——
+//    Panel 首屏必须吃 chip 挂载时预拉的 bus 快照，且快照要按 sessionId 比对后才传入（防跨会话串台）。
+if (!/function Panel\(\{[^}]*\bseed\b/.test(src)) fails.push('fast-open: Panel 未接 seed 参数（开面板仍从 null 起，骨架屏必然等满一个来回）');
+if (!src.includes('React.useState(seed ?? null)')) fails.push('fast-open: Panel 首屏未用 seed 初始化（预拉快照被丢掉）');
+if (!src.includes('seed: b.state?.sessionId === b.sessionId ? b.state : null')) fails.push('fast-open: OverlayHost 传入 seed 未比对 sessionId（跨会话快照会串台）');
 
 if (fails.length) {
   console.log('UI GATES: FAIL');

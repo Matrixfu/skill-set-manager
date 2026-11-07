@@ -382,9 +382,12 @@ window.__ModuleLoader__.load({
         line(desc), line(sub));
     }
 
-    function Panel({ ctx, t, sessionId, onClose, bs }) {
+    function Panel({ ctx, t, sessionId, onClose, bs, seed }) {
       const tasks = useTasks(); // 与设置页同一份模块级任务态：面板关掉后，导入的进行中与结果仍在这份状态里
-      const [state, setState] = React.useState(null);
+      // 秒开：chip 挂载即预拉过同一会话的 state（ComposerChip），那份快照就是首屏数据源，
+      // 不必再等一轮 RPC——旧口径每次开面板都从 null 起，骨架屏必然等满一个来回（host 侧当时实测 ~1.5s）。
+      // seed 由 OverlayHost 比对过 sessionId 才传入，跨会话快照不得串台。
+      const [state, setState] = React.useState(seed ?? null);
       const [error, setError] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
       const [confirm, setConfirm] = React.useState(null); // {kind:'switch'|'del', slug}
@@ -910,7 +913,7 @@ window.__ModuleLoader__.load({
       if (!b.open) return null;
       return h('div', { className: 'ssm-p-overlay', onClick: () => bus.setOpen(false) },
         b.sessionId
-          ? h(Panel, { ctx, t, sessionId: b.sessionId, onClose: () => bus.setOpen(false), bs })
+          ? h(Panel, { ctx, t, sessionId: b.sessionId, onClose: () => bus.setOpen(false), bs, seed: b.state?.sessionId === b.sessionId ? b.state : null })
           : h('div', { className: 'ssm-p-panel', style: { padding: 14 } }, t('noSession')));
     }
 

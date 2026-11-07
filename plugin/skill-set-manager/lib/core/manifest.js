@@ -9,8 +9,15 @@ import { normalizeRepoSource } from './source.js';
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-export function walkFiles(root, { fs: fsImpl = fs } = {}) {
+/**
+ * 一次遍历同时产出两样东西：逐文件哈希（基线）与逐文件 stat 摘要（size:mtime）。
+ * `hash:false` = 只 stat 不读内容——「本地改动」判定的廉价口径。
+ * 实测本机 96 技能 / 11386 文件 / 451.8MB：读+sha256 1483ms（其中读盘占 84%），
+ * 只 stat 172ms；旧口径每次开面板都全库读盘，就是面板与设置页 2~3 秒的来源。
+ */
+function walkScan(root, { fs: fsImpl = fs, hash = true } = {}) {
   const files = {};
+  const stats = {};
   const walk = (dir, rel) => {
     for (const ent of fsImpl.readdirSync(dir, { withFileTypes: true })) {
       if (ent.name.startsWith('.')) continue; // .manifest.json 自身与点目录一律不进哈希表
@@ -18,18 +25,67 @@ export function walkFiles(root, { fs: fsImpl = fs } = {}) {
       const r = rel ? `${rel}/${ent.name}` : ent.name;
       const st = fsImpl.statSync(abs); // 跟随 junction
       if (st.isDirectory()) walk(abs, r);
-      else if (st.isFile()) files[r] = 'sha256:' + sha256(fsImpl.readFileSync(abs));
+      else if (st.isFile()) {
+        stats[r] = `${st.size}:${Math.round(st.mtimeMs)}`;
+        if (hash) files[r] = 'sha256:' + sha256(fsImpl.readFileSync(abs));
+      }
     }
   };
   walk(root, '');
-  return files;
+  return { files, stats };
+}
+
+export function walkFiles(root, opts) {
+  return walkScan(root, opts).files;
+}
+
+/** 与 walkFiles 同一趟遍历，但不读内容、不哈希，只回 size:mtime 摘要（staleness 快路径）。 */
+export function walkStat(root, opts) {
+  return walkScan(root, { ...opts, hash: false }).stats;
+}
+
+const hashFile = (abs, fsImpl = fs) => 'sha256:' + sha256(fsImpl.readFileSync(abs));
+
+/** 两张哈希表是否不同（现口径：任一方向有差异即不同）。 */
+function hashDiffers(baseline, now) {
+  return Object.keys(baseline).some((p) => baseline[p] !== now[p]) || Object.keys(now).some((p) => now[p] !== baseline[p]);
+}
+
+/**
+ * 「本地改动」判定（§6.4 徽标）：盘上现状 vs manifest 基线，只回布尔。
+ * 快路径靠 manifest.stats（登记/安装时记下的 size:mtime）：stat 口径没变即内容没变，一个文件都不读；
+ * stat 不匹配才回读该文件哈希比对（只 touch 不假红）。
+ * 已知代价：内容变了但 size 与 mtime 都没变（工具刻意保留 mtime 那类）会漏判——
+ * 升级检查/卸载/备份还原等真正要命的判定仍走 walkFiles 全量哈希，不受此影响。
+ * 旧 manifest 没有 stats：回退一次全量哈希，由调用方补写 stats（backfillManifestStats）后即走快路径。
+ */
+export function localModified(dir, mf, { fs: fsImpl = fs } = {}) {
+  const baseline = mf?.files;
+  if (!baseline || !Object.keys(baseline).length) return false; // 无基线 = 无从比对（照旧口径）
+  if (!mf.stats) return hashDiffers(baseline, walkFiles(dir, { fs: fsImpl }));
+  const nowStats = walkStat(dir, { fs: fsImpl });
+  for (const [p, baseHash] of Object.entries(baseline)) {
+    const now = nowStats[p];
+    if (now === undefined) return true; // 基线文件已不在盘上
+    if (now === mf.stats[p]) continue; // size+mtime 未变 → 不读盘
+    if (hashFile(path.join(dir, p), fsImpl) !== baseHash) return true;
+  }
+  return Object.keys(nowStats).some((p) => !(p in baseline)); // 基线外新增文件
+}
+
+/** 给升级前的旧 manifest 补写 stats（一次性）。只加字段，files/dirDigest 基线口径一字不动。 */
+export function backfillManifestStats(dir, mf, { fs: fsImpl = fs } = {}) {
+  if (!mf || mf.stats) return mf;
+  const next = { ...mf, stats: walkStat(dir, { fs: fsImpl }) };
+  writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(next, null, 2) + '\n', { fs: fsImpl });
+  return next;
 }
 
 /** 逐文件哈希 + 目录摘要（§11 manifest 形状，#8 验收字段）。 */
 function buildManifest(dir, name, { source = 'unknown', commit = null }, fsImpl) {
   const skillMd = fsImpl.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
   const fm = parseFrontmatter(skillMd);
-  const files = walkFiles(dir, { fs: fsImpl });
+  const { files, stats } = walkScan(dir, { fs: fsImpl });
   const dirDigest = 'sha256:' + sha256(Buffer.from(
     Object.entries(files).sort().map(([k, v]) => `${k}:${v}`).join('\n'),
   ));
@@ -40,6 +96,7 @@ function buildManifest(dir, name, { source = 'unknown', commit = null }, fsImpl)
     installedAt: new Date().toISOString(),
     managed: true,
     files,
+    stats,
     dirDigest,
   };
 }
