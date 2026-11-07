@@ -2161,10 +2161,12 @@ const CASES = [
       ok(/task\.status !== 'running' \? 100/.test(body), '只有 RPC 真返回才 100%');
       ok(/opts\.onDone\?\.\(\{ ok:/.test(body), 'settle 后回调 onDone(settled)');
       ok(/function TaskStrip\(\{ t, tasks \}\)/.test(body), 'TaskStrip 组件签名');
-      ok(/\.ssm-bar\{/.test(body) && /\.ssm-bar-fill\{/.test(body) && /\.ssm-bar-ok\{/.test(body) && /\.ssm-bar-err\{/.test(body), '进度条 CSS 四件套');
+      ok(/h\('div', \{ className: 'ssm-p-task' \}/.test(body), 'TaskStrip 根是新类横幅（spec §6.3 横幅形态，不再挂旧 .ssm-task）');
+      ok(/\.ssm-bar\{/.test(body) && /\.ssm-bar-fill\{/.test(body) && /\.ssm-bar-ok\{/.test(body) && /\.ssm-bar-err\{/.test(body), '进度条 CSS 四件套（类名保留不动，锚点稳定）');
+      ok(/\.ssm-p-task\{/.test(body), '横幅根 .ssm-p-task CSS 住新区（MARK 之后，spec §6.1）');
       ok(/style: \{ width: pct \+ '%' \}/.test(body), '进度条宽度按 percent 驱动');
       ok(/setInterval\(tick, 500\)/.test(body), '耗时每 500ms 刷一次');
-      ok(/tasks\.running \? null : h\('button'/.test(body), '在飞不提供清除：不能取消就别假装能收起');
+      ok(/tasks\.running \? null : h\('button', \{ className: 'ssm-p-icon-btn'/.test(body), '在飞不提供清除：不能取消就别假装能收起；× 换 .ssm-p-icon-btn（spec §6.3）');
       ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
       ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
       ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : null/.test(body), '结束后文案收口：完成显文案，失败交给下方红行（终审 I1/N3）');

@@ -79,6 +79,10 @@ window.__ModuleLoader__.load({
         otherSec: '其他（不受技能集管控）',
         descPh: '描述（可空）', emptySearch: '没有匹配的技能', emptyList: '当前没有生效技能', updatedAt: '更新于',
         ariaExpand: '展开', ariaCollapse: '收起', ariaPick: '勾选',
+        // 设置页/右栏美化（spec 2026-11-07）：基座新键，一次补齐（Task 3–6 消费；zh/en 同键集）
+        rpModified: '本地改动',
+        sAriaCheckUpd: '检查更新', sAriaTrashBin: '移入回收站', sAriaClaim: '改认领', sAriaUninstall: '卸载', sAriaReload: '刷新',
+        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sEmptyGlobal: '还没有全局常驻技能：勾选候选即在所有项目生效', sEmptyDiag: '未发现异常',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -146,6 +150,10 @@ window.__ModuleLoader__.load({
         otherSec: 'Other (outside skill-set control)',
         descPh: 'Description (optional)', emptySearch: 'no matching skills', emptyList: 'no skills are active right now', updatedAt: 'updated',
         ariaExpand: 'expand', ariaCollapse: 'collapse', ariaPick: 'tick',
+        // settings/right-panel beautify (spec 2026-11-07): base keys, added up front (consumed by Tasks 3-6; same key set as zh)
+        rpModified: 'locally modified',
+        sAriaCheckUpd: 'check for updates', sAriaTrashBin: 'move to trash', sAriaClaim: 're-claim source', sAriaUninstall: 'uninstall', sAriaReload: 'reload',
+        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sEmptyGlobal: 'No global resident skills yet: tick candidates to make them active in every project', sEmptyDiag: 'No issues found',
       },
     };
 
@@ -257,8 +265,8 @@ window.__ModuleLoader__.load({
       if (!task) return null;
       const pct = taskPercent(task, now);
       const secs = Math.max(0, Math.floor(((task.doneAt ?? now) - task.startedAt) / 1000));
-      return h('div', { className: 'ssm-task' },
-        h('div', { className: 'ssm-row' },
+      return h('div', { className: 'ssm-p-task' },
+        h('div', { className: 'ssm-p-task-row' },
           task.status === 'running' ? h('span', { className: 'ssm-spin' }, null) : null,
           h('span', { className: 'ssm-cur' }, t(SLOW_OPS[task.op].label)),
           task.target ? h('span', { className: 'ssm-n' }, task.target) : null,
@@ -267,7 +275,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ssm-grow' }, null),
           h('span', { className: 'ssm-n' }, t('taskElapsed').replace('{n}', `${secs}`)),
           // 在飞不提供 ×：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」（设计末条判断）
-          tasks.running ? null : h('button', { onClick: () => clearTask(), title: t('taskDismiss') }, '×')),
+          tasks.running ? null : h('button', { className: 'ssm-p-icon-btn', onClick: () => clearTask(), title: t('taskDismiss') }, h(Icon, { n: 'x' }))),
         h('div', { className: 'ssm-bar' },
           h('div', { className: task.status === 'err' ? 'ssm-bar-fill ssm-bar-err' : task.status === 'ok' ? 'ssm-bar-fill ssm-bar-ok' : 'ssm-bar-fill', style: { width: pct + '%' } })),
         task.status === 'err' ? h('div', { className: 'ssm-err' }, `${t('opFailed')}: ${String(task.error?.message ?? task.error ?? '')}`) : null,
@@ -328,6 +336,32 @@ window.__ModuleLoader__.load({
       }
       scored.sort((a, b) => a.rank - b.rank || String(a.row?.name ?? '').localeCompare(String(b.row?.name ?? '')));
       return scored.map((x) => x.row);
+    }
+
+    /**
+     * 共享行壳（spec 2026-11-07 §6.2）：设置页/右栏共用的行卡骨架（Task 6 起弹框 SkillRow 也收口到这里）。
+     * 槽位：leading（复选框/色点）+ 名称 + 徽章组（PBadge 数组）+ 第二行 desc + 第三行 sub + 尾部动作条 actions；
+     * gray=灰态（.ssm-p-gray 语汇）、removed=删除线、onClick=整行点击（右栏开 SKILL.md，tabIndex+role 键盘可达）。
+     * 行形态同款 .ssm-p-row：hover 底色 8%、:focus-visible brand 环、hover/focus-within 显形动作条；
+     * 常驻动作（confirm 态）不在「.ssm-p-row 直接子级 .ssm-p-icon-btn」显形选择器覆盖范围内，天然常显。
+     * desc/sub 传 React 元素时原样透传（调用方可自带 .ssm-p-desc 与 title），纯内容则包 .ssm-p-desc。
+     * 顶层段声明（client-scope）：Panel/SettingsSection/RightPanel 三段都要消费，不能塞进某段内部。
+     * t 预留：Task 3/5/6 的 aria/文案收口再消费。
+     */
+    function RowShell({ t, name, badges, desc, sub, actions, gray, onClick, clickTitle, leading, removed }) {
+      const line = (v) => v == null ? null
+        : typeof v === 'object' && v && v.$$typeof ? v : h('div', { className: 'ssm-p-desc' }, v);
+      return h('div', {
+        className: 'ssm-p-rowcard' + (gray ? ' ssm-p-gray' : '') + (onClick ? ' ssm-p-rowcard-click' : ''),
+        ...(onClick ? { tabIndex: 0, role: 'button', onClick, title: clickTitle } : {}),
+      },
+        h('div', { className: 'ssm-p-row' },
+          leading ?? null,
+          h('span', { className: 'ssm-p-name' + (removed ? ' ssm-p-strike' : '') }, name),
+          ...(badges ?? []).map((b) => h(PBadge, { key: b.text, kind: b.kind, text: b.text })),
+          h('span', { className: 'ssm-grow' }, null),
+          ...(actions ?? [])),
+        line(desc), line(sub));
     }
 
     function Panel({ ctx, t, sessionId, onClose, bs }) {
@@ -400,11 +434,7 @@ window.__ModuleLoader__.load({
         run(() => call(ctx, 'switchSet', { sessionId, slug }));
       };
       const sc = st.selfCheck ?? {};
-      // 库行徽标（T8 Step2 / review m6）：来源与本地改动提示
-      const LibBadges = ({ lib }) => h(React.Fragment, null,
-        lib.source && lib.source !== 'unknown' ? h('span', { className: 'ssm-n' }, ` ${String(lib.source).replace('github:', '').slice(0, 20)}`) : null,
-        lib.localModified ? h('span', { className: 'ssm-warn-inline' }, ` ${t('modifiedTag')}`) : null);
-      // —— 生效清单卡数据面（Task 3，spec §6.4）：徽章口径与右栏 rp* / LibBadges 同源 ——
+      // —— 生效清单卡数据面（Task 3，spec §6.4）：徽章口径与右栏 rp* 同源 ——
       const brokenSet = new Set(sc.brokenLinks ?? []);
       const missingSet = new Set(st.effective?.missing ?? []);
       const foreignSet = new Set(sc.foreign ?? []);
@@ -1195,8 +1225,6 @@ window.__ModuleLoader__.load({
 .ssm-dot-ok{background:var(--dsw-alias-state-success-primary,#22c55e)}.ssm-dot-red{background:var(--dsw-alias-state-error-primary,#e5484d)}.ssm-dot-idle{background:var(--dsw-alias-label-secondary)}
 .ssm-cur{color:var(--dsw-alias-label-primary);font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssm-badge{min-width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-state-error-primary,#e5484d);color:#fff;font-size:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
-.ssm-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center;padding:0 12px 12px;pointer-events:auto}
-.ssm-panel{width:min(620px,96vw);max-height:72vh;overflow:auto;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
 .ssm-head{display:flex;align-items:center;gap:8px}
 .ssm-x{background:0;border:0;color:inherit;font-size:15px;cursor:pointer;padding:2px 6px}
 .ssm-grow{flex:1}
@@ -1214,13 +1242,10 @@ window.__ModuleLoader__.load({
 .ssm-sec{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px;display:flex;gap:6px;align-items:center}
 .ssm-hint{font-size:10px;color:var(--dsw-alias-label-secondary)}
 .ssm-row{display:flex;align-items:center;gap:4px;font-size:12px}
-.ssm-pick{flex:1;display:flex;align-items:center;gap:6px;background:0;border:0;color:var(--dsw-alias-label-primary);cursor:pointer;padding:4px 6px;border-radius:6px;text-align:left;min-width:0}
-.ssm-pick:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)}
 .ssm-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
 .ssm-n{color:var(--dsw-alias-label-secondary);font-size:11px}
-.ssm-cur-tag{font-size:10px;color:var(--dsw-alias-brand-primary)}
-.ssm-row button:not(.ssm-pick){font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌色软底（用户 2026-10-26：要一眼可辨的按钮） */
-.ssm-row button:not(.ssm-pick):hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
+.ssm-row button{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌色软底（用户 2026-10-26：要一眼可辨的按钮；原 :not() 豁免随其目标类删除一并简化，同款复刻见新区 .ssm-s-btn） */
+.ssm-row button:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
 .ssm-row button.ssm-danger,.ssm-settings .ssm-row button.ssm-danger,.ssm-confirm button.ssm-danger,.ssm-settings .ssm-confirm button.ssm-danger{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 16%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent)} /* 高危操作（解绑/卸载/删除）错误色（用户 2026-10-26） */
 .ssm-row button.ssm-danger:hover,.ssm-settings .ssm-row button.ssm-danger:hover,.ssm-confirm button.ssm-danger:hover,.ssm-settings .ssm-confirm button.ssm-danger:hover{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 28%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary) 75%, transparent)}
 .ssm-input{flex:1;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 7px;min-width:0}
@@ -1229,9 +1254,6 @@ window.__ModuleLoader__.load({
 .ssm-ok{font-size:11px;color:var(--dsw-alias-state-success-primary,#22c55e)}
 .ssm-confirm{font-size:11px;padding:5px 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
-.ssm-chips{display:flex;flex-wrap:wrap;gap:4px;font-size:11px}
-.ssm-chips .ssm-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;cursor:pointer}
-.ssm-chips .ssm-on{border-color:var(--dsw-alias-brand-primary)}
 .ssm-gray{opacity:.55}
 .ssm-desc-en{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .ssm-empty{font-size:11px;color:var(--dsw-alias-label-secondary)}
@@ -1320,6 +1342,18 @@ window.__ModuleLoader__.load({
 .ssm-p-seclabel{font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary);margin-top:4px}
 .ssm-p-empty{display:flex;align-items:center;gap:8px;padding:14px 6px;color:var(--dsw-alias-label-secondary);font-size:12px}
 .ssm-p-banner-muted{color:var(--dsw-alias-label-secondary);background:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);border-color:var(--dsw-alias-border-l2)}
+/* 设置页+右栏美化基座（spec 2026-11-07 §6.2/§6.3）：TaskStrip 横幅壳 + RowShell 行卡 + 品牌软底复刻 */
+.ssm-p-task{display:flex;flex-direction:column;gap:5px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.ssm-p-task-row{display:flex;align-items:center;gap:6px;font-size:12px}
+.ssm-p-rowcard{display:flex;flex-direction:column;gap:1px;border-radius:8px;padding:4px 6px}
+.ssm-p-rowcard:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+.ssm-p-rowcard-click{cursor:pointer}
+.ssm-p-rowcard-click:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ssm-p-rowcard>.ssm-p-row>.ssm-p-icon-btn{opacity:0;transition:opacity .12s}
+.ssm-p-rowcard:hover>.ssm-p-row>.ssm-p-icon-btn,.ssm-p-rowcard:focus-within>.ssm-p-row>.ssm-p-icon-btn{opacity:1}
+@media (prefers-reduced-motion:reduce){.ssm-p-rowcard>.ssm-p-row>.ssm-p-icon-btn{opacity:1;transition:none}}
+.ssm-s-btn{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌软底复刻：供 .ssm-s-* 界面使用，承接旧区按钮软底选择器的 :not() 豁免职责（spec §5.5/§6.1） */
+.ssm-s-btn:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
 `;
 
     return {

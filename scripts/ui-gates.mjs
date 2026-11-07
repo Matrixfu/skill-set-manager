@@ -5,7 +5,7 @@
  *   ② DICTS zh/en 键集双向相等（Review Focus #2 单 locale）；
  *   ③ 所有 t('字面键') 在 zh 与 en 都存在（英文界面不露裸键）；
  *   ④ 所有 h(Icon, { n: '字面' }) 的 n ∈ ICON_PATHS（图标引用完整性）；
- *   ⑤ CSS 隔离：旧 .ssm-* 规则区零新类污染、新区只含新类（设置页/右栏零波及的机械证明）。
+ *   ⑤ CSS 隔离：旧 .ssm-* 规则区零 ssm-p- 污染、新区只含 .ssm-p- / .ssm-s- / .ssm-chip-btn 三类新前缀（同一视觉轨道的机械证明，spec 2026-11-07 §6.1）。
  * 用法: node scripts/ui-gates.mjs  （退出码 0=全绿；FAIL 列明细）
  */
 import fs from 'node:fs';
@@ -72,8 +72,8 @@ if (iconPaths) {
   }
 }
 
-// ⑤ CSS 隔离（ADR-0004 / spec §6.9）：旧区（CSS 串开头→「面板美化」标记）零 ssm-p- 污染；
-//    新区选择器只许 .ssm-p-*/.ssm-chip-btn（@keyframes 步进 from/to/% 豁免；@media 头剥除）
+// ⑤ CSS 隔离（ADR-0004 / spec 2026-11-07 §6.1）：旧区（CSS 串开头→「面板美化」标记）零 ssm-p- 污染；
+//    新区选择器只许 .ssm-p-*/.ssm-s-*/.ssm-chip-btn（@keyframes 步进 from/to/% 豁免；@media 头剥除）
 const MARK = '/* 面板美化';
 const mIdx = src.indexOf(MARK);
 if (mIdx === -1) fails.push('css-sep: 找不到 CSS 隔离标记「/* 面板美化」');
@@ -82,7 +82,7 @@ else {
   if (cssStart === -1) fails.push('css-sep: 标记不在 CSS 模板串内');
   else {
     const oldRegion = src.slice(cssStart, mIdx);
-    if (oldRegion.includes('ssm-p-')) fails.push('css-sep: 旧区出现 ssm-p-（旧规则被污染，设置页/右栏会受影响）');
+    if (oldRegion.includes('ssm-p-')) fails.push('css-sep: 旧区出现 ssm-p-（新类写进了旧区，隔离标记形同虚设）');
     const newRegion = src.slice(mIdx, src.indexOf('`', mIdx));
     for (const raw of newRegion.split('}')) {
       const noComment = raw.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -92,7 +92,7 @@ else {
       for (const s of sel.split(',')) {
         const c = s.trim();
         if (!c || /^(from|to|\d+%|0%)$/.test(c)) continue;
-        if (!/^\.ssm-(p-|chip-btn)/.test(c)) fails.push(`css-sep: 新区选择器 "${c}" 不属于 .ssm-p-*/.ssm-chip-btn`);
+        if (!/^\.ssm-(p-|s-|chip-btn)/.test(c)) fails.push(`css-sep: 新区选择器 "${c}" 不属于 .ssm-p-*/.ssm-s-*/.ssm-chip-btn`);
       }
     }
   }
