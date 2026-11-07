@@ -347,13 +347,14 @@ window.__ModuleLoader__.load({
      * desc/sub 传 React 元素时原样透传（调用方可自带 .ssm-p-desc 与 title），纯内容则包 .ssm-p-desc。
      * 顶层段声明（client-scope）：Panel/SettingsSection/RightPanel 三段都要消费，不能塞进某段内部。
      * t 预留：Task 3/5/6 的 aria/文案收口再消费。
+     * title=非点击行的 hover 提示（库行 = 来源 @commit(7)，spec 2026-11-07 §6.5）；onClick 行 clickTitle 优先、缺省回落 title。
      */
-    function RowShell({ t, name, badges, desc, sub, actions, gray, onClick, clickTitle, leading, removed }) {
+    function RowShell({ t, name, badges, desc, sub, actions, gray, onClick, clickTitle, leading, removed, title }) {
       const line = (v) => v == null ? null
         : typeof v === 'object' && v && v.$$typeof ? v : h('div', { className: 'ssm-p-desc' }, v);
       return h('div', {
         className: 'ssm-p-rowcard' + (gray ? ' ssm-p-gray' : '') + (onClick ? ' ssm-p-rowcard-click' : ''),
-        ...(onClick ? { tabIndex: 0, role: 'button', onClick, title: clickTitle } : {}),
+        ...(onClick ? { tabIndex: 0, role: 'button', onClick, title: clickTitle ?? title } : (title ? { title } : {})),
       },
         h('div', { className: 'ssm-p-row' },
           leading ?? null,
@@ -971,9 +972,8 @@ window.__ModuleLoader__.load({
       const locked = !!tasks.running || !!busy;
       // 被单飞挡住的按钮必须写明在跑什么（反目标：不得制造新的「点了没反应」）
       const busyTitle = tasks.running ? t('taskBusyWith').replace('{n}', t(SLOW_OPS[tasks.running.op].label)) : undefined;
-      /** 进行中按钮 = 转圈小图标 + 进行时文案（用户 2026-10-26：检查更新要等几十秒，界面毫无反应像卡死）。 */
-      const busyBtn = (op, name, label, doing, onClick) => h('button', { disabled: locked, title: busyTitle, onClick },
-        rowBusy(op, name) ? h('span', { className: 'ssm-spin' }, null) : null, rowBusy(op, name) ? doing : label);
+      /** 图标钮 title：动作名打头，被单飞挡住时追加「正在跑什么」（反目标：不得制造新的「点了没反应」）。 */
+      const iTitle = (label) => (busyTitle ? `${label} · ${busyTitle}` : label);
       // 安装结果改从任务态读：原 instRes 是组件 state，关掉设置页就没了（Review Focus #1）
       const instDone = tasks.last?.op === 'installApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
@@ -992,7 +992,8 @@ window.__ModuleLoader__.load({
         h(TaskStrip, { t, tasks }), // 条子挂在页签下方：切到任何页签都看得见（Review Focus #1/#5）
         msg ? h('div', { className: `ssm-p-banner ${msg.kind === 'err' ? 'ssm-p-banner-error' : 'ssm-p-banner-ok'}` }, h(Icon, { n: msg.kind === 'err' ? 'alert' : 'check' }), msg.text) : null, // msg 换 banner 语态：成功 ok 底、失败 error 底（spec §6.4）
         tab === 'library' ? h(React.Fragment, null,
-          h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('filterPh'), value: filter, onChange: (e) => setFilter(e.target.value) }),
+          h('div', { className: 'ssm-p-row' }, // 过滤框换同款 .ssm-p-search（spec §6.5）；宽度归 flex-basis 管，不再 inline maxWidth
+            h('input', { className: 'ssm-p-search', placeholder: t('filterPh'), value: filter, 'aria-label': t('filterPh'), onChange: (e) => setFilter(e.target.value) })),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
           h('div', { className: 'ssm-row' },
             h('button', { disabled: locked, title: busyTitle, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], failed: p.failed ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
@@ -1042,96 +1043,107 @@ window.__ModuleLoader__.load({
                 ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-warn-inline' }, `${f.name}: ${f.error ?? ''}`)))
             : null,
           h('div', { className: 'ssm-hint' }, t('autoTranslateHint')),
-          rows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
-          ...rows.map((x) => h('div', { key: x.name, className: 'ssm-srow' },
-            h('div', { className: 'ssm-row' },
-              h('span', { className: 'ssm-cur' }, x.name),
-              h(Tag, { text: x.managed ? t('managedTag') : t('unmanagedTag'), warn: !x.managed }),
-              x.localModified ? h(Tag, { text: t('modifiedTag'), warn: true }) : null,
-              h('span', { className: 'ssm-n' }, `${String(x.source).replace('github:', '')}${x.commit ? ` @${String(x.commit).slice(0, 7)}` : ''}`),
-              h('span', { className: 'ssm-grow' }, null),
-              String(x.source).startsWith('github:')
-                ? busyBtn('updateCheck', x.name, t('checkUp'), t('checkingUp'), () => startLong(ctx, 'updateCheck', x.name, { name: x.name }, { onDone: (s) => { if (s.ok) setUpRes((m) => ({ ...m, [x.name]: s.value })); } }))
-                : null,
-              upRes[x.name] && !upRes[x.name].upToDate
-                ? busyBtn('updateApply', x.name, t('applyUp'), t('applyingUp'), () => startLong(ctx, 'updateApply', x.name, { name: x.name }, {
-                    noteOf: (s) => s.ok && s.value?.backup ? `${t('opDone')} · ${t('backupAt')} ${s.value.backup}` : null,
-                    onDone: (s) => {
-                      if (!s.ok) return; // 失败由 TaskStrip 染红并报原因，不再被 run() 的 catch 混成「操作失败」
-                      setUpRes((m) => ({ ...m, [x.name]: null }));
-                      load();
-                    },
-                  }))
-                : null,
-              x.backupCount
-                ? h('button', { disabled: locked, title: busyTitle, onClick: () => {
-                    if (backupsOf?.name === x.name) { setBackupsOf(null); return; }
-                    run(`bk:${x.name}`, async () => setBackupsOf({ name: x.name, list: (await call(ctx, 'backupsList', { name: x.name })).backups ?? [] }));
-                  } }
-                , `${t('backupsTitle')}(${x.backupCount})`)
-                : null,
-              h('button', {
-                disabled: locked,
-                title: t('claimHint'),
-                onClick: () => {
+          // 空态（§6.5 同款 .ssm-p-empty + 图标）：库为空=引导去安装；有过滤词无命中=没有匹配
+          rows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: filter.trim() ? 'search' : 'box' }), filter.trim() ? t('emptySearch') : t('sEmptyLib')) : null,
+          // 技能行 = 行壳卡片（spec §6.5）：徽章组 + 中文用途第二行 + 图标动作条；状态变体（认领编辑/diff/confirm/回收站）
+          // 一律经 RowShell 的 sub 槽嵌进同一张卡——操作前后不掉样式（AC#3）；RPC 调用面与参数字面一字未动。
+          ...rows.map((x) => {
+            const isGh = String(x.source).startsWith('github:');
+            const chk = rowBusy('updateCheck', x.name);
+            const ap = rowBusy('updateApply', x.name);
+            const up = upRes[x.name];
+            // 徽章组（§6.5）：受管 brand / 未登记（本地技能，GLOSSARY「本地技能 = Unmanaged Skill」）muted /
+            // 本地改动 warn / 目录缺 SKILL.md（不会被加载，diagnose structure 同款判定）error
+            const badges = [x.managed ? { kind: 'brand', text: t('managedTag') } : { kind: 'muted', text: t('unmanagedTag') }];
+            if (x.localModified) badges.push({ kind: 'warn', text: t('modifiedTag') });
+            if (x.hasSkillMd === false) badges.push({ kind: 'error', text: t('rpDead') });
+            // 第二行中文用途（§6.1 同款回退：未翻译显英文 + 待翻译角标）
+            const desc = x.descriptionZh
+              ? h('div', { className: 'ssm-p-desc', title: x.description ?? undefined }, x.descriptionZh)
+              : x.description
+                ? h('div', { className: 'ssm-p-desc', title: x.description }, x.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
+                : null;
+            // hover title = 来源 @commit(7)（§6.5）：本地/占位行无来源可展示，回落中文/名称（同款拼法）
+            const srcTitle = x.source === 'unknown' || x.source === 'placeholder'
+              ? (x.descriptionZh ?? x.name)
+              : `${String(x.source).replace('github:', '')}${x.commit ? ` @${String(x.commit).slice(0, 7)}` : ''}`;
+            return h(RowShell, {
+              key: x.name, t, name: x.name, badges, desc, title: srcTitle,
+              // 动作条 = 图标按钮 + aria/title（§6.5）：检查更新 download / 回收站 trash / 改认领 pencil / 卸载 trash-danger
+              actions: [
+                isGh ? h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: chk ? t('checkingUp') : iTitle(t('sAriaCheckUpd')), 'aria-label': t('sAriaCheckUpd'), onClick: () => startLong(ctx, 'updateCheck', x.name, { name: x.name }, { onDone: (s) => { if (s.ok) setUpRes((m) => ({ ...m, [x.name]: s.value })); } }) }, chk ? h('span', { className: 'ssm-spin' }, null) : h(Icon, { n: 'download' })) : null,
+                // 应用更新 = 拉远端写回本地，图标用 upload 与「检查更新」的 download 区分（两个都是 download 会读成同一件事）
+                up && !up.upToDate ? h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: ap ? t('applyingUp') : iTitle(t('applyUp')), 'aria-label': t('applyUp'), onClick: () => startLong(ctx, 'updateApply', x.name, { name: x.name }, {
+                  noteOf: (s) => s.ok && s.value?.backup ? `${t('opDone')} · ${t('backupAt')} ${s.value.backup}` : null,
+                  onDone: (s) => {
+                    if (!s.ok) return; // 失败由 TaskStrip 染红并报原因，不再被 run() 的 catch 混成「操作失败」
+                    setUpRes((m) => ({ ...m, [x.name]: null }));
+                    load();
+                  },
+                }) }, ap ? h('span', { className: 'ssm-spin' }, null) : h(Icon, { n: 'upload' })) : null,
+                x.backupCount ? h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: iTitle(`${t('backupsTitle')}(${x.backupCount})`), 'aria-label': t('sAriaTrashBin'), onClick: () => {
+                  if (backupsOf?.name === x.name) { setBackupsOf(null); return; }
+                  run(`bk:${x.name}`, async () => setBackupsOf({ name: x.name, list: (await call(ctx, 'backupsList', { name: x.name })).backups ?? [] }));
+                } }, h(Icon, { n: 'trash' })) : null,
+                h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: iTitle(isGh ? t('sAriaClaim') : t('claimGo')), 'aria-label': isGh ? t('sAriaClaim') : t('claimGo'), onClick: () => {
                   const on = claimOf === x.name;
                   setClaimOf(on ? null : x.name);
                   // github 行预填现值（改认领：换来源或补 commit），本地/占位行留空
-                  if (!on) setClaimDraft({ source: String(x.source).startsWith('github:') ? String(x.source) : '', commit: x.commit ? String(x.commit) : '' });
-                },
-              }, String(x.source).startsWith('github:') ? t('claimEdit') : t('claimGo')),
-              h('button', { disabled: locked, title: busyTitle, className: 'ssm-danger', onClick: () => setConfirmUn(x.name) }, t('uninstallGo'))),
-            // P3 中文用途灰字行（未翻译显英文 + 待翻译角标，§6.1）
-            x.descriptionZh
-              ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' } }, x.descriptionZh)
-              : x.description
-                ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0' }, title: x.description }, x.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
-                : null,
-            // 行内认领来源（§8.1）：自绘输入行，不用 window.prompt（§6.4）
-            claimOf === x.name
-              ? h(React.Fragment, null,
-                  h('div', { className: 'ssm-row' },
-                    h('input', { className: 'ssm-input', style: { maxWidth: 230 }, autoFocus: true, placeholder: t('claimSourcePh'), value: claimDraft.source, disabled: locked, onChange: (e) => setClaimDraft({ ...claimDraft, source: e.target.value }) }),
-                    h('input', { className: 'ssm-input', style: { maxWidth: 120 }, placeholder: t('claimCommitPh'), value: claimDraft.commit, disabled: locked, onChange: (e) => setClaimDraft({ ...claimDraft, commit: e.target.value }) }),
-                    h('button', { disabled: locked || !claimDraft.source.trim(), title: busyTitle, onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: claimDraft.source.trim(), commit: claimDraft.commit.trim() || null }); setClaimOf(null); await load(); }) }, '✓'),
-                    x.source !== 'unknown' && x.source !== 'placeholder'
-                      ? h('button', { disabled: locked, title: busyTitle, onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: 'unknown' }); setClaimOf(null); await load(); }) }, t('claimUndo'))
-                      : null,
-                    h('button', { disabled: locked, onClick: () => setClaimOf(null) }, '×')),
-                  h('div', { className: 'ssm-hint' }, t('claimHint')))
-              : null,
-            upRes[x.name]
-              ? h(React.Fragment, null,
-                h('div', { className: 'ssm-hint' }, upRes[x.name].upToDate
-                  ? (() => {
-                      const sk = counts(upRes[x.name].files)['skip-modified'];
-                      return `${t('upToDate')} @${String(upRes[x.name].current ?? '').slice(0, 7)}${sk ? ` ⚠ ${sk} ${t('skipNote')}` : ''}`;
-                    })()
-                  : (() => {
-                      const c = counts(upRes[x.name].files);
-                      // 远端 commit 前进了但一个文件都没变（或来源是认领的、current 为空无法比 commit）：
-                      // 报「差异 ↑0 +0 −0」会被读成“有更新可装”，直说内容已一致（用户报告 2026-10-26 连带场景）
-                      if (!c.update && !c.add && !c.remove && !c['skip-modified'])
-                        return `${t('noContentDiff')} → @${String(upRes[x.name].remote ?? '').slice(0, 7)}${upRes[x.name].current ? '' : `（${t('claimNoCommit')}）`}`;
-                      return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(upRes[x.name].remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;
-                    })()),
-                // 文件级 diff + 跳过项名单（§13.6 / review m5）：非 same 的条目逐行列出
-                ...(upRes[x.name].files ?? []).filter((f) => f.action !== 'same').slice(0, 15)
-                  .map((f) => h('div', { key: f.path, className: 'ssm-hint' }, f.action === 'skip-modified' ? '⚠ ' : `${f.action === 'update' ? '↑' : f.action === 'add' ? '+' : '−'} `, f.path)),
-                (upRes[x.name].files ?? []).filter((f) => f.action !== 'same').length > 15 ? h('div', { className: 'ssm-hint' }, t('moreFiles')) : null)
-              : null,
-            confirmUn === x.name
-              ? h('div', { className: 'ssm-confirm' }, t('confirmUn'), ' ', x.name, ' ',
-                  h('button', { autoFocus: true, disabled: locked, title: busyTitle, className: 'ssm-danger', onClick: () => startLong(ctx, 'uninstallSkill', x.name, { name: x.name }, { onDone: (s) => { if (!s.ok) return; setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); load(); } }) }, t('uninstallGo')),
-                  h('button', { onClick: () => setConfirmUn(null) }, '×'))
-              : null,
-            backupsOf?.name === x.name
-              ? h('div', { className: 'ssm-row' }, backupsOf.list.length === 0
-                ? h('span', { className: 'ssm-empty' }, t('none'))
-                : backupsOf.list.map((b) => h('label', { key: b.dir, className: 'ssm-chip' },
-                    h('span', null, `${b.ts} (${b.fileCount})`), ' ',
-                    h('button', { disabled: locked, title: busyTitle, onClick: () => run(`rs:${b.dir}`, async () => { await call(ctx, 'backupRestore', { name: x.name, dir: b.dir }); setBackupsOf(null); await load(); }) }, t('restoreGo')))))
-              : null))
+                  if (!on) setClaimDraft({ source: isGh ? String(x.source) : '', commit: x.commit ? String(x.commit) : '' });
+                } }, h(Icon, { n: 'pencil' })),
+                h('button', { className: 'ssm-p-icon-btn ssm-p-icon-danger', disabled: locked, title: iTitle(t('sAriaUninstall')), 'aria-label': t('sAriaUninstall'), onClick: () => setConfirmUn(x.name) }, h(Icon, { n: 'trash' })),
+              ],
+              sub: h(React.Fragment, null,
+                // 行内认领来源（§8.1）：输入行嵌进卡内，保存/撤认领/取消收进图标钮（Electron 无 window.prompt，§6.4）
+                claimOf === x.name
+                  ? h(React.Fragment, null,
+                      h('div', { className: 'ssm-p-row' },
+                        h('input', { className: 'ssm-p-search', style: { maxWidth: 230 }, autoFocus: true, placeholder: t('claimSourcePh'), value: claimDraft.source, disabled: locked, 'aria-label': t('claimSourcePh'), onChange: (e) => setClaimDraft({ ...claimDraft, source: e.target.value }) }),
+                        h('input', { className: 'ssm-p-search', style: { maxWidth: 120 }, placeholder: t('claimCommitPh'), value: claimDraft.commit, disabled: locked, 'aria-label': t('claimCommitPh'), onChange: (e) => setClaimDraft({ ...claimDraft, commit: e.target.value }) }),
+                        h('button', { className: 'ssm-p-icon-btn', disabled: locked || !claimDraft.source.trim(), title: iTitle(t('saveBtn')), 'aria-label': t('saveBtn'), onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: claimDraft.source.trim(), commit: claimDraft.commit.trim() || null }); setClaimOf(null); await load(); }) }, h(Icon, { n: 'check' })),
+                        x.source !== 'unknown' && x.source !== 'placeholder'
+                          ? h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: iTitle(t('claimUndo')), 'aria-label': t('claimUndo'), onClick: () => run(`claim:${x.name}`, async () => { await call(ctx, 'claimSource', { name: x.name, source: 'unknown' }); setClaimOf(null); await load(); }) }, h(Icon, { n: 'undo' }))
+                          : null,
+                        h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: t('close'), 'aria-label': t('close'), onClick: () => setClaimOf(null) }, h(Icon, { n: 'x' }))),
+                      h('div', { className: 'ssm-p-desc' }, t('claimHint')))
+                  : null,
+                // 检查更新结果 = banner 语态（§6.5）；文件级 diff 名单仍逐行（§13.6 / review m5）
+                up
+                  ? h(React.Fragment, null,
+                      h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h(Icon, { n: 'download' }), up.upToDate
+                        ? (() => {
+                            const sk = counts(up.files)['skip-modified'];
+                            return `${t('upToDate')} @${String(up.current ?? '').slice(0, 7)}${sk ? ` ⚠ ${sk} ${t('skipNote')}` : ''}`;
+                          })()
+                        : (() => {
+                            const c = counts(up.files);
+                            // 远端 commit 前进了但一个文件都没变（或来源是认领的、current 为空无法比 commit）：
+                            // 报「差异 ↑0 +0 −0」会被读成“有更新可装”，直说内容已一致（用户报告 2026-10-26 连带场景）
+                            if (!c.update && !c.add && !c.remove && !c['skip-modified'])
+                              return `${t('noContentDiff')} → @${String(up.remote ?? '').slice(0, 7)}${up.current ? '' : `（${t('claimNoCommit')}）`}`;
+                            return `${t('upActions')}: ↑${c.update} +${c.add} −${c.remove} ⚠${c['skip-modified']} → ${String(up.remote ?? '').slice(0, 7)}${c['skip-modified'] ? ` (${t('skipNote')})` : ''}`;
+                          })()),
+                      ...(up.files ?? []).filter((f) => f.action !== 'same').slice(0, 15)
+                        .map((f) => h('div', { key: f.path, className: 'ssm-p-desc' }, `${f.action === 'skip-modified' ? '⚠' : f.action === 'update' ? '↑' : f.action === 'add' ? '+' : '−'} ${f.path}`)),
+                      (up.files ?? []).filter((f) => f.action !== 'same').length > 15 ? h('div', { className: 'ssm-p-desc' }, t('moreFiles')) : null)
+                  : null,
+                // 卸载二次确认（§6.5）：banner 语态 + 常驻可见——动作条是 hover 显形，确认条不能被藏；文案与流程照旧
+                confirmUn === x.name
+                  ? h('div', { className: 'ssm-p-banner ssm-p-banner-error' }, h(Icon, { n: 'alert' }), t('confirmUn'), ' ', x.name, ' ',
+                      h('button', { autoFocus: true, disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'uninstallSkill', x.name, { name: x.name }, { onDone: (s) => { if (!s.ok) return; setConfirmUn(null); setUpRes((m) => ({ ...m, [x.name]: null })); load(); } }) }, t('uninstallGo')),
+                      h('button', { onClick: () => setConfirmUn(null) }, '×'))
+                  : null,
+                // 回收站展开（§6.5）：行卡同款 + 备份标签胶囊 muted + 恢复按钮品牌软底复刻
+                backupsOf?.name === x.name
+                  ? h('div', { className: 'ssm-p-card' }, backupsOf.list.length === 0
+                    ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'trash' }), t('none'))
+                    : backupsOf.list.map((b) => h(RowShell, {
+                        key: b.dir, t, name: b.ts, badges: [{ kind: 'muted', text: `(${b.fileCount})` }],
+                        actions: [h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle ?? t('restoreGo'), 'aria-label': t('restoreGo'), onClick: () => run(`rs:${b.dir}`, async () => { await call(ctx, 'backupRestore', { name: x.name, dir: b.dir }); setBackupsOf(null); await load(); }) }, t('restoreGo'))],
+                      })))
+                  : null),
+            });
+          }),
         ) : null,
         tab === 'global' ? h(React.Fragment, null, // P3 全局技能集 tab（设计 §6.4）：常驻名单 + 外来只读
           h('div', { className: 'ssm-hint' }, t('globalTabHint'), rTarget ? ` ${rTarget}` : ''),
@@ -1354,6 +1366,10 @@ window.__ModuleLoader__.load({
 @media (prefers-reduced-motion:reduce){.ssm-p-rowcard>.ssm-p-row>.ssm-p-icon-btn{opacity:1;transition:none}}
 .ssm-s-btn{font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);border-radius:6px;padding:4px 10px;cursor:pointer} /* 品牌软底复刻：供 .ssm-s-* 界面使用，承接旧区按钮软底选择器的 :not() 豁免职责（spec §5.5/§6.1） */
 .ssm-s-btn:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 70%, transparent)}
+/* 库页签（spec 2026-11-07 §6.5）：行内品牌软底按钮需抬回——「.ssm-p-row>button」语态兜底比「.ssm-s-btn」高一级（回收站恢复按钮）；图标钮内转圈去偏移 */
+.ssm-p-row>.ssm-s-btn{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 50%,transparent);padding:4px 10px}
+.ssm-p-row>.ssm-s-btn:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 70%,transparent)}
+.ssm-p-icon-btn .ssm-spin{margin:0}
 /* 设置页壳 + 页签分段控件 + msg 横幅（spec 2026-11-07 §6.4）：软底分段页签（选中 brand 14% 药丸、纯文字）+ banner ok 语态；根布局照旧 920px */
 .ssm-s-settings{display:flex;flex-direction:column;gap:8px;padding:4px 2px;max-width:920px}
 .ssm-s-tabs{display:flex;align-self:flex-start;gap:4px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
