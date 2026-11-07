@@ -1154,87 +1154,96 @@ window.__ModuleLoader__.load({
             });
           }),
         ) : null,
-        tab === 'global' ? h(React.Fragment, null, // P3 全局技能集 tab（设计 §6.4）：常驻名单 + 外来只读
-          h('div', { className: 'ssm-hint' }, t('globalTabHint'), rTarget ? ` ${rTarget}` : ''),
-          h('div', { className: 'ssm-row' },
-            h('input', { className: 'ssm-input', style: { maxWidth: 300 }, placeholder: t('searchPh'), value: gq, disabled: locked, onChange: (e) => setGq(e.target.value) }),
-            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: gOnly, disabled: locked, onChange: (e) => setGOnly(e.target.checked) }), ' ', t('residentOnly'))),
-          grows.length === 0 ? h('div', { className: 'ssm-empty' }, t('empty')) : null,
+        tab === 'global' ? h(React.Fragment, null, // P3 全局技能集 tab（spec §6.6）：行卡 + 复选胶囊（选中 brand 软底），外来常驻灰态只读
+          h('div', { className: 'ssm-p-descwrap' }, t('globalTabHint'), rTarget ? ` ${rTarget}` : ''),
+          h('div', { className: 'ssm-p-row' }, // 过滤框/只看常驻换同款 .ssm-p-search + .ssm-p-check 语汇（§6.6）
+            h('input', { className: 'ssm-p-search', placeholder: t('searchPh'), value: gq, disabled: locked, 'aria-label': t('searchPh'), onChange: (e) => setGq(e.target.value) }),
+            h('label', { className: 'ssm-p-check' }, h('input', { type: 'checkbox', checked: gOnly, disabled: locked, onChange: (e) => setGOnly(e.target.checked) }), t('residentOnly'))),
+          // 空态（§6.6 同款 .ssm-p-empty + 图标）：无过滤词 = 引导勾选候选；有过滤词无命中 = 没有匹配
+          grows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: gq.trim() ? 'search' : 'box' }), gq.trim() ? t('emptySearch') : t('sEmptyGlobal')) : null,
           ...grows.map((r) => {
-            if (r.foreign) return h('div', { key: r.name, className: 'ssm-srow ssm-gray' }, // N5：已在设置页内，不再挂「去设置管理」文案
-              h('div', { className: 'ssm-row' },
-                h('span', { className: 'ssm-cur' }, r.name),
-                h(Tag, { text: t('foreignRow'), warn: true })));
+            if (r.foreign) return h(RowShell, { key: r.name, t, name: r.name, gray: true, badges: [{ kind: 'warn', text: t('foreignRow') }] }); // N5：已在设置页内，不再挂「去设置管理」文案；灰态只读（§6.6）
             const on = resident.includes(r.name);
-            return h('div', { key: r.name, className: 'ssm-srow' },
-              h('div', { className: 'ssm-row' },
-                h('label', { className: 'ssm-chip' + (on ? ' ssm-on' : '') },
-                  h('input', { type: 'checkbox', checked: on, disabled: locked, onChange: () => run(`res:${r.name}`, async () => {
-                    const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
-                    await call(ctx, 'setResident', { names: next });
-                    await loadState();
-                  }) }), ' ', r.name),
-                String(r.source).startsWith('github:') ? h('span', { className: 'ssm-n' }, String(r.source).replace('github:', '').slice(0, 20)) : null),
-              // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款）
-              r.descriptionZh
-                ? h('div', { className: 'ssm-n', style: { padding: '2px 0 0' }, title: r.description ?? undefined }, r.descriptionZh)
-                : r.description
-                  ? h('div', { className: 'ssm-desc-en', style: { padding: '2px 0 0', maxWidth: 'none' }, title: r.description }, r.description, ' ', h('span', { className: 'ssm-warn-inline' }, t('pendingTag')))
-                  : null);
+            // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款回退口径）
+            const desc = r.descriptionZh
+              ? h('div', { className: 'ssm-p-desc', title: r.description ?? undefined }, r.descriptionZh)
+              : r.description
+                ? h('div', { className: 'ssm-p-desc', title: r.description }, r.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
+                : null;
+            return h(RowShell, {
+              key: r.name, t, name: r.name, desc,
+              // 复选胶囊（§6.6）：label 包住复选框即胶囊，选中态 brand 软底走新区变体 .ssm-p-check-on——
+              // 不动 composer 在用的 .ssm-p-check 基样（AC#14 composer 观感零变化）；setResident 勾选语义一字未动（AC#5）
+              leading: h('label', { className: 'ssm-p-check' + (on ? ' ssm-p-check-on' : '') },
+                h('input', { type: 'checkbox', checked: on, disabled: locked, 'aria-label': r.name, onChange: () => run(`res:${r.name}`, async () => {
+                  const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
+                  await call(ctx, 'setResident', { names: next });
+                  await loadState();
+                }) })),
+              // github 来源展示口径照旧：截断片段进第三行 muted 文本
+              sub: String(r.source).startsWith('github:') ? h('div', { className: 'ssm-p-desc' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
+            });
           })) : null,
-        tab === 'ops' ? h(React.Fragment, null,
-          h('div', { className: 'ssm-sec' }, t('installTitle')),
-          h('div', { className: 'ssm-row' },
-            h('input', { className: 'ssm-input', placeholder: t('installSpecPh'), value: spec, disabled: locked, onChange: (e) => setSpec(e.target.value) }),
-            h('label', { className: 'ssm-hint' }, h('input', { type: 'checkbox', checked: overwrite, disabled: locked, onChange: (e) => setOverwrite(e.target.checked) }), ' ', t('overwriteChk')),
-            h('button', { disabled: locked || !spec.trim(), title: busyTitle, onClick: () => { if (startLong(ctx, 'installApply', spec.trim(), { spec: spec.trim(), overwrite }, { noteOf: (s) => { const rs = s.ok ? s.value?.results ?? [] : []; const bad = rs.filter((r) => !r.ok).length; return bad ? t('opPartial').replace('{n}', String(rs.length - bad)).replace('{m}', String(bad)) : null; }, onDone: () => load() })) setSpec(''); } }, t('installGo'))),
-          instDone
-            ? h('div', { className: 'ssm-hint' }, `@${String(instDone.commit ?? '').slice(0, 7)} `,
-                ...(instDone.results ?? []).map((r) => h('span', { key: r.name, className: 'ssm-chip' }, `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}`)))
-            : null,
-          h('div', { className: 'ssm-sec' }, t('migrateAgentsTitle')),
-          h('div', { className: 'ssm-row' },
-            h('button', { disabled: locked, title: busyTitle, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
-            migA?.applied ? h('button', { disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'migrateAgentsUndo', null, {}, { onDone: (s) => { if (!s.ok) return; setMigA(null); load(); } }) }, t('migrateUndo')) : null,
-            migA && !migA.applied ? h('button', { disabled: locked || !(migA.preview?.moves?.length), title: busyTitle, onClick: () => startLong(ctx, 'migrateAgentsApply', null, {}, { onDone: (s) => { if (!s.ok) return; setMigA({ preview: null, applied: true }); load(); } }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
-            !migA ? h('span', { className: 'ssm-hint' }, t('migrateAgentsHint')) : null),
-          migA?.preview
-            ? h('div', { className: 'ssm-hint' },
-                `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${keepReasonText(t, k.reason)})`).join(', ') || t('none')}`,
-                ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-warn-inline' }, w)),
-                ...(migA.preview.notes ?? []).map((n, i) => h('div', { key: 'mn' + i, className: 'ssm-hint' }, n)))
-            : null,
-          h('div', { className: 'ssm-sec' }, t('migrateTitle')),
-          h('div', { className: 'ssm-row' },
-            h('button', { disabled: locked, title: busyTitle, onClick: () => run('migP', async () => setMig({ preview: await call(ctx, 'migratePreview', {}), applied: false })) }, t('migratePreview')),
-            mig ? h('button', { disabled: locked, title: busyTitle, onClick: () => startLong(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', null, {}, { onDone: (s) => { if (!s.ok) return; setMig(null); load(); } }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
-          mig?.preview
-            ? h('div', { className: 'ssm-hint' },
-                `${t('migrateMoves')}: ${(mig.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(mig.preview.keep ?? []).map((k) => k.name).join(', ') || t('none')}`,
-                ...(mig.preview.warnings ?? []).map((w, i) => h('div', { key: i, className: 'ssm-warn-inline' }, w)))
-            : null
+        tab === 'ops' ? h(React.Fragment, null, // 分节卡片化（spec §6.7）：GitHub 安装 / 两级迁移各一张 .ssm-p-card；动作按钮 = 新区品牌软底复刻 .ssm-s-btn（.ssm-p-row>button 特异性坑由已入库 .ssm-p-row>.ssm-s-btn 抬回规则接住）
+          h('div', { className: 'ssm-p-card' },
+            h('div', { className: 'ssm-p-card-title' }, t('installTitle')),
+            h('div', { className: 'ssm-p-row' },
+              h('input', { className: 'ssm-p-search', placeholder: t('installSpecPh'), value: spec, disabled: locked, 'aria-label': t('installSpecPh'), onChange: (e) => setSpec(e.target.value) }),
+              h('label', { className: 'ssm-p-check' }, h('input', { type: 'checkbox', checked: overwrite, disabled: locked, onChange: (e) => setOverwrite(e.target.checked) }), t('overwriteChk')),
+              h('button', { className: 'ssm-s-btn', disabled: locked || !spec.trim(), title: busyTitle, onClick: () => { if (startLong(ctx, 'installApply', spec.trim(), { spec: spec.trim(), overwrite }, { noteOf: (s) => { const rs = s.ok ? s.value?.results ?? [] : []; const bad = rs.filter((r) => !r.ok).length; return bad ? t('opPartial').replace('{n}', String(rs.length - bad)).replace('{m}', String(bad)) : null; }, onDone: () => load() })) setSpec(''); } }, t('installGo'))),
+            // 安装结果胶囊换 .ssm-p-tag-muted（§6.6）；commit 短哈希与逐条 ✓/× reason 文案照旧
+            instDone ? h('div', { className: 'ssm-p-row' }, h('span', { className: 'ssm-p-desc' }, `@${String(instDone.commit ?? '').slice(0, 7)}`),
+              ...(instDone.results ?? []).map((r) => h(PBadge, { key: r.name, kind: 'muted', text: `${r.name}: ${r.ok ? '✓' : `× ${r.reason ?? ''}`}` }))) : null),
+          h('div', { className: 'ssm-p-card' },
+            h('div', { className: 'ssm-p-card-title' }, t('migrateAgentsTitle')),
+            h('div', { className: 'ssm-p-row' },
+              h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle, onClick: () => run('migAP', async () => setMigA({ preview: await call(ctx, 'migrateAgentsPreview', {}), applied: false })) }, t('migrateAgentsGo')),
+              migA?.applied ? h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'migrateAgentsUndo', null, {}, { onDone: (s) => { if (!s.ok) return; setMigA(null); load(); } }) }, t('migrateUndo')) : null,
+              migA && !migA.applied ? h('button', { className: 'ssm-s-btn', disabled: locked || !(migA.preview?.moves?.length), title: busyTitle, onClick: () => startLong(ctx, 'migrateAgentsApply', null, {}, { onDone: (s) => { if (!s.ok) return; setMigA({ preview: null, applied: true }); load(); } }) }, t('migrateApply')) : null, // M3：空预览禁用执行（host 侧 null-ledger 崩溃已另修）
+              !migA ? h('span', { className: 'ssm-p-desc' }, t('migrateAgentsHint')) : null),
+            // 预览展示口径照旧（§13#6）：moves/keep 名单、警告、notes 只换文本语态——
+            // .ssm-p-descwrap 复刻旧 .ssm-hint（长名单不截断）、.ssm-p-warn 复刻旧 .ssm-warn-inline
+            migA?.preview
+              ? h(React.Fragment, null,
+                  h('div', { className: 'ssm-p-descwrap' },
+                    `${t('migrateMoves')}: ${(migA.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(migA.preview.keep ?? []).map((k) => `${k.name}(${keepReasonText(t, k.reason)})`).join(', ') || t('none')}`),
+                  ...(migA.preview.warnings ?? []).map((w, i) => h('div', { key: 'ma' + i, className: 'ssm-p-warn' }, w)),
+                  ...(migA.preview.notes ?? []).map((n, i) => h('div', { key: 'mn' + i, className: 'ssm-p-descwrap' }, n)))
+              : null),
+          h('div', { className: 'ssm-p-card' },
+            h('div', { className: 'ssm-p-card-title' }, t('migrateTitle')),
+            h('div', { className: 'ssm-p-row' },
+              h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle, onClick: () => run('migP', async () => setMig({ preview: await call(ctx, 'migratePreview', {}), applied: false })) }, t('migratePreview')),
+              mig ? h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, mig.applied ? 'migrateUndo' : 'migrateApply', null, {}, { onDone: (s) => { if (!s.ok) return; setMig(null); load(); } }) }, mig.applied ? t('migrateUndo') : t('migrateApply')) : null),
+            mig?.preview
+              ? h(React.Fragment, null,
+                  h('div', { className: 'ssm-p-descwrap' },
+                    `${t('migrateMoves')}: ${(mig.preview.moves ?? []).map((m) => m.name).join(', ') || t('none')}；${t('migrateKeep')}: ${(mig.preview.keep ?? []).map((k) => k.name).join(', ') || t('none')}`),
+                  ...(mig.preview.warnings ?? []).map((w, i) => h('div', { key: i, className: 'ssm-p-warn' }, w)))
+              : null)
         ) : null,
         tab === 'diag' ? h(React.Fragment, null,
-          h('div', { className: 'ssm-row' },
-            h('button', { disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', sess()))) }, t('diagRun')),
+          h('div', { className: 'ssm-p-row' }, // 动作按钮品牌软底复刻同款语态（§6.7/§6.8）；无会话提示换 .ssm-p-desc
+            h('button', { className: 'ssm-s-btn', disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('diag', async () => setDiag(await call(ctx, 'diagnoseRun', sess()))) }, t('diagRun')),
             diag?.fixable?.reclaimDeadLinks?.count
-              ? h('button', { disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
+              ? h('button', { className: 'ssm-s-btn', disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('reclaim', async () => { await call(ctx, 'reclaimDeadLinks', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); }) }, `${t('fixReclaim')}(${diag.fixable.reclaimDeadLinks.count})`)
               : null,
-            h('button', { disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('rebuild', async () => { const r = await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); return r; }) }, t('fixRebuild')),
-            !bus.sessionId ? h('div', { className: 'ssm-hint' }, t('noSession')) : null),
+            h('button', { className: 'ssm-s-btn', disabled: locked || !bus.sessionId, title: busyTitle, onClick: () => run('rebuild', async () => { const r = await call(ctx, 'rebuildManaged', sess()); setDiag(await call(ctx, 'diagnoseRun', sess())); return r; }) }, t('fixRebuild')),
+            !bus.sessionId ? h('span', { className: 'ssm-p-desc' }, t('noSession')) : null),
           diag
-            ? h('div', null, ...Object.entries({
+            ? h(React.Fragment, null, ...Object.entries({ // 六类分组各一节卡片（§6.8）：节标题 .ssm-p-card-title + 计数；每条诊断 = 行卡，左角色点 .ssm-p-lvl* 复刻旧 .ssm-lvl* 语义（token 配色升级）
               partition: t('diagPartition'), copies: t('diagCopies'), dangling: t('diagDangling'),
               deadLinks: t('diagDeadLinks'), structure: t('diagStructure'), env: t('diagEnv'),
-            }).map(([g, label]) => h('div', { key: g },
-              h('div', { className: 'ssm-sec' }, label, ' ', h('span', { className: 'ssm-n' }, `${(diag.groups?.[g] ?? []).length}`)),
-              (diag.groups?.[g] ?? []).length === 0 ? h('div', { className: 'ssm-empty' }, t('none')) : null,
-              ...(diag.groups?.[g] ?? []).map((r, i) => h('div', { key: i, className: 'ssm-diag-row' },
-                h('span', { className: `ssm-lvl ssm-lvl-${r.level}` }, null),
-                h('span', null, r.what), ' ',
-                h('span', { className: 'ssm-n' }, r.where ?? ''),
-                h('span', { className: 'ssm-grow' }, null),
-                h('span', { className: 'ssm-hint' }, r.fix ?? ''))))))
+            }).map(([g, label]) => h('div', { key: g, className: 'ssm-p-card' },
+              h('div', { className: 'ssm-p-card-title' }, label, h('span', { className: 'ssm-p-desc' }, `${(diag.groups?.[g] ?? []).length}`)),
+              (diag.groups?.[g] ?? []).length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'check' }), t('sEmptyDiag')) : null,
+              // what 首行、where/fix 二三行展示保留（§13#7 可复制修复动作 = 可选中复制的文本行，语态照旧、不新增机制）
+              ...(diag.groups?.[g] ?? []).map((r, i) => h('div', { key: i, className: 'ssm-p-rowcard' },
+                h('div', { className: 'ssm-p-row' },
+                  h('span', { className: `ssm-p-lvl ssm-p-lvl-${r.level}` }, null),
+                  h('span', null, r.what)),
+                r.where ? h('div', { className: 'ssm-p-descwrap' }, r.where) : null,
+                r.fix ? h('div', { className: 'ssm-p-descwrap' }, r.fix) : null)))))
             : null
         ) : null);
     }
@@ -1387,6 +1396,15 @@ window.__ModuleLoader__.load({
 .ssm-s-tab-on{color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
 .ssm-s-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 .ssm-p-banner-ok{color:var(--dsw-alias-state-success-primary,#22c55e);background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#22c55e) 12%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#22c55e) 40%,transparent)} /* 成功语态复刻（spec §6.4 msg ok 底；warn/error/muted 见上） */
+/* 全局/ops/diag 页签（spec 2026-11-07 §6.6–§6.8）：复选胶囊选中态 brand 软底变体（不动 composer 在用的 .ssm-p-check 基样，AC#14 零变化）+ diag 角色点复刻 + 长文本语态复刻（旧 hint/warn-inline 只换名不换相） */
+.ssm-p-check-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}
+.ssm-p-check-on:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent)}
+.ssm-p-lvl{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-label-secondary)} /* 诊断角色点复刻（§6.8 token 配色升级）：warn/error/info/未知级语义照旧 */
+.ssm-p-lvl-warn{background:var(--dsw-alias-state-warn-primary,#f5a623)}
+.ssm-p-lvl-error{background:var(--dsw-alias-state-error-primary,#e5484d)}
+.ssm-p-lvl-info{background:var(--dsw-alias-brand-primary)}
+.ssm-p-descwrap{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:normal} /* 旧 .ssm-hint 文本语态复刻：长名单/路径/where/fix 不截断（.ssm-p-desc 是 nowrap 兜底） */
+.ssm-p-warn{font-size:11px;color:var(--dsw-alias-state-warn-primary,#f5a623);white-space:normal} /* 旧 .ssm-warn-inline 复刻：迁移预览警告行 */
 `;
 
     return {
