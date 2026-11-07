@@ -995,15 +995,18 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-p-row' }, // 过滤框换同款 .ssm-p-search（spec §6.5）；宽度归 flex-basis 管，不再 inline maxWidth
             h('input', { className: 'ssm-p-search', placeholder: t('filterPh'), value: filter, 'aria-label': t('filterPh'), onChange: (e) => setFilter(e.target.value) })),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
-          h('div', { className: 'ssm-row' },
-            h('button', { disabled: locked, title: busyTitle, onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], failed: p.failed ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
+          // 翻译行同迁新语态（评审 2026-11-07：库页签内容属本任务，禁「半迁移裂缝」）：
+          // 按钮走 .ssm-s-btn（.ssm-p-row>button 的特异性坑已由 .ssm-p-row>.ssm-s-btn 抬回规则接住）、
+          // select 复用 .ssm-p-search 同款底样、计数提示走 .ssm-p-desc。RPC 与分组/并发流程一字未动。
+          h('div', { className: 'ssm-p-row' },
+            h('button', { className: 'ssm-s-btn', disabled: locked, title: iTitle(t('batchTranslate')), onClick: () => run('trP', async () => { const p = await call(ctx, 'translatePending', {}); const m = await call(ctx, 'translateModels', {}).catch(() => ({ options: [] })); setTr({ pending: p.pending ?? [], failed: p.failed ?? [], models: m, model: '', result: null }); }) }, t('batchTranslate')),
             (tr?.pending?.length || tr?.failed?.length)
               ? h(React.Fragment, null,
-                  h('select', { className: 'ssm-input', style: { maxWidth: 280 }, disabled: locked, title: t('modelSelect'), value: tr.model, onChange: (e) => setTr({ ...tr, model: e.target.value }) },
+                  h('select', { className: 'ssm-p-search', style: { flex: '0 1 280px', maxWidth: 280 }, disabled: locked, title: t('modelSelect'), 'aria-label': t('modelSelect'), value: tr.model, onChange: (e) => setTr({ ...tr, model: e.target.value }) },
                     h('option', { value: '' }, t('currentModel')),
                     ...(tr.models?.options ?? []).map((o, i) => h('option', { key: `${o.provider}/${o.model}`, value: String(i) }, o.label))), // N7：value 用下标，免 provider/model 含 | 时碎裂
-                  tr.failed?.length ? h('span', { className: 'ssm-hint' }, `${tr.failed.length} ${t('failedRetryable')}`) : null,
-                  h('button', { disabled: locked, title: busyTitle, onClick: () => run('trR', async () => {
+                  tr.failed?.length ? h('span', { className: 'ssm-p-desc' }, `${tr.failed.length} ${t('failedRetryable')}`) : null,
+                  h('button', { className: 'ssm-s-btn', disabled: locked, title: iTitle(t('translateGo')), onClick: () => run('trR', async () => {
                     const o = tr.model !== '' ? (tr.models?.options ?? [])[Number(tr.model)] ?? null : null; // M2：pending ∪ failed 一并（failed 同哈希不自愈，此处即重试入口，AC#2）
                     const names = [...(tr.pending ?? []).map((p) => p.name), ...(tr.failed ?? []).map((f) => f.name)];
                     // 分组 RPC（每组 5 条 = host 一个 prompt，reasoning 模型思考次数 ÷5）+ 并发 2：
@@ -1031,18 +1034,24 @@ window.__ModuleLoader__.load({
                     setTr({ ...base, progress: null, result: { done: st.done, failed: st.failed, skipped: stopped ? names.length - st.done.length - st.failed.length : 0 } });
                     await load();
                   }) }, `${t('translateGo')}(${(tr.pending?.length ?? 0) + (tr.failed?.length ?? 0)})`),
-                  tr?.progress ? h('button', { disabled: !tr.progress, onClick: () => { trStop.current = true; } }, t('translateStop')) : null)
+                  tr?.progress ? h('button', { className: 'ssm-s-btn', disabled: !tr.progress, onClick: () => { trStop.current = true; } }, t('translateStop')) : null)
                 : null),
+          // 进行中 = banner 语态 + 转圈（与 TaskStrip 同族信号）；逐行 running 名单走 .ssm-p-desc
           tr?.progress
-            ? h('div', { className: 'ssm-hint' },
-                `${t('translateProgress')} ${tr.progress.done + tr.progress.failed}/${tr.progress.total}（✓${tr.progress.done} ×${tr.progress.failed}）${tr.progress.stopping ? ` · ${t('translateStopping')}` : ''}`,
-                tr.progress.running.length ? h('div', { className: 'ssm-hint' }, `⋯ ${tr.progress.running.slice(0, 2).join(', ')}${tr.progress.running.length > 2 ? ` +${tr.progress.running.length - 2}` : ''}`) : null)
+            ? h(React.Fragment, null,
+                h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h('span', { className: 'ssm-spin' }, null),
+                  `${t('translateProgress')} ${tr.progress.done + tr.progress.failed}/${tr.progress.total}（✓${tr.progress.done} ×${tr.progress.failed}）${tr.progress.stopping ? ` · ${t('translateStopping')}` : ''}`),
+                tr.progress.running.length ? h('div', { className: 'ssm-p-desc' }, `⋯ ${tr.progress.running.slice(0, 2).join(', ')}${tr.progress.running.length > 2 ? ` +${tr.progress.running.length - 2}` : ''}`) : null)
             : null,
+          // 结果 = banner 语态：全成就 ok，有可重试失败就 warn；失败明细逐行（key 照旧）
           tr?.result
-            ? h('div', { className: 'ssm-hint' }, `${t('translateDone')}: ✓${(tr.result.done ?? []).length} ×${(tr.result.failed ?? []).length}${tr.result.skipped ? ` ⏭${tr.result.skipped}` : ''}`,
-                ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-warn-inline' }, `${f.name}: ${f.error ?? ''}`)))
+            ? h(React.Fragment, null,
+                h('div', { className: `ssm-p-banner ${(tr.result.failed ?? []).length ? 'ssm-p-banner-warn' : 'ssm-p-banner-ok'}` },
+                  h(Icon, { n: (tr.result.failed ?? []).length ? 'alert' : 'check' }),
+                  `${t('translateDone')}: ✓${(tr.result.done ?? []).length} ×${(tr.result.failed ?? []).length}${tr.result.skipped ? ` ⏭${tr.result.skipped}` : ''}`),
+                ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-p-desc' }, `${f.name}: ${f.error ?? ''}`)))
             : null,
-          h('div', { className: 'ssm-hint' }, t('autoTranslateHint')),
+          h('div', { className: 'ssm-p-desc' }, t('autoTranslateHint')),
           // 空态（§6.5 同款 .ssm-p-empty + 图标）：库为空=引导去安装；有过滤词无命中=没有匹配
           rows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: filter.trim() ? 'search' : 'box' }), filter.trim() ? t('emptySearch') : t('sEmptyLib')) : null,
           // 技能行 = 行壳卡片（spec §6.5）：徽章组 + 中文用途第二行 + 图标动作条；状态变体（认领编辑/diff/confirm/回收站）
