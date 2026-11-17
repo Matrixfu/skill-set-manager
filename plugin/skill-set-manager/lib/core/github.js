@@ -111,8 +111,27 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog } = {}
   };
   try { attemptFetch(true); }
   catch (e) { if (!e?.filterUnrecognized) throw e; attemptFetch(false); }
-  if (spec.subpath) run(['sparse-checkout', 'set', '--', spec.subpath]);
-  run(['checkout', '-q', '-f', '--detach', 'FETCH_HEAD']);
+  // 陈旧锁自愈（活体实测 2026-11-17：checkout 被超时 kill 留下 .git/index.lock 尸，
+  // checkout -f 对它无解，此后该仓每次检查秒报 File exists）：长任务单飞口径
+  // （GLOSSARY「长任务」全局只允许一个）保证此刻必无活 git 在动这底，撞锁必是尸，清掉。
+  try { fs.rmSync(path.join(dir, '.git', 'index.lock'), { force: true }); } catch {}
+  // sparse-checkout/checkout 层同样走「网络类重试一次 + 留痕」（Review Focus #2）：
+  // blob:none 的 blob 下载发生在 checkout 时，大素材仓库（hyperframes）吊死在这层，
+  // 与 fetch 层同款形状；两步皆幂等（set 可重入、detach -f 可重来），重试安全。
+  const runLogged = (cmd, args) => {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const t0 = Date.now();
+      let r;
+      try { r = runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }
+      catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
+      if (r && r.status === 0) return r;
+      const msg = gitFailMessage(args, r); // head 用裸 args（-c 前缀不进结论）
+      if (failLog) logGitFailure(failLog, { cmd, status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
+      if (attempt === 2 || !isRetryableGitFailure(msg)) throw new Error(msg);
+    }
+  };
+  if (spec.subpath) runLogged('sparse-checkout', ['sparse-checkout', 'set', '--', spec.subpath]);
+  runLogged('checkout', ['checkout', '-q', '-f', '--detach', 'FETCH_HEAD']);
   const commit = run(['rev-parse', 'FETCH_HEAD']).stdout.trim();
   return { commit, skillsDir: path.join(dir, ...(spec.subpath ? spec.subpath.split('/') : [])) };
 }

@@ -803,6 +803,25 @@ const CASES = [
       ok(g.cacheDirFor(f.roots, spec1) !== g.cacheDirFor(f.roots, specV1), '@ref 参与哈希键');
       ok(g.cacheDirFor(f.roots, spec1).startsWith(f.roots.cacheDir), '缓存底挂 roots.cacheDir 下');
       ok(String(f.roots.failLog).endsWith('failures.log'), 'roots.failLog 装配');
+      // 7) 陈旧锁自愈（活体实测 2026-11-17：checkout 被超时 kill 留 index.lock 尸，checkout -f 不自愈）
+      const lockDir = path.join(f.base, 'cache-lock');
+      fs.mkdirSync(path.join(lockDir, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(lockDir, '.git', 'index.lock'), '');
+      await g.fetchRepo({ owner: 'o2', repo: 'r', ref: null, subpath: 'skills' }, { dir: lockDir, git: okGit([]) });
+      ok(!fs.existsSync(path.join(lockDir, '.git', 'index.lock')), '陈旧 index.lock 检出前清除（长任务单飞下撞锁必是尸）');
+      // 8) checkout 网络类失败：重试一次 + failLog 记 cmd=checkout（blob 下载在 checkout 层吊死同款）
+      let coCalls = 0;
+      const coFlaky = (args) => {
+        if (args.includes('checkout')) { coCalls++; if (coCalls === 1) return { status: 128, stdout: '', stderr: 'error: RPC failed; curl 18 transfer closed' }; }
+        return { status: 0, stdout: args.includes('rev-parse') ? 'abcd\n' : '', stderr: '' };
+      };
+      const logPath8 = path.join(f.base, 'log8', 'failures.log');
+      const got8 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: path.join(f.base, 'cache-co'), git: coFlaky, failLog: logPath8 });
+      eq(coCalls, 2, 'checkout 网络类失败重试一次');
+      eq(got8.commit, 'abcd', 'checkout 重试后仍成功');
+      const recs8 = fs.readFileSync(logPath8, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      eq(recs8.length, 1, 'checkout 失败留痕一条');
+      eq(recs8[0].cmd, 'checkout', '留痕 cmd=checkout');
     },
   },
   {
