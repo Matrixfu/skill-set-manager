@@ -21,7 +21,8 @@ import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo, dropOverrideOnBind } from './lib/core/pending.js';
 import { syncResident, pruneLegacyResidentLinks, dropResidentName } from './lib/core/resident.js';
 import os from 'node:os';
-import { parseRepoSpec, fetchRepo, installSkills } from './lib/core/github.js';
+import { parseRepoSpec, fetchRepo, installSkills, cacheDirFor } from './lib/core/github.js';
+import { probeProxy } from './lib/core/gitnet.js';
 import { resolveRepoSource } from './lib/core/source.js';
 import * as updates from './lib/core/updates.js';
 import * as bk from './lib/core/backup.js';
@@ -77,7 +78,7 @@ export function apply(ctx, config) {
   const REMOTE_METHODS = [
     'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
-    'installApply', 'updateCheck', 'updateApply', 'uninstallSkill', 'backupsList', 'backupRestore',
+    'installApply', 'updateCheck', 'updateApply', 'updateCheckAll', 'cacheClear', 'uninstallSkill', 'backupsList', 'backupRestore',
     'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource',
     // P3：翻译数据面
     'translatePending', 'translateRun', 'translateModels',
@@ -242,11 +243,13 @@ export function apply(ctx, config) {
         const res = await sets.importApply(roots, req.payload, {
           choices: req.choices ?? {},
           install: async (name, pin) => {
+            await this._netGate(); // 只有 choices 选了 install 才联网（§14 口径），联网先过代理预检
             const { canonical, spec } = resolveRepoSource(pin.source); // 解析一次：canonical 入 manifest，spec 供 fetch（owner 不带 github: 前缀，评审 C1）
             if (spec.owner.includes(':')) throw new Error(`来源解析异常：owner="${spec.owner}" 仍带前缀（按 pin 安装会拼出错误 remote URL）`);
-            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-pin-'));
-            tmps.push(tmpDir);
-            const got = await fetchRepo(spec, { tmpDir, ...(req.url ? { url: req.url } : {}) });
+            // 2026-11-17 加固：同 installApply 走持久缓存底 + 硬超时 + 失败留痕；url 覆盖夹具仍 tmp 隔离
+            const dir = req.url ? fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-pin-')) : cacheDirFor(roots, spec);
+            if (req.url) tmps.push(dir);
+            const got = await fetchRepo(spec, { dir, timeoutMs: 180000, failLog: roots.failLog, ...(req.url ? { url: req.url } : {}) });
             const rows = await installSkills(roots, {
               source: canonical,
               commit: got.commit,
@@ -365,24 +368,43 @@ export function apply(ctx, config) {
 
     // ---- P1a：GitHub 安装 / 升级 / 卸载 / 回收站（全部薄包装 core，同一实现） ----
 
-    /** manifest.source = github:owner/repo[/subpath] → 稀疏拉取（tmp 目录批量回收；url 覆盖同 installApply）。 */
-    _fetchFor(tmpDirs, urlOverride = null) {
+    /**
+     * manifest.source = github:owner/repo[/subpath] → 稀疏拉取（2026-11-17 加固）：
+     * 无 urlOverride 走持久上游缓存底（cacheDirFor，增量 fetch，无需 tmp 回收——
+     * GLOSSARY「上游缓存」：每次仍真 fetch 最新）；urlOverride（file:// 夹具）仍走
+     * 独立 tmp 目录批量回收，夹具互不污染、也不污染生产缓存。
+     */
+    _fetchFor(tmpDirs, urlOverride = null, timeoutMs = 60000) {
       return async (source) => {
         // 单一口径走 core source.js：手拆 '/' 曾把 clone 地址尾部的 `.git` 当仓库名，
         // 拼出 owner/repo.git.git → 远端「Repository not found」（用户报告 2026-10-26，检查更新炸）
         const { spec } = resolveRepoSource(source);
-        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-up-'));
-        tmpDirs.push(tmpDir);
-        return fetchRepo(spec, { tmpDir, ...(urlOverride ? { url: urlOverride } : {}) });
+        if (urlOverride) {
+          const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-up-'));
+          tmpDirs.push(tmpDir);
+          return fetchRepo(spec, { dir: tmpDir, url: urlOverride, timeoutMs, failLog: roots.failLog });
+        }
+        return fetchRepo(spec, { dir: cacheDirFor(roots, spec), timeoutMs, failLog: roots.failLog });
       };
     }
 
+    /**
+     * 代理预检（2026-11-17 加固）：git 实际会走的代理（env → git 全局配置）没人监听，
+     * 当场报人话错——Watt Toolkit 没启动时 git 指死 26561 直接 refused，不再吊死或
+     * 抛 git 乱码（gitnet.probeProxy 口径；未配代理 = 直连环境，直接放行）。
+     */
+    async _netGate() {
+      const { dead } = await probeProxy();
+      if (dead) throw new Error(`本机代理 ${dead} 无响应——Watt Toolkit 代理未监听，启动它后重试`);
+    }
+
     async installApply(req) {
+      await this._netGate();
       const spec = parseRepoSpec(req.spec);
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-install-'));
+      const dir = req.url ? fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-install-')) : cacheDirFor(roots, spec);
       try {
         // req.url：file:// 或私仓镜像覆盖（活体验证夹具也走这里）
-        const got = await fetchRepo(spec, { tmpDir, ...(req.url ? { url: req.url } : {}) });
+        const got = await fetchRepo(spec, { dir, timeoutMs: 180000, failLog: roots.failLog, ...(req.url ? { url: req.url } : {}) });
         const results = await installSkills(roots, {
           source: `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`,
           commit: got.commit,
@@ -394,19 +416,39 @@ export function apply(ctx, config) {
         registerLibrary(roots);
         return { commit: got.commit, results };
       } finally {
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        if (req.url) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
       }
     }
 
     async updateCheck(req) {
+      await this._netGate();
       const tmps = [];
-      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null) }); }
+      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 60000) }); }
       finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
     }
 
-    async updateApply(req) {
+    /** 批量检查更新（GLOSSARY「批量检查更新」）：按来源仓库分组每仓一拉；sources 子集 = 重试失败仓库。 */
+    async updateCheckAll(req) {
+      await this._netGate();
       const tmps = [];
-      try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null), backup: async (n) => bk.snapshot(roots, n) }); }
+      try {
+        return await updates.checkUpdateAll(roots, {
+          fetch: this._fetchFor(tmps, req.url ?? null, 60000),
+          sources: req.sources ?? null,
+        });
+      } finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+    }
+
+    /** 清空上游缓存（逃生口：缓存坏了/换网络通道）：删底即下次自然重建，幂等。 */
+    async cacheClear() {
+      try { fs.rmSync(roots.cacheDir, { recursive: true, force: true }); } catch {}
+      return { cleared: true };
+    }
+
+    async updateApply(req) {
+      await this._netGate();
+      const tmps = [];
+      try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 180000), backup: async (n) => bk.snapshot(roots, n) }); }
       finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
     }
 

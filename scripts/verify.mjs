@@ -843,6 +843,35 @@ const CASES = [
     },
   },
   {
+    id: 'host-net', title: 'host 接线：updateCheckAll/cacheClear 注册、代理预检、缓存与超时档位装配（2026-11-17 加固 T4）',
+    async run() {
+      const hostSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'index.js'), 'utf8');
+      // 1) Remote 清单注册（fetch 兜底通道共用同一清单，不写第二套）
+      ok(/'updateCheckAll', 'cacheClear'/.test(hostSrc.replace(/\s+/g, ' ')), 'REMOTE_METHODS 含 updateCheckAll 与 cacheClear');
+      // 2) 联网方法入口先过代理预检（失联当场人话错，不吊死）
+      const slice = (sig, len) => { const i = hostSrc.indexOf(sig); ok(i >= 0, `方法存在：${sig}`); return hostSrc.slice(i, i + len); };
+      for (const [sig, len] of [
+        ['async installApply(req)', 400], ['async updateCheck(req)', 400], ['async updateApply(req)', 400],
+        ['async updateCheckAll(req)', 400], ['install: async (name, pin)', 500],
+      ]) ok(/_netGate\(\)/.test(slice(sig, len)), `${sig} 入口先 await this._netGate()`);
+      // 3) 缓存装配：无 urlOverride 走 cacheDirFor 持久底；url 覆盖夹具仍 mkdtemp 隔离
+      ok(hostSrc.includes('cacheDirFor'), 'fetch 路径用 cacheDirFor');
+      ok(/urlOverride[\s\S]{0,150}mkdtempSync/.test(hostSrc), 'url 覆盖仍走 mkdtemp（夹具隔离不污染缓存）');
+      ok(/req\.url \? fs\.mkdtempSync[\s\S]{0,120}cacheDirFor/.test(hostSrc), 'installApply：url 覆盖 tmp、否则缓存底');
+      // 4) 超时档位 verbatim：install/apply 180s、check 60s、pin 导入 180s
+      ok(slice('async installApply(req)', 700).includes('timeoutMs: 180000'), 'installApply 180s');
+      ok(slice('async updateCheck(req)', 350).includes('60000'), 'updateCheck 60s');
+      ok(slice('async updateApply(req)', 350).includes('180000'), 'updateApply 180s');
+      ok(slice('async updateCheckAll(req)', 400).includes('60000'), 'updateCheckAll 60s');
+      ok(slice('install: async (name, pin)', 900).includes('timeoutMs: 180000'), 'importApply install 180s');
+      // 5) failLog 装配 + cacheClear 删底
+      ok((hostSrc.match(/failLog: roots\.failLog/g) || []).length >= 3, 'fetchRepo 调用都带 failLog: roots.failLog');
+      ok(/rmSync\(roots\.cacheDir/.test(hostSrc), 'cacheClear 删整个缓存底');
+      // 6) 批量检查透传 sources 重试口径
+      ok(/sources: req\.sources/.test(hostSrc), 'updateCheckAll 透传 req.sources（重试失败仓库）');
+    },
+  },
+  {
     id: 'update-skip-local', title: '升级三份比对：本地改动默认跳过并报告（§17#9 数据侧，P1a-T2）',
     async run(f) {
       await withRoots(f);
