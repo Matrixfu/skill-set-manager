@@ -822,6 +822,21 @@ const CASES = [
       const recs8 = fs.readFileSync(logPath8, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
       eq(recs8.length, 1, 'checkout 失败留痕一条');
       eq(recs8[0].cmd, 'checkout', '留痕 cmd=checkout');
+      // 9) 重试不得撞 attempt-1 被 kill 留下的锁尸（活体实测 2026-11-17：60s kill checkout →
+      //    attempt-2 秒报 File exists，重试形同虚设）——清锁必须每次 attempt 前跑
+      const lockDir9 = path.join(f.base, 'cache-lock9');
+      fs.mkdirSync(path.join(lockDir9, '.git'), { recursive: true });
+      let co9 = 0;
+      const killFlaky = (args) => {
+        if (args.includes('checkout') && !args.includes('sparse')) {
+          co9++;
+          if (co9 === 1) { fs.writeFileSync(path.join(lockDir9, '.git', 'index.lock'), ''); return { status: 'spawn', stdout: '', stderr: 'spawnSync git ETIMEDOUT' }; }
+        }
+        return { status: 0, stdout: args.includes('rev-parse') ? 'abcd\n' : '', stderr: '' };
+      };
+      const got9 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: lockDir9, git: killFlaky });
+      eq(got9.commit, 'abcd', 'kill 留锁后重试仍成功（清锁在每次 attempt 前）');
+      ok(!fs.existsSync(path.join(lockDir9, '.git', 'index.lock')), '重试成功后锁尸已清');
     },
   },
   {
