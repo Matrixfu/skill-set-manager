@@ -760,6 +760,7 @@ const CASES = [
       // 1) 已有底（.git 存在）：不 init/不 remote add，只 remote set-url 对齐 origin
       const cacheDir = path.join(f.base, 'cache-or');
       fs.mkdirSync(path.join(cacheDir, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(cacheDir, '.git', 'HEAD'), 'ref: refs/heads/main\n'); // 有效 init 验收件（半尸守卫）
       const seenA = [];
       await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { dir: cacheDir, git: okGit(seenA) });
       ok(!seenA.some((a) => a.includes(' init ')), '有底不 init');
@@ -806,6 +807,7 @@ const CASES = [
       // 7) 陈旧锁自愈（活体实测 2026-11-17：checkout 被超时 kill 留 index.lock 尸，checkout -f 不自愈）
       const lockDir = path.join(f.base, 'cache-lock');
       fs.mkdirSync(path.join(lockDir, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(lockDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
       fs.writeFileSync(path.join(lockDir, '.git', 'index.lock'), '');
       await g.fetchRepo({ owner: 'o2', repo: 'r', ref: null, subpath: 'skills' }, { dir: lockDir, git: okGit([]) });
       ok(!fs.existsSync(path.join(lockDir, '.git', 'index.lock')), '陈旧 index.lock 检出前清除（长任务单飞下撞锁必是尸）');
@@ -826,6 +828,7 @@ const CASES = [
       //    attempt-2 秒报 File exists，重试形同虚设）——清锁必须每次 attempt 前跑
       const lockDir9 = path.join(f.base, 'cache-lock9');
       fs.mkdirSync(path.join(lockDir9, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(lockDir9, '.git', 'HEAD'), 'ref: refs/heads/main\n');
       let co9 = 0;
       const killFlaky = (args) => {
         if (args.includes('checkout') && !args.includes('sparse')) {
@@ -837,6 +840,27 @@ const CASES = [
       const got9 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: lockDir9, git: killFlaky });
       eq(got9.commit, 'abcd', 'kill 留锁后重试仍成功（清锁在每次 attempt 前）');
       ok(!fs.existsSync(path.join(lockDir9, '.git', 'index.lock')), '重试成功后锁尸已清');
+      // 10) 半尸缓存自愈（活体实测 2026-11-17：git init 被 kill 留无 HEAD 的空 .git →
+      //     existsSync(.git) 为真跳过 init，remote set-url 秒报 not a git repository 永红）：
+      //     .git/HEAD 缺失 = 半尸，整目录重建
+      const halfDir = path.join(f.base, 'cache-half');
+      fs.mkdirSync(path.join(halfDir, '.git'), { recursive: true });
+      const seen10 = [];
+      const got10 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: halfDir, git: okGit(seen10) });
+      eq(got10.commit, 'cafe', '半尸 .git（无 HEAD）整目录重建后成功');
+      ok(seen10.some((a) => a.includes('init')), '半尸走重新 init');
+      // 11) 锁不可清（孤儿 remote-https 继承句柄持锁，活体实测）：最终错缀人话指路「重试失败仓库」
+      const heldDir = path.join(f.base, 'cache-held');
+      fs.mkdirSync(path.join(heldDir, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(heldDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+      const heldGit = (args) => {
+        if (args.includes('checkout') && !args.includes('sparse')) return { status: 128, stdout: '', stderr: "fatal: Unable to create '" + path.join(heldDir, '.git', 'index.lock') + "': File exists." };
+        return { status: 0, stdout: args.includes('rev-parse') ? 'abcd\n' : '', stderr: '' };
+      };
+      let e11 = null;
+      try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: heldDir, git: heldGit }); } catch (e) { e11 = String(e?.message ?? e); }
+      ok(e11 && e11.includes('index.lock'), '锁报错原样在');
+      ok(e11 && /重试失败仓库/.test(e11), '锁报错缀人话指路');
     },
   },
   {

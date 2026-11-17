@@ -78,6 +78,12 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog } = {}
     if (!r || r.status !== 0) throw new Error(gitFailMessage(args, r));
     return r;
   };
+  // 半尸自愈（活体实测 2026-11-17：git init 被硬超时 kill 留下无 HEAD 的空 .git，
+  // existsSync(.git) 为真会跳过 init，此后 remote set-url 秒报 not a git repository 永红）：
+  // `.git/HEAD` 是 init 成功落盘的验收件，缺了即半尸——缓存底归我们所有，整目录推倒重建。
+  if (fs.existsSync(path.join(dir, '.git')) && !fs.existsSync(path.join(dir, '.git', 'HEAD'))) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
   fs.mkdirSync(dir, { recursive: true });
   if (fs.existsSync(path.join(dir, '.git'))) {
     run(['remote', 'set-url', 'origin', repoUrl]); // url 覆盖夹具/换 remote 都对齐
@@ -127,7 +133,13 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog } = {}
       if (r && r.status === 0) return r;
       const msg = gitFailMessage(args, r); // head 用裸 args（-c 前缀不进结论）
       if (failLog) logGitFailure(failLog, { cmd, status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
-      if (attempt === 2 || !isRetryableGitFailure(msg)) throw new Error(msg);
+      if (attempt === 2 || !isRetryableGitFailure(msg)) {
+        // 锁清不掉 = 孤儿 git-remote-https 继承了持锁句柄（活体实测 2026-11-17：spawnSync
+        // 超时 kill 只杀 git.exe，孙进程 remote-https 存活且继承 index.lock 句柄，rmSync 吃 EPERM）：
+        // 孤儿自己死掉后「重试失败仓库」就能过——给人话指路，别让人去翻 .git。
+        if (/index\.lock/.test(msg)) throw new Error(`${msg} ——锁被上次超时的残留进程占着，稍后用「重试失败仓库」再试`);
+        throw new Error(msg);
+      }
     }
   };
   if (spec.subpath) runLogged('sparse-checkout', ['sparse-checkout', 'set', '--', spec.subpath]);
