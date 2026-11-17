@@ -373,8 +373,10 @@ export function apply(ctx, config) {
      * 无 urlOverride 走持久上游缓存底（cacheDirFor，增量 fetch，无需 tmp 回收——
      * GLOSSARY「上游缓存」：每次仍真 fetch 最新）；urlOverride（file:// 夹具）仍走
      * 独立 tmp 目录批量回收，夹具互不污染、也不污染生产缓存。
+     * 检查路径超时 120s（活体实测 2026-11-17：vibe-knowledge 的 checkout blob 层经 PAC 代理
+     * 实测 >60s，60s 必红；吊死才翻倍，常态增量不受影响）。
      */
-    _fetchFor(tmpDirs, urlOverride = null, timeoutMs = 60000) {
+    _fetchFor(tmpDirs, urlOverride = null, timeoutMs = 120000) {
       return async (source) => {
         // 单一口径走 core source.js：手拆 '/' 曾把 clone 地址尾部的 `.git` 当仓库名，
         // 拼出 owner/repo.git.git → 远端「Repository not found」（用户报告 2026-10-26，检查更新炸）
@@ -423,7 +425,7 @@ export function apply(ctx, config) {
     async updateCheck(req) {
       await this._netGate();
       const tmps = [];
-      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 60000) }); }
+      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 120000) }); }
       finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
     }
 
@@ -433,7 +435,7 @@ export function apply(ctx, config) {
       const tmps = [];
       try {
         return await updates.checkUpdateAll(roots, {
-          fetch: this._fetchFor(tmps, req.url ?? null, 60000),
+          fetch: this._fetchFor(tmps, req.url ?? null, 120000),
           sources: req.sources ?? null,
         });
       } finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }

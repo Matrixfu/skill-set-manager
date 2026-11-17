@@ -956,9 +956,9 @@ const CASES = [
       ok(/req\.url \? fs\.mkdtempSync[\s\S]{0,120}cacheDirFor/.test(hostSrc), 'installApply：url 覆盖 tmp、否则缓存底');
       // 4) 超时档位 verbatim：install/apply 180s、check 60s、pin 导入 180s
       ok(slice('async installApply(req)', 700).includes('timeoutMs: 180000'), 'installApply 180s');
-      ok(slice('async updateCheck(req)', 350).includes('60000'), 'updateCheck 60s');
+      ok(slice('async updateCheck(req)', 350).includes('120000'), 'updateCheck 120s（活体实测 2026-11-17：checkout blob 层经代理 >60s，60s 必红）');
       ok(slice('async updateApply(req)', 350).includes('180000'), 'updateApply 180s');
-      ok(slice('async updateCheckAll(req)', 400).includes('60000'), 'updateCheckAll 60s');
+      ok(slice('async updateCheckAll(req)', 400).includes('120000'), 'updateCheckAll 120s（同上口径）');
       ok(slice('install: async (name, pin)', 900).includes('timeoutMs: 180000'), 'importApply install 180s');
       // 5) failLog 装配 + cacheClear 删底
       ok((hostSrc.match(/failLog: roots\.failLog/g) || []).length >= 3, 'fetchRepo 调用都带 failLog: roots.failLog');
