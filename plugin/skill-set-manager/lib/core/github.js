@@ -67,7 +67,21 @@ function copyRepoRoot(src, dst, fsImpl = fs) {
  * - fetch 步骤：网络类失败（gitnet 分类）自动重试一次，每次失败进 failLog；真因不重试。
  * - `timeoutMs` 走 makeGit 硬超时（代理半死不吊死）；注入 git 的夹具自理。
  */
-export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog } = {}) {
+/** 清 git 尸（活体实测 2026-11-17）：spawnSync 超时 kill 只杀 git.exe，孙进程 git-remote-https
+ *  存活且继承持锁句柄（index.lock 删不掉 EPERM、半尸目录删不掉），实测可挂 20+ 分钟，
+ *  期间该缓存仓每次检查秒红。长任务单飞口径（GLOSSARY「长任务」全局只允许一个）下，
+ *  撞到这个状态时清掉所有 git* 进程是正当修法：git.exe 是瞬态工具，编辑器/终端的 git 会被
+ *  自动重试，代价远小于「缓存仓永红且重试不自愈」。POSIX 下 kill 自带进程组语义，不清。 */
+function sweepGitOrphans() {
+  if (process.platform !== 'win32') return;
+  try {
+    spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command',
+      "Get-Process git,git-remote-https -ErrorAction SilentlyContinue | Stop-Process -Force"],
+    { timeout: 8000, windowsHide: true, encoding: 'utf8' });
+  } catch {}
+}
+
+export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweepOrphans = sweepGitOrphans } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
   const runner = git ?? makeGit(timeoutMs);
   const run = (args) => {
@@ -82,7 +96,8 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog } = {}
   // existsSync(.git) 为真会跳过 init，此后 remote set-url 秒报 not a git repository 永红）：
   // `.git/HEAD` 是 init 成功落盘的验收件，缺了即半尸——缓存底归我们所有，整目录推倒重建。
   if (fs.existsSync(path.join(dir, '.git')) && !fs.existsSync(path.join(dir, '.git', 'HEAD'))) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); }
+    catch { sweepOrphans(); try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
   }
   fs.mkdirSync(dir, { recursive: true });
   if (fs.existsSync(path.join(dir, '.git'))) {
@@ -125,7 +140,8 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog } = {}
   // 长任务单飞口径（GLOSSARY「长任务」全局只允许一个）保证此刻必无活 git 在动这底，撞锁必是尸。
   const runLogged = (cmd, args) => {
     for (let attempt = 1; attempt <= 2; attempt++) {
-      try { fs.rmSync(path.join(dir, '.git', 'index.lock'), { force: true }); } catch {}
+      try { fs.rmSync(path.join(dir, '.git', 'index.lock'), { force: true }); }
+      catch { sweepOrphans(); try { fs.rmSync(path.join(dir, '.git', 'index.lock'), { force: true }); } catch {} }
       const t0 = Date.now();
       let r;
       try { r = runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }

@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const CORE_DIR = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core');
@@ -861,6 +861,44 @@ const CASES = [
       try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: heldDir, git: heldGit }); } catch (e) { e11 = String(e?.message ?? e); }
       ok(e11 && e11.includes('index.lock'), '锁报错原样在');
       ok(e11 && /重试失败仓库/.test(e11), '锁报错缀人话指路');
+      // 12) 锁清不动 = 跨进程句柄独占（孤儿 remote-https 继承持锁，活体实测挂 20+ 分钟不自愈）：
+      //     按单飞口径清尸一次再试。夹具用外部 node 子进程真持锁（本进程 fd 可标记删除，模拟不像）
+      const held12 = path.join(f.base, 'cache-sweep');
+      fs.mkdirSync(path.join(held12, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(held12, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+      const lock12 = path.join(held12, '.git', 'index.lock');
+      fs.writeFileSync(lock12, '');
+      const ready12 = path.join(f.base, 'ready12');
+      const holder12 = spawn('pwsh', ['-NoProfile', '-Command',
+        `$f=[IO.File]::Open('${lock12}','Open','ReadWrite','None'); [IO.File]::WriteAllText('${ready12}','x'); Start-Sleep 60`], { stdio: 'ignore', windowsHide: true });
+      try {
+        const wt0 = Date.now(); while (!fs.existsSync(ready12) && Date.now() - wt0 < 8000) { /* 等子进程持锁就位 */ }
+        let swept12 = 0;
+        const got12 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, {
+          dir: held12, git: okGit([]),
+          sweepOrphans: () => { swept12++; holder12.kill(); const kt = Date.now(); while (Date.now() - kt < 600) { /* 等句柄释放 */ } },
+        });
+        eq(swept12, 1, '锁清不动触发行尸（只一次）');
+        eq(got12.commit, 'cafe', '清尸后照常成功');
+        // 13) 半尸目录删不动（同款跨进程持句柄）：清尸后推倒重建走 init
+        const held13 = path.join(f.base, 'cache-half-sweep');
+        fs.mkdirSync(path.join(held13, '.git'), { recursive: true }); // 无 HEAD = 半尸
+        fs.writeFileSync(path.join(held13, '.git', 'x'), '');
+        const x13 = path.join(held13, '.git', 'x');
+        const ready13 = path.join(f.base, 'ready13');
+        const holder13 = spawn('pwsh', ['-NoProfile', '-Command',
+          `$f=[IO.File]::Open('${x13}','Open','ReadWrite','None'); [IO.File]::WriteAllText('${ready13}','x'); Start-Sleep 60`], { stdio: 'ignore', windowsHide: true });
+        try {
+          const wt13 = Date.now(); while (!fs.existsSync(ready13) && Date.now() - wt13 < 8000) { /* 等就位 */ }
+          let swept13 = 0;
+          const got13 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, {
+            dir: held13, git: okGit([]),
+            sweepOrphans: () => { swept13++; holder13.kill(); const kt = Date.now(); while (Date.now() - kt < 600) { /* 等释放 */ } },
+          });
+          eq(swept13, 1, '半尸目录删不动触发行尸');
+          eq(got13.commit, 'cafe', '清尸后重建 init 成功');
+        } finally { holder13.kill(); }
+      } finally { holder12.kill(); }
     },
   },
   {
