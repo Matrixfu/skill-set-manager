@@ -562,7 +562,7 @@ const CASES = [
         ? { status: 128, stdout: '', stderr: "warning: ----------------- SECURITY WARNING ----------------\nwarning: | TLS certificate verification has been disabled! |\nwarning: ---------------------------------------------------\nremote: Repository not found.\nfatal: repository 'https://github.com/o/r.git.git/' not found\n" }
         : { status: 0, stdout: '', stderr: '' });
       const grab = async (mod, fn) => { let m = ''; try { await fn(await core(mod)); } catch (e) { m = String(e?.message ?? e); } return m; };
-      const fm = await grab('github', (gg) => gg.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { tmpDir: path.join(f.base, 'gherr-'), git: warnGit }));
+      const fm = await grab('github', (gg) => gg.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: path.join(f.base, 'gherr-'), git: warnGit }));
       ok(fm.startsWith('git fetch failed'), `fetch 失败归一为业务错，实得：${fm}`);
       ok(fm.includes('not found'), `git 报错须带 fatal 行，实得：${fm}`);
       ok(!fm.includes('SECURITY WARNING'), `不得把 TLS 告警横幅当结论，实得：${fm}`);
@@ -572,7 +572,7 @@ const CASES = [
       // fetch 带 --filter=blob:none 只取树，blob 按 sparse 路径按需取；服务器/老 git 不认则退回全量
       const seen = [];
       const spyGit = (args, cwd) => { seen.push(args.join(' ')); return spawnSync('git', args, { cwd, encoding: 'utf8' }); }; // 此处还不能引用下面 const git（TDZ）
-      const got2 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghpc-')), git: spyGit, url: pathToFileURL(repo).toString() });
+      const got2 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { dir: fs.mkdtempSync(path.join(f.base, 'ghpc-')), git: spyGit, url: pathToFileURL(repo).toString() });
       ok(seen.some((a) => a.includes(' fetch ') && a.includes('--filter=blob:none')), 'fetch 走 partial clone（--filter=blob:none）');
       eq(got2.commit, head, 'partial clone 仍能取到 commit');
       ok(fs.existsSync(path.join(got2.skillsDir, 'alpha', 'SKILL.md')), 'partial clone + sparse 仍能检出 skills/alpha');
@@ -580,19 +580,19 @@ const CASES = [
         ? { status: 128, stdout: '', stderr: 'warning: ----------------- SECURITY WARNING ----------------\nfatal: filtering not recognized by server, ignoring server advertisement\n' }
         : args.includes('rev-parse') ? { status: 0, stdout: 'deadbeef\n', stderr: '' } : { status: 0, stdout: '', stderr: '' });
       const seen2 = [];
-      const got3 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghnf-')), git: (a, c) => { seen2.push(a.join(' ')); return noFilter(a, c); } });
+      const got3 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { dir: fs.mkdtempSync(path.join(f.base, 'ghnf-')), git: (a, c) => { seen2.push(a.join(' ')); return noFilter(a, c); } });
       eq(got3.commit, 'deadbeef', '不认 filter 时退回全量仍能装成');
       ok(seen2.some((a) => a.includes('--filter=blob:none')) && seen2.some((a) => a.includes(' fetch ') && !a.includes('--filter')), '不认 filter → 退回不带 filter 的 fetch');
       // 真因（仓库不存在/网络炸）绝不重试第二轮：慢网络下白等一遍等于把等待翻倍
       const seen3 = [];
       let fm2 = '';
-      try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghrt-')), git: (a) => { seen3.push(a.join(' ')); return a.includes('fetch') ? { status: 128, stdout: '', stderr: "warning: SECURITY\nfatal: repository 'https://github.com/o/r.git.git/' not found\n" } : { status: 0, stdout: '', stderr: '' }; } }); } catch (e) { fm2 = String(e?.message ?? e); }
+      try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: fs.mkdtempSync(path.join(f.base, 'ghrt-')), git: (a) => { seen3.push(a.join(' ')); return a.includes('fetch') ? { status: 128, stdout: '', stderr: "warning: SECURITY\nfatal: repository 'https://github.com/o/r.git.git/' not found\n" } : { status: 0, stdout: '', stderr: '' }; } }); } catch (e) { fm2 = String(e?.message ?? e); }
       ok(fm2.includes('not found'), `仓库不存在照报 fatal 行，实得：${fm2}`);
       eq(seen3.filter((a) => a.includes(' fetch ')).length, 1, '非 filter 失败不重试（只拉一次）');
       const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
       const spec = g.parseRepoSpec('o/r/skills');
       const tmp = fs.mkdtempSync(path.join(f.base, 'ghwt-'));
-      const got = await g.fetchRepo(spec, { tmpDir: tmp, git, url: pathToFileURL(repo).toString() });
+      const got = await g.fetchRepo(spec, { dir: tmp, git, url: pathToFileURL(repo).toString() });
       eq(got.commit, head, 'fetch commit == HEAD');
       ok(fs.existsSync(path.join(got.skillsDir, 'alpha', 'SKILL.md')), '稀疏检出 skills/alpha 可见');
       const res = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'unused' });
@@ -613,14 +613,14 @@ const CASES = [
       // 0 个可安装技能不得当成功（用户报告 2026-10-30：kaankiziltug/logo-design-skill 的技能在
       // skills/logo-design/，粘贴仓库根 → 一层扫描扫不到直接含 SKILL.md 的目录 → results=[] →
       // 任务照常 ok，UI 显示「安装完成」但库里什么都没装）：names 为空时空扫描 = 业务错，且指路稀疏路径
-      const rootGot = await g.fetchRepo(g.parseRepoSpec('o/r'), { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghroot-')), git, url: pathToFileURL(repo).toString() });
+      const rootGot = await g.fetchRepo(g.parseRepoSpec('o/r'), { dir: fs.mkdtempSync(path.join(f.base, 'ghroot-')), git, url: pathToFileURL(repo).toString() });
       const libBefore = fs.readdirSync(f.library).sort();
       let emptyErr = '';
       try { await g.installSkills(f.roots, { source: 'github:o/r', commit: rootGot.commit, skillsDir: rootGot.skillsDir, backup: async () => 'unused' }); } catch (e) { emptyErr = String(e?.message ?? e); }
       ok(emptyErr.includes('稀疏路径'), `仓库根 0 个可安装技能应报业务错并指路稀疏路径，实得：${emptyErr || '（没抛错）'}`);
       eq(JSON.stringify(fs.readdirSync(f.library).sort()), JSON.stringify(libBefore), '空扫描报错不落库任何东西（不半写）');
       let gerr = null;
-      try { await g.fetchRepo(spec, { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghx-')), git: () => { const e = new Error('spawn git ENOENT'); e.code = 'ENOENT'; throw e; }, url: 'file://nope' }); } catch (e) { gerr = e; }
+      try { await g.fetchRepo(spec, { dir: fs.mkdtempSync(path.join(f.base, 'ghx-')), git: () => { const e = new Error('spawn git ENOENT'); e.code = 'ENOENT'; throw e; }, url: 'file://nope' }); } catch (e) { gerr = e; }
       ok(gerr && /git/i.test(gerr.message), 'git 缺失 → 业务错含 git（Review Focus #1）');
     },
   },
@@ -641,7 +641,7 @@ const CASES = [
       const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
       const url = pathToFileURL(repo).toString();
       const g = await core('github');
-      const got = await g.fetchRepo(g.parseRepoSpec('o/r'), { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghsolowt-')), git, url });
+      const got = await g.fetchRepo(g.parseRepoSpec('o/r'), { dir: fs.mkdtempSync(path.join(f.base, 'ghsolowt-')), git, url });
       ok(!fs.existsSync(path.join(got.skillsDir, 'solo-showcase')), '夹具成立：检出根下没有同名子目录');
       // 安装：一层扫空手时认检出根自身，库名 = frontmatter name（§7.3 目录名即技能名）
       const res = await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'b' });
@@ -688,7 +688,7 @@ const CASES = [
       execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
       execFileSync('git', ['-c', 'user.name=v', '-c', 'user.email=v@v', '-C', repo, 'commit', '-qm', 'v2'], { stdio: 'ignore' });
       const head2 = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-      const fetchRoot = async () => g.fetchRepo(g.parseRepoSpec('o/r'), { tmpDir: fs.mkdtempSync(path.join(f.base, 'ghsolowt2-')), git, url });
+      const fetchRoot = async () => g.fetchRepo(g.parseRepoSpec('o/r'), { dir: fs.mkdtempSync(path.join(f.base, 'ghsolowt2-')), git, url });
       const chk = await u.checkUpdate(f.roots, 'solo-showcase', { fetch: fetchRoot });
       eq(chk.upToDate, false, '根级技能可比对出有新版本');
       eq(chk.remote, head2, 'checkUpdate.remote == v2 HEAD');
@@ -752,6 +752,60 @@ const CASES = [
     },
   },
   {
+    id: 'gh-cache', title: 'fetchRepo 持久上游缓存+硬超时+网络类重试一次+failures.log（2026-11-17 加固 T2）',
+    async run(f) {
+      await withRoots(f);
+      const g = await core('github');
+      const okGit = (seen) => (args) => { seen.push(args.join(' ')); return { status: 0, stdout: args.includes('rev-parse') ? 'cafe\n' : '', stderr: '' }; };
+      // 1) 已有底（.git 存在）：不 init/不 remote add，只 remote set-url 对齐 origin
+      const cacheDir = path.join(f.base, 'cache-or');
+      fs.mkdirSync(path.join(cacheDir, '.git'), { recursive: true });
+      const seenA = [];
+      await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { dir: cacheDir, git: okGit(seenA) });
+      ok(!seenA.some((a) => a.includes(' init ')), '有底不 init');
+      ok(!seenA.some((a) => a.includes('remote add')), '有底不 remote add');
+      ok(seenA.some((a) => a.includes('remote set-url origin')), '有底 remote set-url 对齐 origin');
+      // 2) 超时被 kill 留脏 worktree → checkout 带 -f 自愈
+      ok(seenA.some((a) => a.includes('checkout -q -f --detach FETCH_HEAD')), 'checkout 带 -f');
+      // 3) 网络类失败（RPC failed）重试一次即成
+      let fetchCalls = 0;
+      const flaky = (args) => {
+        if (!args.includes('fetch')) return { status: 0, stdout: args.includes('rev-parse') ? 'beef\n' : '', stderr: '' };
+        fetchCalls++;
+        return fetchCalls === 1
+          ? { status: 128, stdout: '', stderr: 'error: RPC failed; curl 18 transfer closed with outstanding read data remaining' }
+          : { status: 0, stdout: '', stderr: '' };
+      };
+      const got = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: path.join(f.base, 'cache-flaky'), git: flaky });
+      eq(fetchCalls, 2, 'RPC failed → fetch 重试一次');
+      eq(got.commit, 'beef', '重试后成功仍拿到 commit');
+      // 4) 真因（仓库不存在）不重试
+      let nfCalls = 0;
+      const notFound = (args) => { if (!args.includes('fetch')) return { status: 0, stdout: '', stderr: '' }; nfCalls++; return { status: 128, stdout: '', stderr: "fatal: repository 'https://github.com/o/r.git/' not found" }; };
+      let msg4 = '';
+      try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: path.join(f.base, 'cache-nf'), git: notFound }); } catch (e) { msg4 = String(e?.message ?? e); }
+      ok(msg4.includes('not found'), '仓库不存在照报 fatal 行');
+      eq(nfCalls, 1, '真因不重试（fetch 只一次）');
+      // 5) failLog：两次尝试各留一条痕
+      const logPath = path.join(f.base, 'nested-log', 'failures.log');
+      let c5 = 0;
+      const alwaysRpc = (args) => { if (!args.includes('fetch')) return { status: 0, stdout: '', stderr: '' }; c5++; return { status: 128, stdout: '', stderr: 'error: RPC failed; curl 56 OpenSSL read' }; };
+      let threw5 = false;
+      try { await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: path.join(f.base, 'cache-log'), git: alwaysRpc, failLog: logPath }); } catch { threw5 = true; }
+      ok(threw5, '两次都炸则抛错');
+      const recs = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      eq(recs.length, 2, 'failures.log 恰两条（attempt 1/2）');
+      eq([recs[0].attempt, recs[1].attempt, recs[1].cmd], [1, 2, 'fetch'], 'attempt 递增且 cmd=fetch');
+      // 6) cacheDirFor：同源同底、异 ref 不串底；roots 装配
+      const spec1 = g.parseRepoSpec('o/r/skills');
+      const specV1 = g.parseRepoSpec('o/r@v1/skills');
+      eq(g.cacheDirFor(f.roots, spec1), g.cacheDirFor(f.roots, g.parseRepoSpec('o/r/skills')), '同源同底');
+      ok(g.cacheDirFor(f.roots, spec1) !== g.cacheDirFor(f.roots, specV1), '@ref 参与哈希键');
+      ok(g.cacheDirFor(f.roots, spec1).startsWith(f.roots.cacheDir), '缓存底挂 roots.cacheDir 下');
+      ok(String(f.roots.failLog).endsWith('failures.log'), 'roots.failLog 装配');
+    },
+  },
+  {
     id: 'update-skip-local', title: '升级三份比对：本地改动默认跳过并报告（§17#9 数据侧，P1a-T2）',
     async run(f) {
       await withRoots(f);
@@ -771,7 +825,7 @@ const CASES = [
       const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
       const url = pathToFileURL(repo).toString();
       const g = await core('github');
-      const got = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'upwt1-')), git, url });
+      const got = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { dir: fs.mkdtempSync(path.join(f.base, 'upwt1-')), git, url });
       await g.installSkills(f.roots, { source: 'github:o/r', commit: got.commit, skillsDir: got.skillsDir, backup: async () => 'b' });
       // 上游 v2：SKILL.md 改、reference/x.md 增、gone.md 删；stable.md 不动
       fs.writeFileSync(path.join(sk, 'SKILL.md'), 'v2 body\n');
@@ -786,7 +840,7 @@ const CASES = [
       const u = await core('updates');
       const remote = await u.remoteHead({ owner: 'o', repo: 'r' }, { git, url });
       eq(remote, head2, 'remoteHead == v2 HEAD');
-      const fetch = async () => g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'upwt2-')), git, url });
+      const fetch = async () => g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: 'skills' }, { dir: fs.mkdtempSync(path.join(f.base, 'upwt2-')), git, url });
       const chk = await u.checkUpdate(f.roots, 'alpha', { fetch });
       eq(chk.upToDate, false, 'upToDate=false');
       eq(chk.remote, head2, 'checkUpdate.remote');
@@ -829,7 +883,7 @@ const CASES = [
       let em2 = ''; try { u.upstreamDirOf(upRoot, 'nope', fs); } catch (e) { em2 = String(e?.message ?? e); }
       ok(em2.includes('上游不含技能 "nope"') && em2.includes('github:'), `不含该技能时给出改来源提示，实得：${em2}`);
       // 端到端：fetch 返回仓库根当 skillsDir，仍要能定位上游技能做三份比对（原先必抛「上游不含技能」）
-      const fetchRoot = async () => g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { tmpDir: fs.mkdtempSync(path.join(f.base, 'upwt3-')), git, url });
+      const fetchRoot = async () => g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: fs.mkdtempSync(path.join(f.base, 'upwt3-')), git, url });
       const chk3 = await u.checkUpdate(f.roots, 'alpha', { fetch: fetchRoot });
       eq(chk3.upToDate, true, '无子路径来源也能比对（已在 HEAD）');
       ok(chk3.files.some((x) => x.path === 'SKILL.md' && x.action === 'skip-modified'), '无子路径来源：下探一层后仍照出本地分歧');

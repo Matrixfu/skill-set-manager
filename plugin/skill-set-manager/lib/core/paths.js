@@ -40,6 +40,9 @@ export function buildRoots({ dshHome, agentsHome, customSkillDirs = [], crossHar
     agentsHome,
     libraryRoot: path.join(dshHome, 'skill-library'), // 生效区之外（§4.2）
     setsDir: path.join(dshHome, 'skill-sets'),
+    // 上游缓存（GLOSSARY「上游缓存」：传输层复用，不改「检查=问最新」语义）与失败留痕
+    cacheDir: path.join(dshHome, 'skill-set-manager', 'cache'),
+    failLog: path.join(dshHome, 'skill-set-manager', 'failures.log'),
     userDshRoot: path.join(dshHome, 'skills'),
     userAgentsRoot: path.join(agentsHome, 'skills'),
     // 常驻链接目标区（P3 搬迁：默认 = 跨 harness 区 ~/.agents/skills；开关开 = 额外保留旧 ~/.dsh/skills）
