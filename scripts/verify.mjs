@@ -707,6 +707,51 @@ const CASES = [
     },
   },
   {
+    id: 'gitnet-semantics', title: 'gitnet：可重试失败分类、failures.log 留痕、代理失联预检（2026-11-17 加固 T1）',
+    async run(f) {
+      const gn = await core('gitnet');
+      // 1) 可重试分类：网络传输抖动=true；真因=false（真因重试=把等待翻倍）
+      for (const s of [
+        'RPC failed; curl 18 transfer closed', 'invalid index-pack output', 'early EOF',
+        'Could not resolve host: github.com', 'Failed to connect to github.com port 443',
+        'Connection reset by peer', 'Empty reply from server', 'The requested URL returned error: 502',
+        'spawnSync git ETIMEDOUT', 'git fetch timed out',
+      ]) ok(gn.isRetryableGitFailure(s), `可重试类应判可重试：${s}`);
+      for (const s of [
+        "fatal: repository 'https://github.com/o/r.git/' not found",
+        '上游不含技能 "x"', 'not a valid git repository',
+      ]) ok(!gn.isRetryableGitFailure(s), `真因不得判可重试：${s}`);
+      // 2) failures.log：嵌套目录自动建、一行一条 JSON、字段齐全
+      const logPath = path.join(f.base, 'log-nested', 'failures.log');
+      gn.logGitFailure(logPath, { cmd: 'fetch', status: 128, verdict: 'fatal: RPC failed', ms: 1234, attempt: 1 });
+      gn.logGitFailure(logPath, { cmd: 'fetch', status: 'timeout', verdict: 'ETIMEDOUT', ms: 60000, attempt: 2 });
+      const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      eq(lines.length, 2, 'failures.log 一行一条');
+      eq([lines[0].cmd, lines[0].attempt, lines[1].status], ['fetch', 1, 'timeout'], 'JSON 字段 cmd/attempt/status 齐全');
+      // 3) 代理预检：env 优先 → git config 兜底 → 都没有就不探测；TCP 不通=dead，通=null
+      const seenOpts = [];
+      const fakeNet = (mode) => ({
+        connect: (opts, onConnect) => {
+          seenOpts.push(opts);
+          const sock = { on: (ev, h) => { sock['_' + ev] = h; return sock; }, destroy: () => {}, setTimeout: (ms, cb) => { sock._onTimeout = cb; return sock; } };
+          process.nextTick(() => (mode === 'ok' ? (onConnect?.(), sock._connect?.()) : sock._error?.(new Error('connect ECONNREFUSED'))));
+          return sock;
+        },
+      });
+      const gitNoProxy = () => ({ status: 1, stdout: '', stderr: '' });
+      const gitWithProxy = (args) => (args.includes('https.proxy')
+        ? { status: 0, stdout: 'http://127.0.0.1:26561\n', stderr: '' }
+        : { status: 1, stdout: '', stderr: '' });
+      eq((await gn.probeProxy({ git: gitNoProxy, net: fakeNet('ok'), env: {} })).dead, null, '无代理配置 → 不探测直接放行');
+      eq(seenOpts.length, 0, '无代理时 net.connect 不应被调');
+      eq((await gn.probeProxy({ git: gitWithProxy, net: fakeNet('err'), env: {} })).dead, '127.0.0.1:26561', 'git config 代理 + TCP 不通 → dead=host:port');
+      eq((await gn.probeProxy({ git: gitWithProxy, net: fakeNet('ok'), env: {} })).dead, null, '代理可达 → dead=null');
+      eq((await gn.probeProxy({ git: gitNoProxy, net: fakeNet('err'), env: { HTTPS_PROXY: 'http://proxy.example:8080' } })).dead, 'proxy.example:8080', 'env 代理优先于 git config');
+      eq((await gn.probeProxy({ git: gitNoProxy, net: fakeNet('ok'), env: { https_proxy: 'http://127.0.0.1' } })).dead, null, '小写 env 也认');
+      eq(seenOpts[seenOpts.length - 1].port, 80, '无端口按协议默认（http=80）');
+    },
+  },
+  {
     id: 'update-skip-local', title: '升级三份比对：本地改动默认跳过并报告（§17#9 数据侧，P1a-T2）',
     async run(f) {
       await withRoots(f);
