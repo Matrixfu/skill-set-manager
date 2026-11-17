@@ -2395,9 +2395,10 @@ const CASES = [
       const en = src.slice(src.indexOf('      en: {'), dictEnd);
       const KEYS = ['taskConnect', 'taskFetching', 'taskSlowRepo', 'taskImport', 'taskUpdateCheck', 'taskUpdateApply',
         'taskUninstall', 'taskMigrate', 'taskElapsed', 'taskBusyWith', 'taskDismiss',
-        'taskOpInstall', 'taskOpImport', 'taskOpUninstall', 'taskOpMigrate', 'taskOpCheck', 'taskOpApply', 'opPartial'];
+        'taskOpInstall', 'taskOpImport', 'taskOpUninstall', 'taskOpMigrate', 'taskOpCheck', 'taskOpApply', 'opPartial',
+        'taskOpCheckAll', 'taskUpdateCheckAll']; // 2026-11-17 加固 T5：批量检查任务文案两本字典同 commit
       for (const k of KEYS) { ok(zh.includes(`${k}:`), `字典 zh 缺 ${k}`); ok(en.includes(`${k}:`), `字典 en 缺 ${k}`); } // Review Focus #4
-      for (const op of ['installApply', 'importApply', 'updateCheck', 'updateApply', 'uninstallSkill',
+      for (const op of ['installApply', 'importApply', 'updateCheck', 'updateApply', 'updateCheckAll', 'uninstallSkill',
         'migrateApply', 'migrateUndo', 'migrateAgentsApply', 'migrateAgentsUndo'])
         ok(body.includes(`${op}: {`), `SLOW_OPS 缺 ${op}`);
       ok(/^    const tasks = \{ seq: 0, running: null, last: null, subs: new Set\(\) \};$/m.test(body),
@@ -2425,7 +2426,7 @@ const CASES = [
       ok(/\.filter\(\(r\) => !r\.ok\)\.length/.test(body), '部分成功按 results[].ok 计数（终审 N5）');
       ok(!/run\('install'/.test(body), '安装按钮不再走组件内 busy（一关页面就丢）');
       for (const site of ["startLong(ctx, 'installApply'", "startLong(ctx, 'uninstallSkill'", "startLong(ctx, 'updateCheck'",
-        "startLong(ctx, 'updateApply'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
+        "startLong(ctx, 'updateApply'", "startLong(ctx, 'updateCheckAll'", "startLong(ctx, 'migrateAgentsApply'", "startLong(ctx, 'migrateAgentsUndo'",
         "startLong(ctx, mig.applied ? 'migrateUndo' : 'migrateApply'"])
         ok(body.includes(site), `设置页未接长任务：${site}`);
       ok(!/const tabBtn = \(id, label\) => h\('button', \{[^}]*disabled: !!busy/.test(body), '等待期页签可切换（Review Focus #5）');
@@ -2440,6 +2441,27 @@ const CASES = [
       ok(/T: 25000 \* Math\.max\(1,/.test(body), '导入耗时预期按所选技能数放大');
       const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
       ok(gl.includes('**长任务（Long Operation）**'), 'GLOSSARY 收录术语');
+    },
+  },
+  {
+    id: 'client-batch-check', title: '库页签批量检查更新+失败仓库一键重试+清空上游缓存（2026-11-17 加固 T5）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const src = fs.readFileSync(file, 'utf8');
+      const body = src.replace(/(^|[ \t])\/\/[^\n]*/gm, '');
+      const zh = src.slice(src.indexOf('      zh: {'), src.indexOf('      en: {'));
+      const en = src.slice(src.indexOf('      en: {'), src.indexOf('    function Panel('));
+      for (const k of ['batchCheckUpd', 'clearCache', 'checkUpdFailed', 'retryFailedSrcs', 'taskOpCheckAll', 'taskUpdateCheckAll']) {
+        ok(zh.includes(`${k}:`), `字典 zh 缺 ${k}`);
+        ok(en.includes(`${k}:`), `字典 en 缺 ${k}`);
+      }
+      ok(/updateCheckAll: \{ T: 30000, label: 'taskOpCheckAll', stages: \[\['taskUpdateCheckAll', 0\], \['taskSlowRepo', 60000\]\] \}/.test(body), 'SLOW_OPS.updateCheckAll 条目（T=30s 两阶段）');
+      ok(/startLong\(ctx, 'updateCheckAll'/.test(body), '批量检查钮走 startLong（单飞+进度条+跨界面存活）');
+      ok(/call\(ctx, 'cacheClear', \{\}\)/.test(body), '清空上游缓存钮走普通 call（纯本地 IO 不长任务）');
+      ok(/last\?\.op === 'updateCheckAll'/.test(body), '批量检查结果从任务态补回（重开界面，同款终审 I2）');
+      ok(/t\('checkUpdFailed'\)\.replace\('\{n\}'/.test(body), '失败仓库 banner 语态');
+      ok(/sources: chkFail\.failed\.map/.test(body), '重试只拉失败仓库（sources 子集）');
+      ok(/if \(e\.chk\) nx\[e\.name\] = e\.chk/.test(body), '批量结果回填 upRes，行级失败（chk=null）跳过不伪装');
     },
   },
   {

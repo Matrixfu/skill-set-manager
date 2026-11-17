@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({
         upToDate: '已是最新', upActions: '差异', skipNote: '本地改动的文件已跳过', noContentDiff: '内容已一致', claimNoCommit: '来源为认领，未记 commit',
         uninstallGo: '卸载', confirmUn: '确认卸载？（先备份→从所有集移除→各项目回收托管条目）',
         installTitle: '从 GitHub 安装', installSpecPh: '仓库规格 owner/repo[@ref][/subpath]', installGo: '安装', overwriteChk: '覆盖同名（先备份）',
+        batchCheckUpd: '批量检查更新', clearCache: '清空上游缓存', // 2026-11-17 加固 T5（GLOSSARY「批量检查更新」「上游缓存」）
         migrateTitle: '旧通用区迁移（~/.dsh/skills，一次性）', migratePreview: '预览迁移', migrateApply: '执行迁移', migrateUndo: '回滚迁移',
         migrateMoves: '将移动', migrateKeep: '保留不搬',
         migrateReasonExists: '库同名', migrateReasonLink: '外部链接', migrateReasonManifest: '他人记账', migrateReasonResident: '已是常驻链接',
@@ -71,6 +72,7 @@ window.__ModuleLoader__.load({
         taskUninstall: '正在卸载并回收托管条目…', taskMigrate: '正在迁移存量条目…',
         taskElapsed: '已等待 {n}s', taskBusyWith: '正在{n}，请先等它跑完', taskDismiss: '清除',
         taskOpInstall: '安装', taskOpImport: '导入', taskOpUninstall: '卸载', taskOpMigrate: '迁移', taskOpCheck: '检查更新', taskOpApply: '应用更新',
+        taskOpCheckAll: '批量检查更新', taskUpdateCheckAll: '检查更新中', checkUpdFailed: '{n} 个来源仓库检查失败（其余照常）', retryFailedSrcs: '重试失败仓库', // 2026-11-17 加固 T5
         opPartial: '部分完成：{n} 装入 · {m} 未装（逐条结果见「运维」页签）',
         // 面板美化（spec 2026-11-06）：新结构文案键（Task 2/3/4 消费）
         effTitle: '生效清单', candidates: '候选', notActive: '未生效',
@@ -102,6 +104,7 @@ window.__ModuleLoader__.load({
         upToDate: 'Up to date', upActions: 'Diff', skipNote: 'locally modified files skipped', noContentDiff: 'contents already match', claimNoCommit: 'source claimed without a recorded commit',
         uninstallGo: 'Uninstall', confirmUn: 'Uninstall? (backup → remove from all sets → reclaim managed entries per project)',
         installTitle: 'Install from GitHub', installSpecPh: 'repo spec owner/repo[@ref][/subpath]', installGo: 'Install', overwriteChk: 'overwrite same name (backup first)',
+        batchCheckUpd: 'Batch check updates', clearCache: 'Clear upstream cache', // hardening T5 (GLOSSARY Batch Update Check / Upstream Cache)
         migrateTitle: 'Migrate legacy shared area (~/.dsh/skills, one-time)', migratePreview: 'Preview', migrateApply: 'Apply', migrateUndo: 'Undo migration',
         migrateMoves: 'Will move', migrateKeep: 'Kept',
         migrateReasonExists: 'name clash', migrateReasonLink: 'external link', migrateReasonManifest: 'other tool', migrateReasonResident: 'already resident',
@@ -142,6 +145,7 @@ window.__ModuleLoader__.load({
         taskUninstall: 'Uninstalling and reclaiming managed entries…', taskMigrate: 'Migrating legacy entries…',
         taskElapsed: 'Waiting {n}s', taskBusyWith: '{n} in progress — wait for it to finish', taskDismiss: 'Dismiss',
         taskOpInstall: 'Install', taskOpImport: 'Import', taskOpUninstall: 'Uninstall', taskOpMigrate: 'Migrate', taskOpCheck: 'Update check', taskOpApply: 'Apply update',
+        taskOpCheckAll: 'Batch check updates', taskUpdateCheckAll: 'Checking updates', checkUpdFailed: '{n} source repo(s) failed to check (others checked)', retryFailedSrcs: 'Retry failed repos', // hardening T5
         opPartial: 'Partially done: {n} installed · {m} skipped (per-skill results are in the Ops tab)',
         // panel beautify (spec 2026-11-06): keys for the new structure (consumed by Tasks 2-4)
         effTitle: 'Effective list', candidates: 'Candidates', notActive: 'not active',
@@ -189,6 +193,7 @@ window.__ModuleLoader__.load({
       importApply: { T: 25000, label: 'taskOpImport', stages: [['taskImport', 0], ['taskSlowRepo', 60000]] },
       updateCheck: { T: 15000, label: 'taskOpCheck', stages: [['taskUpdateCheck', 0]] },
       updateApply: { T: 20000, label: 'taskOpApply', stages: [['taskUpdateApply', 0]] },
+      updateCheckAll: { T: 30000, label: 'taskOpCheckAll', stages: [['taskUpdateCheckAll', 0], ['taskSlowRepo', 60000]] }, // 批量 = 每仓一拉，常态比逐技能重拉快一个量级（2026-11-17 加固 T5）
       uninstallSkill: { T: 6000, label: 'taskOpUninstall', stages: [['taskUninstall', 0]] },
       migrateApply: { T: 6000, label: 'taskOpMigrate', stages: [['taskMigrate', 0]] },
       migrateUndo: { T: 6000, label: 'taskOpMigrate', stages: [['taskMigrate', 0]] },
@@ -972,6 +977,7 @@ window.__ModuleLoader__.load({
       const [confirmUn, setConfirmUn] = React.useState(null); // name
       const [backupsOf, setBackupsOf] = React.useState(null); // {name, list}
       const [upRes, setUpRes] = React.useState({}); // name -> checkUpdate result
+      const [chkFail, setChkFail] = React.useState(null); // 批量检查失败 {failed:[{source,error}], errors:[行级文案]}（2026-11-17 加固 T5）
       const [spec, setSpec] = React.useState('');
       const [overwrite, setOverwrite] = React.useState(false);
       const [mig, setMig] = React.useState(null); // {preview, applied}
@@ -986,9 +992,16 @@ window.__ModuleLoader__.load({
       const [migA, setMigA] = React.useState(null); // {preview, applied}
       const [diag, setDiag] = React.useState(null);
       // 在飞时关掉设置页，onDone 写回的是点击那一刻的实例，那次写入被 React 丢弃；
-      // 重开时从任务态把最近一次「检查更新」的结果补回来（终审 I2）
+      // 重开时从任务态把最近一次「检查更新」的结果补回来（终审 I2）；批量检查同口径（加固 T5）
+      const mergeChkAll = (r) => {
+        setUpRes((m) => { const nx = { ...m }; for (const e of r.results ?? []) if (e.chk) nx[e.name] = e.chk; return nx; });
+        const failed = r.failedSources ?? [];
+        const errors = (r.results ?? []).filter((e) => !e.chk && e.error).map((e) => `${e.name}: ${e.error}`);
+        setChkFail(failed.length || errors.length ? { failed, errors } : null);
+      };
       React.useEffect(() => {
         const last = tasks.last;
+        if (last?.op === 'updateCheckAll') { if (last.status === 'ok' && last.result) mergeChkAll(last.result); return; }
         if (last?.op !== 'updateCheck' || last.status !== 'ok' || !last.result) return;
         setUpRes((m) => (m[last.target] ? m : { ...m, [last.target]: last.result }));
       }, [tasks.last]);
@@ -1040,7 +1053,10 @@ window.__ModuleLoader__.load({
         msg ? h('div', { className: `ssm-p-banner ${msg.kind === 'err' ? 'ssm-p-banner-error' : 'ssm-p-banner-ok'}` }, h(Icon, { n: msg.kind === 'err' ? 'alert' : 'check' }), msg.text) : null, // msg 换 banner 语态：成功 ok 底、失败 error 底（spec §6.4）
         tab === 'library' ? h(React.Fragment, null,
           h('div', { className: 'ssm-p-row' }, // 过滤框换同款 .ssm-p-search（spec §6.5）；宽度归 flex-basis 管，不再 inline maxWidth
-            h('input', { className: 'ssm-p-search', placeholder: t('filterPh'), value: filter, 'aria-label': t('filterPh'), onChange: (e) => setFilter(e.target.value) })),
+            h('input', { className: 'ssm-p-search', placeholder: t('filterPh'), value: filter, 'aria-label': t('filterPh'), onChange: (e) => setFilter(e.target.value) }),
+            // 批量检查更新（GLOSSARY「批量检查更新」）：每仓一拉长任务；清空上游缓存 = 纯本地 IO 普通 call（加固 T5）
+            h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'updateCheckAll', t('batchCheckUpd'), {}, { onDone: (s) => { if (s.ok) mergeChkAll(s.value); } }) }, t('batchCheckUpd')),
+            h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: t('clearCache'), 'aria-label': t('clearCache'), onClick: () => run('cacheClear', async () => { await call(ctx, 'cacheClear', {}); }) }, h(Icon, { n: 'trash' }))),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
           // 翻译行同迁新语态（评审 2026-11-07：库页签内容属本任务，禁「半迁移裂缝」）：
           // 按钮走 .ssm-s-btn（.ssm-p-row>button 的特异性坑已由 .ssm-p-row>.ssm-s-btn 抬回规则接住）、
@@ -1099,6 +1115,15 @@ window.__ModuleLoader__.load({
                 ...(tr.result.failed ?? []).map((f) => h('div', { key: f.name, className: 'ssm-p-desc' }, `${f.name}: ${f.error ?? ''}`)))
             : null,
           h('div', { className: 'ssm-p-desc' }, t('autoTranslateHint')),
+          // 批量检查失败 banner（加固 T5）：仓库级失败可一键重试（sources 子集只拉失败仓库）；
+          // 行级失败（上游删了该技能）逐行 muted 列出，不伪装成检查通过
+          chkFail ? h(React.Fragment, null,
+            h('div', { className: 'ssm-p-banner ssm-p-banner-warn' },
+              h(Icon, { n: 'alert' }),
+              t('checkUpdFailed').replace('{n}', String(chkFail.failed.length)),
+              chkFail.failed.length ? h('button', { className: 'ssm-p-banner-cta', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'updateCheckAll', t('retryFailedSrcs'), { sources: chkFail.failed.map((x) => x.source) }, { onDone: (s) => { if (s.ok) mergeChkAll(s.value); } }) }, t('retryFailedSrcs')) : null),
+            ...chkFail.failed.map((x) => h('div', { key: x.source, className: 'ssm-p-desc', title: x.error }, `${x.source}: ${x.error}`)),
+            ...chkFail.errors.map((x) => h('div', { key: x, className: 'ssm-p-desc' }, x))) : null,
           // 空态（§6.5 同款 .ssm-p-empty + 图标）：库为空=引导去安装；有过滤词无命中=没有匹配
           rows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: filter.trim() ? 'search' : 'box' }), filter.trim() ? t('emptySearch') : t('sEmptyLib')) : null,
           // 技能行 = 行壳卡片（spec §6.5）：徽章组 + 中文用途第二行 + 图标动作条；状态变体（认领编辑/diff/confirm/回收站）
