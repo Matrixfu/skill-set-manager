@@ -728,6 +728,21 @@ const CASES = [
       const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
       eq(lines.length, 2, 'failures.log 一行一条');
       eq([lines[0].cmd, lines[0].attempt, lines[1].status], ['fetch', 1, 'timeout'], 'JSON 字段 cmd/attempt/status 齐全');
+      // 2b) classifyAttempt（终审 St1：attempt 分类口径只写一处）：成功放行 / 网络类判重试 /
+      //     末次不重试 / 真因不重试 / 每次失败留痕
+      const v1 = gn.classifyAttempt({ cmd: 'fetch', args: ['fetch', 'origin'], r: { status: 0, stdout: '', stderr: '' }, t0: 0, failLog: null, attempt: 1 });
+      eq(v1.ok, true, '成功 attempt 放行');
+      const log2b = path.join(f.base, 'cls', 'failures.log');
+      const v2 = gn.classifyAttempt({ cmd: 'checkout', args: ['checkout'], r: { status: 128, stdout: '', stderr: 'error: RPC failed' }, t0: Date.now() - 50, failLog: log2b, attempt: 1 });
+      eq([v2.ok, v2.retry], [false, true], '网络类失败 attempt 1 → retry');
+      const v3 = gn.classifyAttempt({ cmd: 'checkout', args: ['checkout'], r: { status: 128, stdout: '', stderr: 'error: RPC failed' }, t0: 0, failLog: log2b, attempt: 2 });
+      eq(v3.retry, false, '末次 attempt 不再重试');
+      const v4 = gn.classifyAttempt({ cmd: 'fetch', args: ['fetch'], r: { status: 128, stdout: '', stderr: "fatal: repository 'x' not found" }, t0: 0, failLog: null, attempt: 1 });
+      eq(v4.retry, false, '真因不重试');
+      const clsLines = fs.readFileSync(log2b, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      eq(clsLines.length, 2, 'classifyAttempt 失败各留痕一条');
+      eq([clsLines[0].cmd, clsLines[0].attempt, clsLines[1].attempt], ['checkout', 1, 2], '留痕字段 cmd/attempt 齐全');
+      ok(/timeout: 1500/.test(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core', 'gitnet.js'), 'utf8')), 'gitnet 默认 git 查询带 1500ms 硬超时（终审 St6：卡住不得无界吊死 host 事件循环）');
       // 3) 代理预检：env 优先 → git config 兜底 → 都没有就不探测；TCP 不通=dead，通=null
       const seenOpts = [];
       const fakeNet = (mode) => ({
@@ -899,6 +914,27 @@ const CASES = [
           eq(got13.commit, 'cafe', '清尸后重建 init 成功');
         } finally { holder13.kill(); }
       } finally { holder12.kill(); }
+      // 14) 终审 St5：init 成功但 remote add 被超时 kill（HEAD 在、origin 缺）→
+      //     set-url 报 No such remote（非可重试）→ 必须回落 remote add，否则该缓存仓永红
+      const nrDir = path.join(f.base, 'cache-noreg');
+      fs.mkdirSync(path.join(nrDir, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(nrDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+      const seen14 = [];
+      const nrGit = (args) => {
+        seen14.push(args.join(' '));
+        if (args.includes('set-url')) return { status: 128, stdout: '', stderr: "error: No such remote 'origin'" };
+        return { status: 0, stdout: args.includes('rev-parse') ? 'abcd\n' : '', stderr: '' };
+      };
+      const got14 = await g.fetchRepo({ owner: 'o', repo: 'r', ref: null, subpath: null }, { dir: nrDir, git: nrGit });
+      eq(got14.commit, 'abcd', 'origin 缺失回落 remote add 后照常成功');
+      ok(seen14.some((a) => /remote add origin/.test(a)), '回落确实执行了 remote add');
+      // 15) 终审 S1：tmpDir→dir 改名漏网守卫（scripts 里 fetchRepo 调用点不得残留旧选项名）
+      for (const fl of fs.readdirSync(path.resolve(import.meta.dirname)).filter((x) => x.endsWith('.mjs'))) {
+        const src = fs.readFileSync(path.resolve(import.meta.dirname, fl), 'utf8');
+        ok(!/fetchRepo\([\s\S]{0,120}?tmpDir/.test(src), `scripts/${fl}：fetchRepo 调用点无 tmpDir 残留（改名要扫全仓调用点）`);
+      }
+      // 16) 终审 St6：清尸在 pwsh 缺失环境回落 powershell.exe（不再静默 no-op）
+      ok(/'powershell'/.test(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core', 'github.js'), 'utf8')), '清尸命令回落 powershell.exe');
     },
   },
   {
@@ -2558,6 +2594,13 @@ const CASES = [
       ok(/t\('checkUpdFailed'\)\.replace\('\{n\}'/.test(body), '失败仓库 banner 语态');
       ok(/sources: chkFail\.failed\.map/.test(body), '重试只拉失败仓库（sources 子集）');
       ok(/if \(e\.chk\) nx\[e\.name\] = e\.chk/.test(body), '批量结果回填 upRes，行级失败（chk=null）跳过不伪装');
+      ok(/title: iTitle\(t\('clearCache'\)\)/.test(body), '清空缓存钮走 iTitle：被单飞挡住时说明在跑什么（终审 St2：仓内图标钮统一口径）');
+      ok(/const mergeChkAll = \(r, ran = null\)/.test(body) && /const keptF/.test(body) && /const keptE/.test(body),
+        'banner 合并语义：sources 子集重试只替换本轮来源记录，不吞其他仓库的失败（终审 S4）');
+      const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
+      for (const term of ['**上游缓存（Upstream Cache）**', '**批量检查更新（Batch Update Check）**', '**可重试失败（Retryable Failure）**'])
+        ok(gl.includes(term), `GLOSSARY 收录「${term.slice(2, -4)}」词条（终审 St4：本分支新术语有锚）`);
+      ok(gl.includes('升级检查、批量检查更新与升级应用'), '长任务词条用 canonical「批量检查更新」（终审 St3：枚举与正式词条一致）');
     },
   },
   {

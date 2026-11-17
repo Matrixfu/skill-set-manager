@@ -221,7 +221,7 @@ window.__ModuleLoader__.load({
     function startLong(ctx, op, target, args, opts = {}) {
       if (tasks.running) return false;
       const task = {
-        id: (tasks.seq += 1), op, target, note: null, T: opts.T ?? SLOW_OPS[op].T,
+        id: (tasks.seq += 1), op, target, args, note: null, T: opts.T ?? SLOW_OPS[op].T,
         startedAt: Date.now(), doneAt: null, status: 'running', result: null, error: null, warnings: [],
       };
       tasks.running = task; tasks.last = task; emitTasks();
@@ -993,15 +993,26 @@ window.__ModuleLoader__.load({
       const [diag, setDiag] = React.useState(null);
       // 在飞时关掉设置页，onDone 写回的是点击那一刻的实例，那次写入被 React 丢弃；
       // 重开时从任务态把最近一次「检查更新」的结果补回来（终审 I2）；批量检查同口径（加固 T5）
-      const mergeChkAll = (r) => {
+      // ran=null 全量口径整体替换；ran=sources 子集只替换本轮重拉过的来源，
+      // 其余仓库的失败记录原样保留（终审 S4：子集重试不得吞别家的红）
+      const mergeChkAll = (r, ran = null) => {
         setUpRes((m) => { const nx = { ...m }; for (const e of r.results ?? []) if (e.chk) nx[e.name] = e.chk; return nx; });
-        const failed = r.failedSources ?? [];
-        const errors = (r.results ?? []).filter((e) => !e.chk && e.error).map((e) => `${e.name}: ${e.error}`);
-        setChkFail(failed.length || errors.length ? { failed, errors } : null);
+        const freshF = r.failedSources ?? [];
+        const freshE = (r.results ?? []).filter((e) => !e.chk && e.error).map((e) => `${e.name}: ${e.error}`);
+        setChkFail((prev) => {
+          if (!ran) return freshF.length || freshE.length ? { failed: freshF, errors: freshE } : null;
+          const ranSet = new Set(ran);
+          const ranNames = new Set((r.results ?? []).map((e) => e.name));
+          const keptF = (prev?.failed ?? []).filter((x) => !ranSet.has(x.source));
+          const keptE = (prev?.errors ?? []).filter((x) => !ranNames.has(x.split(':')[0]));
+          const failed = [...keptF, ...freshF];
+          const errors = [...keptE, ...freshE];
+          return failed.length || errors.length ? { failed, errors } : null;
+        });
       };
       React.useEffect(() => {
         const last = tasks.last;
-        if (last?.op === 'updateCheckAll') { if (last.status === 'ok' && last.result) mergeChkAll(last.result); return; }
+        if (last?.op === 'updateCheckAll') { if (last.status === 'ok' && last.result) mergeChkAll(last.result, last.args?.sources ?? null); return; }
         if (last?.op !== 'updateCheck' || last.status !== 'ok' || !last.result) return;
         setUpRes((m) => (m[last.target] ? m : { ...m, [last.target]: last.result }));
       }, [tasks.last]);
@@ -1056,7 +1067,7 @@ window.__ModuleLoader__.load({
             h('input', { className: 'ssm-p-search', placeholder: t('filterPh'), value: filter, 'aria-label': t('filterPh'), onChange: (e) => setFilter(e.target.value) }),
             // 批量检查更新（GLOSSARY「批量检查更新」）：每仓一拉长任务；清空上游缓存 = 纯本地 IO 普通 call（加固 T5）
             h('button', { className: 'ssm-s-btn', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'updateCheckAll', t('batchCheckUpd'), {}, { onDone: (s) => { if (s.ok) mergeChkAll(s.value); } }) }, t('batchCheckUpd')),
-            h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: t('clearCache'), 'aria-label': t('clearCache'), onClick: () => run('cacheClear', async () => { await call(ctx, 'cacheClear', {}); }) }, h(Icon, { n: 'trash' }))),
+            h('button', { className: 'ssm-p-icon-btn', disabled: locked, title: iTitle(t('clearCache')), 'aria-label': t('clearCache'), onClick: () => run('cacheClear', async () => { await call(ctx, 'cacheClear', {}); }) }, h(Icon, { n: 'trash' }))),
           // P3 翻译入口（设计 §6.1：默认关出网，手动批量）+ agents 存量迁移向导（§6.6，Task 5 RPC）
           // 翻译行同迁新语态（评审 2026-11-07：库页签内容属本任务，禁「半迁移裂缝」）：
           // 按钮走 .ssm-s-btn（.ssm-p-row>button 的特异性坑已由 .ssm-p-row>.ssm-s-btn 抬回规则接住）、
@@ -1121,7 +1132,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'ssm-p-banner ssm-p-banner-warn' },
               h(Icon, { n: 'alert' }),
               t('checkUpdFailed').replace('{n}', String(chkFail.failed.length)),
-              chkFail.failed.length ? h('button', { className: 'ssm-p-banner-cta', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'updateCheckAll', t('retryFailedSrcs'), { sources: chkFail.failed.map((x) => x.source) }, { onDone: (s) => { if (s.ok) mergeChkAll(s.value); } }) }, t('retryFailedSrcs')) : null),
+              chkFail.failed.length ? h('button', { className: 'ssm-p-banner-cta', disabled: locked, title: busyTitle, onClick: () => startLong(ctx, 'updateCheckAll', t('retryFailedSrcs'), { sources: chkFail.failed.map((x) => x.source) }, { onDone: (s) => { if (s.ok) mergeChkAll(s.value, chkFail.failed.map((x) => x.source)); } }) }, t('retryFailedSrcs')) : null),
             ...chkFail.failed.map((x) => h('div', { key: x.source, className: 'ssm-p-desc', title: x.error }, `${x.source}: ${x.error}`)),
             ...chkFail.errors.map((x) => h('div', { key: x, className: 'ssm-p-desc' }, x))) : null,
           // 空态（§6.5 同款 .ssm-p-empty + 图标）：库为空=引导去安装；有过滤词无命中=没有匹配

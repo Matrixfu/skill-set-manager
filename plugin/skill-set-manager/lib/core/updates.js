@@ -9,11 +9,12 @@ import { readManifest, writeSkillManifest, walkFiles, rootSkillName } from './ma
 import { writeTextAtomic } from './atomic.js';
 import { gitFailMessage } from './giterr.js';
 import { makeGit } from './github.js';
-import { isRetryableGitFailure, logGitFailure } from './gitnet.js';
+import { classifyAttempt } from './gitnet.js';
 
 /**
  * 远端默认分支 HEAD（ls-remote）；失败归一业务错。2026-11-17 加固：默认 15s 硬超时
- * （makeGit 工厂），网络类失败重试一次、失败进 failLog（与 fetchRepo 同一 gitnet 口径）。
+ * （makeGit 工厂），网络类失败重试一次、失败进 failLog（与 fetchRepo 同一 gitnet 口径，
+ * 分类经 classifyAttempt 单点）。
  */
 export async function remoteHead(spec, { git, url, timeoutMs = 15000, failLog } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
@@ -26,9 +27,12 @@ export async function remoteHead(spec, { git, url, timeoutMs = 15000, failLog } 
     catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
     const sha = r && r.status === 0 ? String(r.stdout || '').trim().split(/\s/)[0] : '';
     if (sha) return sha;
-    const msg = r && r.status === 0 ? 'git ls-remote failed: empty response' : gitFailMessage(args, r);
-    if (failLog) logGitFailure(failLog, { cmd: 'ls-remote', status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
-    if (attempt === 2 || !isRetryableGitFailure(msg)) throw new Error(msg);
+    const v = classifyAttempt({
+      cmd: 'ls-remote', args, r, t0, failLog, attempt,
+      ok: () => false, // 走到这里 sha 已空：status=0 也可能是空响应假成
+      failMsg: (x) => (x && x.status === 0 ? 'git ls-remote failed: empty response' : gitFailMessage(args, x)),
+    });
+    if (!v.retry) throw new Error(v.msg);
   }
 }
 

@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { writeSkillManifest, rootSkillName } from './manifest.js';
 import { gitFailMessage } from './giterr.js';
-import { isRetryableGitFailure, logGitFailure } from './gitnet.js';
+import { classifyAttempt } from './gitnet.js';
 
 /** 来源解析与归一在叶子模块 source.js（github 与 manifest 共用，避免 ESM 环）；此处转发保持既有 import 不变。 */
 export { parseRepoSpec, normalizeRepoSource } from './source.js';
@@ -74,11 +74,13 @@ function copyRepoRoot(src, dst, fsImpl = fs) {
  *  自动重试，代价远小于「缓存仓永红且重试不自愈」。POSIX 下 kill 自带进程组语义，不清。 */
 function sweepGitOrphans() {
   if (process.platform !== 'win32') return;
-  try {
-    spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command',
-      "Get-Process git,git-remote-https -ErrorAction SilentlyContinue | Stop-Process -Force"],
-    { timeout: 8000, windowsHide: true, encoding: 'utf8' });
-  } catch {}
+  const cmd = "Get-Process git,git-remote-https -ErrorAction SilentlyContinue | Stop-Process -Force";
+  for (const shell of ['pwsh', 'powershell']) { // 终审 St6：PS7 缺失回落 Windows PowerShell，不再静默 no-op
+    try {
+      const r = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', cmd], { timeout: 8000, windowsHide: true, encoding: 'utf8' });
+      if (!r?.error) break; // 起得来（不论退出码）；只有 shell 本身 ENOENT 才换下一个
+    } catch {}
+  }
 }
 
 export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweepOrphans = sweepGitOrphans } = {}) {
@@ -101,7 +103,12 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
   }
   fs.mkdirSync(dir, { recursive: true });
   if (fs.existsSync(path.join(dir, '.git'))) {
-    run(['remote', 'set-url', 'origin', repoUrl]); // url 覆盖夹具/换 remote 都对齐
+    try { run(['remote', 'set-url', 'origin', repoUrl]); } // url 覆盖夹具/换 remote 都对齐
+    catch (e) { // 终审 St5：init 成功但 remote add 被超时 kill（HEAD 在、origin 缺）→
+      // set-url 报 No such remote（非可重试），回落 add，绝不落「该缓存仓永红」
+      if (!/No such remote/i.test(String(e?.message ?? e))) throw e;
+      run(['remote', 'add', 'origin', repoUrl]);
+    }
   } else {
     run(['init', '-q']);
     run(['remote', 'add', 'origin', repoUrl]);
@@ -120,12 +127,11 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
       let r;
       try { r = runner(fetchArgs, dir); }
       catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
-      if (r && r.status === 0) return;
-      const msg = gitFailMessage(bare, r); // head 用裸 args：-c 前缀不进结论（gitFailMessage 口径=命令名）
-      if (failLog) logGitFailure(failLog, { cmd: 'fetch', status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
-      if (attempt === 2 || !isRetryableGitFailure(msg)) {
-        const err = new Error(msg);
-        err.filterUnrecognized = /filter/i.test(msg); // 调用方据此决定退不退全量
+      const v = classifyAttempt({ cmd: 'fetch', args: bare, r, t0, failLog, attempt }); // head 用裸 args：-c 前缀不进结论（gitFailMessage 口径=命令名）
+      if (v.ok) return;
+      if (!v.retry) {
+        const err = new Error(v.msg);
+        err.filterUnrecognized = /filter/i.test(v.msg); // 调用方据此决定退不退全量
         throw err;
       }
     }
@@ -146,15 +152,14 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
       let r;
       try { r = runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }
       catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
-      if (r && r.status === 0) return r;
-      const msg = gitFailMessage(args, r); // head 用裸 args（-c 前缀不进结论）
-      if (failLog) logGitFailure(failLog, { cmd, status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
-      if (attempt === 2 || !isRetryableGitFailure(msg)) {
+      const v = classifyAttempt({ cmd, args, r, t0, failLog, attempt }); // head 用裸 args（-c 前缀不进结论）
+      if (v.ok) return r;
+      if (!v.retry) {
         // 锁清不掉 = 孤儿 git-remote-https 继承了持锁句柄（活体实测 2026-11-17：spawnSync
         // 超时 kill 只杀 git.exe，孙进程 remote-https 存活且继承 index.lock 句柄，rmSync 吃 EPERM）：
         // 孤儿自己死掉后「重试失败仓库」就能过——给人话指路，别让人去翻 .git。
-        if (/index\.lock/.test(msg)) throw new Error(`${msg} ——锁被上次超时的残留进程占着，稍后用「重试失败仓库」再试`);
-        throw new Error(msg);
+        if (/index\.lock/.test(v.msg)) throw new Error(`${v.msg} ——锁被上次超时的残留进程占着，稍后用「重试失败仓库」再试`);
+        throw new Error(v.msg);
       }
     }
   };

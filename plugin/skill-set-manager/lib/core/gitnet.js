@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import net from 'node:net';
+import { gitFailMessage } from './giterr.js';
 
 /** 网络类结论行形状（git/curl 的 stderr 措辞）；ETIMEDOUT/timed out = spawnSync 硬超时也算。 */
 const RETRYABLE_PATTERNS = [
@@ -44,7 +45,21 @@ export function logGitFailure(failLogPath, rec) {
   } catch {}
 }
 
-const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 1500, windowsHide: true }); // 终审 St6：git config 卡住不得无界吊死 host 事件循环
+
+/**
+ * 「跑了一次 attempt，怎么判」统一入口（GLOSSARY「可重试失败」口径只写这一处；
+ * 终审 St1：fetch/sparse-checkout/checkout/ls-remote 四个调用点共用，B 阶段加第五处也不漂移）。
+ * 调用方自持循环与差异钩子（清锁 / 空 sha / filterUnrecognized），本函数只做：
+ * 成功判定 → 结论归一 → 留痕 → 可重试分类。r = 已跑完的 {status,stdout,stderr}（抛错侧归一后传入）。
+ * ok 谓词可覆写（remoteHead 认「有 sha 才算成」）；failMsg 可覆写空响应这类 status=0 假成。
+ */
+export function classifyAttempt({ cmd, args, r, t0, failLog, attempt, maxAttempts = 2, ok = (x) => x && x.status === 0, failMsg = null }) {
+  if (ok(r)) return { ok: true, r };
+  const msg = failMsg ? failMsg(r) : gitFailMessage(args, r);
+  if (failLog) logGitFailure(failLog, { cmd, status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
+  return { ok: false, msg, retry: attempt < maxAttempts && isRetryableGitFailure(msg) };
+}
 
 /** 代理地址解析序：env（大小写都认）→ git 全局 https.proxy/http.proxy；无配置返回 null。 */
 function proxyTarget(git, env) {
