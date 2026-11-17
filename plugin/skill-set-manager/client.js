@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
         confirmSwitch: '确认切换：将改写仓库根的 .agents/skills/（仅托管条目）', exportJson: '导出', importJson: '导入',
-        regen: '重新生成', claimForeign: '接管失配条目', claimForeignHint: '把「名字在本集里、盘上已存在、且确实指向库/生效区」的链接补回托管台账（只补台账，不动盘上条目）', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选即本会话临时生效（会话结束自动撤下）；要固化就在上方输入集合名 → 「另存为当前清单」创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
+        regen: '重新生成', claimForeign: '接管失配条目', claimForeignHint: '把「名字在本集里、盘上已存在、且确实指向库/生效区」的链接补回托管台账（只补台账，不动盘上条目）', pruneMissing: '从集合移除缺失成员', draftHint: '未绑定：勾选即本会话临时生效（会话结束自动撤下）；要固化：勾好技能 → 点本条右侧「另存为当前清单」→ 输入集合名 → 确认，即创建并绑定本项目（常驻全局技能不在候选中）', noBinding: '未绑定技能集', skillsCount: '个技能', loadFailed: '加载失败',
         opFailed: '操作失败', empty: '（暂无技能集）', hintP2: '技能变化下一轮请求生效；本面板操作后 / 菜单列表即同步刷新',
         copyClip: '复制到剪贴板', copied: '已复制 ✓', copyFail: '复制失败',
         noSession: '先在对话页打开一个会话',
@@ -39,13 +39,13 @@ window.__ModuleLoader__.load({
         diagPartition: '分区说明', diagCopies: '副本漂移', diagDangling: '悬空引用',
         diagDeadLinks: '失效链接', diagStructure: '结构问题', diagEnv: '环境',
         none: '（无）', opDone: '完成', backupAt: '备份位置', moreFiles: '…（其余略）',
-        unbindGo: '解绑', confirmUnbind: '确认解绑？托管条目将被回收，用户自有条目不动',
+        unbindGo: '解绑', unbindCurrent: '解绑当前技能集', confirmUnbind: '确认解绑？托管条目将被回收，用户自有条目不动',
         foreignLine: '外来条目（不接管、切换不覆盖）',
         settingsHint: '安装/升级/卸载/回收站/诊断在「设置 → 技能集管理器」',
         searchPh: '按名称/用途搜索技能…', hitCount: '命中', pendingTag: '待翻译',
         residentRow: '全局常驻 · 已在所有项目生效', foreignRow: '外来常驻 · 其他工具放入 ~/.agents/skills',
         providerSec: '插件/Preset 提供', providerHint: '插件或 agent preset 注入，不受技能集管控：切换技能集不移除；停用对应插件即消失', providerRow: '插件/Preset 提供 · 不受技能集管控', providerRowGo: '在「设置 → 插件」停用来源插件',
-        goSettings: '去设置 → 技能集管理器管理 ›', unboundHint: '本项目未绑定技能集：勾选即本会话临时生效（会话结束自动撤下）；要固化请用「另存为当前清单」创建并绑定技能集', // 设计 2026-10-28：未绑定也可起盘临时覆盖（host 台账 setSlug:null），旧 N6「未绑定不可覆盖」口径已废
+        goSettings: '去设置 → 技能集管理器管理 ›', // 设计 2026-10-28：未绑定也可起盘临时覆盖（host 台账 setSlug:null），旧 N6「未绑定不可覆盖」口径已废；死键 unboundHint 已删（无使用者，verify 锚同删，用户 2026-11-17）
         tabGlobal: '全局技能集', globalTabHint: '常驻技能在所有项目生效；链接落在下行所示目录（跨 harness 共享，其他工具可见）。外来常驻条目只读。',
         residentOnly: '只看常驻', batchTranslate: '批量翻译', translateGo: '翻译', translateDone: '翻译结果', failedRetryable: '条此前失败 · 点击一并重试',
         translateProgress: '翻译中', translateStop: '停止', translateStopping: '停止中（等在途条目收尾）',
@@ -92,7 +92,7 @@ window.__ModuleLoader__.load({
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
         confirmSwitch: 'Confirm switch: rewrites .agents/skills/ at the repo root (managed entries only)', exportJson: 'Export', importJson: 'Import',
-        regen: 'Regenerate', claimForeign: 'Claim mismatched entries', claimForeignHint: 'Re-register links that are named in this set, already on disk and really pointing at the library/active zones back into the managed ledger (ledger only, disk entries untouched)', pruneMissing: 'Remove missing members', draftHint: 'No set bound: ticking a skill activates it for this session only (auto-removed when the session ends); to keep it, name the set above, then "Save current as set" creates it and binds this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
+        regen: 'Regenerate', claimForeign: 'Claim mismatched entries', claimForeignHint: 'Re-register links that are named in this set, already on disk and really pointing at the library/active zones back into the managed ledger (ledger only, disk entries untouched)', pruneMissing: 'Remove missing members', draftHint: 'No set bound: ticking a skill activates it for this session only (auto-removed when the session ends); to keep it, tick the skills you want, then click "Save current as set" on the right of this banner, name the set and confirm — it will be created and bound to this project (global resident skills are not candidates)', noBinding: 'No skill set bound', skillsCount: 'skills', loadFailed: 'Load failed',
         opFailed: 'Operation failed', empty: '(no skill sets yet)', hintP2: 'Skill changes take effect on the next request; the / menu list refreshes right after panel operations',
         copyClip: 'Copy to clipboard', copied: 'Copied ✓', copyFail: 'Copy failed',
         noSession: 'Open a conversation session first',
@@ -111,13 +111,13 @@ window.__ModuleLoader__.load({
         diagPartition: 'Partition', diagCopies: 'Copy drift', diagDangling: 'Dangling refs',
         diagDeadLinks: 'Dead links', diagStructure: 'Structure', diagEnv: 'Environment',
         none: '(none)', opDone: 'Done', backupAt: 'Backup at', moreFiles: '… (rest omitted)',
-        unbindGo: 'Unbind', confirmUnbind: 'Unbind? Managed entries are reclaimed; your own entries stay.',
+        unbindGo: 'Unbind', unbindCurrent: 'Unbind current set', confirmUnbind: 'Unbind? Managed entries are reclaimed; your own entries stay.',
         foreignLine: 'Foreign entries (untouched by switching)',
         settingsHint: 'Install/update/uninstall/trash/diagnose live in Settings → Skill Sets',
         searchPh: 'Search skills by name or purpose…', hitCount: 'matches', pendingTag: 'untranslated',
         residentRow: 'Global resident · active in every project', foreignRow: 'Foreign resident · from ~/.agents/skills',
         providerSec: 'Plugin / preset-provided', providerHint: 'Injected by a plugin or agent preset, outside skill-set control: switching sets will not remove them; disable the plugin to hide', providerRow: 'Plugin / preset-provided · not skill-set managed', providerRowGo: 'disable the source plugin in Settings → Plugins',
-        goSettings: 'manage in Settings → Skill Sets ›', unboundHint: 'No skill set bound: ticking a skill in Session override activates it for this session only (auto-removed when the session ends); to keep it, use "Save current as set" to create a set and bind this project',
+        goSettings: 'manage in Settings → Skill Sets ›', // 死键 unboundHint 已删（无使用者，verify 锚同删，见 zh 侧同注，用户 2026-11-17）
         tabGlobal: 'Global Skills', globalTabHint: 'Resident skills apply to every project; links live in the dir shown below (shared across harnesses). Foreign residents are read-only.',
         residentOnly: 'Resident only', batchTranslate: 'Batch translate', translateGo: 'Translate', translateDone: 'Translation result', failedRetryable: 'previously failed · click to retry all',
         translateProgress: 'Translating', translateStop: 'Stop', translateStopping: 'stopping (waiting for in-flight items)',
@@ -393,6 +393,7 @@ window.__ModuleLoader__.load({
       const [confirm, setConfirm] = React.useState(null); // {kind:'switch'|'del', slug}
       const [draft, setDraft] = React.useState('');
       const [saveOpen, setSaveOpen] = React.useState(false); // 另存为收进操作条（Task 2），展开成一行输入
+      const saveNameRef = React.useRef(null); // 另存为名称输入：生效清单卡横幅的 CTA 点击后要展开并聚焦到这里（用户 2026-11-17）
       const [saveDesc, setSaveDesc] = React.useState('');
       const [descDraft, setDescDraft] = React.useState(''); // 改名行的描述输入（spec §6.6）
       const [openZones, setOpenZones] = React.useState({}); // 折叠灰区展开态（spec §6.3：常驻/外来常驻/插件提供）
@@ -604,7 +605,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-p-actions' },
             saveOpen
               ? h('div', { className: 'ssm-p-row', style: { width: '100%' } },
-                  h('input', { className: 'ssm-input', autoFocus: true, placeholder: t('newName'), value: draft, disabled: busy, 'aria-label': t('newName'), onChange: (e) => setDraft(e.target.value) }),
+                  h('input', { className: 'ssm-input', ref: saveNameRef, autoFocus: true, placeholder: t('newName'), value: draft, disabled: busy, 'aria-label': t('newName'), onChange: (e) => setDraft(e.target.value) }),
                   h('input', { className: 'ssm-input', placeholder: t('descPh'), value: saveDesc, disabled: busy, 'aria-label': t('descPh'), onChange: (e) => setSaveDesc(e.target.value) }),
                   h('button', { disabled: busy || !draft.trim() || (!bound && !managed.length), onClick: () => run(async () => {
                     const name = draft.trim();
@@ -616,12 +617,12 @@ window.__ModuleLoader__.load({
                   }) }, '✓'),
                   h('button', { disabled: busy, onClick: () => { setSaveOpen(false); setDraft(''); setSaveDesc(''); } }, '×'))
               : null,
-            h('button', { className: 'ssm-p-icon-btn', disabled: busy || (!bound && !managed.length), title: !bound && !managed.length ? t('draftHint') : t('saveAs'), 'aria-label': t('saveAs'), onClick: () => setSaveOpen(true) }, h(Icon, { n: 'download' })),
-            h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('importJson'), 'aria-label': t('importJson'), onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, h(Icon, { n: 'upload' })),
-            h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('exportJson'), 'aria-label': t('exportJson'), onClick: async () => { try { const arr = await Promise.all((st.sets ?? []).map((x) => call(ctx, 'exportSet', { slug: x.slug }))); setIo({ mode: 'export', text: JSON.stringify({ sets: arr.flatMap((j) => j.sets ?? []) }, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, h(Icon, { n: 'copy' })),
+            h('button', { className: 'ssm-p-text-btn', disabled: busy || (!bound && !managed.length), title: !bound && !managed.length ? t('draftHint') : t('saveAs'), 'aria-label': t('saveAs'), onClick: () => setSaveOpen(true) }, h(Icon, { n: 'save', s: 12 }), t('saveAs')),
+            h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('importJson'), 'aria-label': t('importJson'), onClick: () => setIo({ mode: 'import', text: '{"sets":[]}', copied: false }) }, h(Icon, { n: 'download' })),
+            h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('exportJson'), 'aria-label': t('exportJson'), onClick: async () => { try { const arr = await Promise.all((st.sets ?? []).map((x) => call(ctx, 'exportSet', { slug: x.slug }))); setIo({ mode: 'export', text: JSON.stringify({ sets: arr.flatMap((j) => j.sets ?? []) }, null, 2), copied: false }); } catch (e) { setError(`${t('opFailed')}: ${e?.message ?? e}`); } } }, h(Icon, { n: 'upload' })),
             st.undoAvailable ? h('button', { className: 'ssm-p-icon-btn', disabled: busy, title: t('undo'), 'aria-label': t('undo'), onClick: () => run(() => call(ctx, 'undoSwitch', { sessionId })) }, h(Icon, { n: 'undo' })) : null,
             h('span', { className: 'ssm-grow' }, null),
-            st.binding?.setSlug ? h('button', { className: 'ssm-p-icon-btn ssm-p-icon-danger', disabled: busy, title: t('unbindGo'), 'aria-label': t('unbindGo'), onClick: () => setConfirmUnbind(true) }, h(Icon, { n: 'linkOff' })) : null),
+            st.binding?.setSlug ? h('button', { className: 'ssm-p-text-btn ssm-p-text-danger', disabled: busy, 'aria-label': t('unbindCurrent'), onClick: () => setConfirmUnbind(true) }, h(Icon, { n: 'linkOff', s: 12 }), t('unbindCurrent')) : null),
         ),
         // 另存为/导入行已收进技能集卡底部操作条（Task 2，spec §6.3）
         io
@@ -720,7 +721,9 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'ssm-grow' }, null),
                 h('button', { disabled: busy, onClick: () => run(() => call(ctx, 'endOverride', { sessionId })) }, t('endOverride')))
             : null,
-          !bound ? h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h(Icon, { n: 'linkOff' }), t('draftHint')) : null,
+          !bound ? h('div', { className: 'ssm-p-banner ssm-p-banner-muted' }, h(Icon, { n: 'linkOff' }), t('draftHint'),
+            h('span', { className: 'ssm-grow' }, null),
+            h('button', { disabled: busy || !managed.length, title: !managed.length ? t('draftHint') : undefined, onClick: () => { setSaveOpen(true); requestAnimationFrame(() => { if (saveNameRef.current) { saveNameRef.current.scrollIntoView({ block: 'nearest' }); saveNameRef.current.focus(); } }); } }, t('saveAs'))) : null,
           qq
             ? h(React.Fragment, null,
                 ...(() => { // 搜索两段视图（3.4）+「其他」灰段（review#5：搜常驻/插件名不再假阴性，旧灰行命中能力保留）
@@ -921,6 +924,7 @@ window.__ModuleLoader__.load({
       check: 'M20 6 9 17l-5-5',
       pencil: 'M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z',
       copy: 'M9 9h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2ZM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+      save: 'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2ZM17 21v-8H7v8M7 3v5h8', // 另存为磁盘图标（feather save 同款，用户 2026-11-17 图标重排：另存为=磁盘、导入=download、导出=upload）
       users: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
       trash: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
       download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
@@ -1360,8 +1364,13 @@ window.__ModuleLoader__.load({
 .ssm-p-collapse[aria-expanded="true"]>svg:last-of-type{transform:rotate(180deg)}
 .ssm-p-skel{height:34px;border-radius:8px;background:linear-gradient(90deg,color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent) 25%,color-mix(in srgb,var(--dsw-alias-label-primary) 16%,transparent) 50%,color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent) 75%);background-size:200% 100%;animation:ssm-skel 1.2s linear infinite}
 @keyframes ssm-skel{from{background-position:100% 0}to{background-position:-100% 0}}
-.ssm-p-actions{display:flex;align-items:center;gap:2px;border-top:1px solid var(--dsw-alias-border-l2);padding-top:6px;margin-top:2px}
+.ssm-p-actions{display:flex;align-items:center;gap:2px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l2);padding-top:6px;margin-top:2px} /* flex-wrap：另存为展开行 width:100% 时独占一行，文字钮（另存为/解绑）上线后才不会把输入行挤扁（用户 2026-11-17） */
 .ssm-p-actions .ssm-p-icon-btn{opacity:1}
+.ssm-p-text-btn{display:inline-flex;align-items:center;gap:5px;flex:none;font:inherit;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:3px 8px;cursor:pointer} /* 卡底主行动钮带文字（另存为/解绑），裸图标只留次级操作 */
+.ssm-p-text-btn:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent)}
+.ssm-p-text-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ssm-p-text-btn:disabled{opacity:.55;cursor:default}
+.ssm-p-text-danger{color:var(--dsw-alias-state-error-primary,#e5484d)} /* 解绑＝破坏性动作 error 色不填充底（ADR-0004 口径） */
 .ssm-p-setrow>.ssm-p-row .ssm-p-icon-btn{opacity:0;transition:opacity .12s}
 .ssm-p-setrow:hover>.ssm-p-row .ssm-p-icon-btn,.ssm-p-setrow:focus-within>.ssm-p-row .ssm-p-icon-btn{opacity:1}
 @media (prefers-reduced-motion:reduce){.ssm-p-setrow>.ssm-p-row .ssm-p-icon-btn{opacity:1;transition:none}}

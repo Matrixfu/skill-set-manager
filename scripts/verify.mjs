@@ -2056,7 +2056,7 @@ const CASES = [
   },
   {
     id: 'client-unbound-override',
-    title: 'client.js：未绑定勾选走 host 临时覆盖，不再攒本地草稿；中英文案同步（用户 2026-10-28）',
+    title: 'client.js：未绑定勾选走 host 临时覆盖，不再攒本地草稿；中英文案同步（用户 2026-10-28）；横幅 CTA/解绑文字钮/图标重排（用户 2026-11-17）',
     async run() {
       const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
       const raw = fs.readFileSync(file, 'utf8');
@@ -2065,10 +2065,16 @@ const CASES = [
       ok(/const managed = Object\.keys\(st\.managed \?\? \{\}\)/.test(body), '一套勾选：临时生效名单就是托管台账（未绑定态）');
       ok(/names: \[\.\.\.managed\]/.test(body), '另存为：未绑定用当前临时清单作名单');
       for (const copy of [
-        '未绑定：勾选即本会话临时生效', '本项目未绑定技能集：勾选即本会话临时生效',
+        '未绑定：勾选即本会话临时生效',
         'No set bound: ticking a skill activates it for this session only',
-        'No skill set bound: ticking a skill in Session override activates it for this session only',
       ]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+      ok(!body.includes('unboundHint'), '死键 unboundHint 已删（zh/en 字典与本锚同删，用户 2026-11-17）');
+      // 2026-11-17 UI 修复三件（grilling 两轮确认）：解绑钮带文字、横幅 CTA 就地展开另存为、图标重排
+      ok(/t\('unbindCurrent'\)/.test(body), '解绑钮用带文字键 unbindCurrent（不再裸图标 only）');
+      ok(/saveNameRef/.test(body), '未绑定横幅 CTA 展开另存为行并聚焦名称输入');
+      ok(/n: 'save'/.test(body), '另存为用磁盘 save 图标（download 归导入、upload 归导出）');
+      const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
+      ok(gl.includes('**解绑（Unbind）**'), 'GLOSSARY 收录「解绑」词条（2026-11-17 术语表缺口补上）');
     },
   },
   {
