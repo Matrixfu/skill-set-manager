@@ -806,6 +806,43 @@ const CASES = [
     },
   },
   {
+    id: 'upd-all', title: 'checkUpdateAll：按来源仓库分组去重、单仓失败不中止整批（2026-11-17 加固 T3）',
+    async run(f) {
+      await withRoots(f);
+      const man = await core('manifest');
+      const up = await core('updates');
+      // 库夹具：alpha/beta 同源、gamma 异源、eps 本地技能（unknown）、delta 无 manifest
+      for (const [name, source] of [['alpha', 'github:o/r/skills'], ['beta', 'github:o/r/skills'], ['gamma', 'github:o/x'], ['eps', 'unknown']]) {
+        const dir = writeSkill(f.library, name);
+        man.writeSkillManifest(dir, { source, commit: source === 'unknown' ? null : 'c-old', fs });
+      }
+      writeSkill(f.library, 'delta'); // 无 manifest → 不入选
+      const mkUp = (tag, names) => { const d = path.join(f.base, 'up-' + tag); for (const n of names) writeSkill(d, n); return d; };
+      const upR = mkUp('r', ['alpha', 'beta']);
+      const upX = mkUp('x', ['gamma']);
+      const calls = [];
+      const fetch = async (source) => {
+        calls.push(source);
+        if (source === 'github:o/x') throw new Error('git fetch failed: error: RPC failed; curl 56');
+        return { commit: 'c-new', skillsDir: source === 'github:o/r/skills' ? upR : upX };
+      };
+      const out = await up.checkUpdateAll(f.roots, { fetch });
+      eq(calls.slice().sort().join(','), 'github:o/r/skills,github:o/x', '同来源只拉一次（2 组各一次）');
+      eq(out.results.map((r) => r.name).sort().join(','), 'alpha,beta', '失败来源的技能不进 results');
+      eq(out.failedSources.length, 1, '失败仓库单独列出');
+      eq(out.failedSources[0].source, 'github:o/x', 'failedSources 记来源');
+      ok(out.failedSources[0].error.includes('RPC failed'), 'failedSources 带原文错');
+      const r0 = out.results.find((r) => r.name === 'alpha');
+      ok(r0.chk && r0.chk.remote === 'c-new' && r0.chk.upToDate === false, 'chk 形状：remote/upToDate 齐全');
+      // 重试失败仓库口径：sources 子集只拉给定来源
+      calls.length = 0;
+      const out2 = await up.checkUpdateAll(f.roots, { fetch, sources: ['github:o/x'] });
+      eq(calls.join(','), 'github:o/x', 'sources 子集只拉给定来源');
+      eq(out2.results.length, 0, '子集无命中 results 空');
+      eq(out2.failedSources.length, 1, '子集失败仍单列');
+    },
+  },
+  {
     id: 'update-skip-local', title: '升级三份比对：本地改动默认跳过并报告（§17#9 数据侧，P1a-T2）',
     async run(f) {
       await withRoots(f);

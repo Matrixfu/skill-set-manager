@@ -5,24 +5,31 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { readManifest, writeSkillManifest, walkFiles, rootSkillName } from './manifest.js';
 import { writeTextAtomic } from './atomic.js';
 import { gitFailMessage } from './giterr.js';
+import { makeGit } from './github.js';
+import { isRetryableGitFailure, logGitFailure } from './gitnet.js';
 
-const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-
-/** 远端默认分支 HEAD（ls-remote）；失败归一业务错。 */
-export async function remoteHead(spec, { git = defaultGit, url } = {}) {
+/**
+ * 远端默认分支 HEAD（ls-remote）；失败归一业务错。2026-11-17 加固：默认 15s 硬超时
+ * （makeGit 工厂），网络类失败重试一次、失败进 failLog（与 fetchRepo 同一 gitnet 口径）。
+ */
+export async function remoteHead(spec, { git, url, timeoutMs = 15000, failLog } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
+  const runner = git ?? makeGit(timeoutMs);
   const args = ['ls-remote', repoUrl, 'HEAD'];
-  let r;
-  try { r = git(args, process.cwd()); }
-  catch (e) { throw new Error(`git ls-remote failed: ${e?.message ?? e}`); }
-  if (!r || r.status !== 0) throw new Error(gitFailMessage(args, r));
-  const sha = String(r.stdout || '').trim().split(/\s/)[0];
-  if (!sha) throw new Error('git ls-remote failed: 空响应');
-  return sha;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const t0 = Date.now();
+    let r;
+    try { r = runner(args, process.cwd()); }
+    catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
+    const sha = r && r.status === 0 ? String(r.stdout || '').trim().split(/\s/)[0] : '';
+    if (sha) return sha;
+    const msg = r && r.status === 0 ? 'git ls-remote failed: empty response' : gitFailMessage(args, r);
+    if (failLog) logGitFailure(failLog, { cmd: 'ls-remote', status: r?.status ?? 'spawn', verdict: msg, ms: Date.now() - t0, attempt });
+    if (attempt === 2 || !isRetryableGitFailure(msg)) throw new Error(msg);
+  }
 }
 
 /**
@@ -133,4 +140,38 @@ export async function applyUpdate(roots, name, { fetch, backup, fs: fsImpl = fs 
   for (const p of skipped) if (p in oldBaseline) mfNew.files[p] = oldBaseline[p];
   writeTextAtomic(path.join(dir, '.manifest.json'), JSON.stringify(mfNew, null, 2) + '\n', { fs: fsImpl }); // 原子写（review m8）
   return { ...chk, updated, skipped, backup: backupPath };
+}
+
+/**
+ * 批量检查更新（GLOSSARY「批量检查更新」，2026-11-17 加固 T3）：按来源仓库分组、
+ * 每仓只拉一次、覆盖该源全部受管技能；单仓失败不中止整批——失败仓库进
+ * failedSources，可经 `sources` 子集单独重试。无 manifest / 本地技能（source
+ * unknown）不参与（§8.1，与单技能检查同口径）；`.` 开头目录（.backups）跳过。
+ * 组内逐技能定位失败（上游删了该技能）不进 results，带 error 上报（行级失败）。
+ */
+export async function checkUpdateAll(roots, { fetch, sources = null, fs: fsImpl = fs } = {}) {
+  const groups = new Map();
+  let entries = [];
+  try { entries = fsImpl.readdirSync(roots.libraryRoot, { withFileTypes: true }); } catch {}
+  for (const ent of entries) {
+    if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+    const dir = path.join(roots.libraryRoot, ent.name);
+    const manifest = readManifest(dir, { fs: fsImpl });
+    if (!manifest || manifest.source === 'unknown') continue;
+    if (sources && !sources.includes(manifest.source)) continue;
+    if (!groups.has(manifest.source)) groups.set(manifest.source, []);
+    groups.get(manifest.source).push({ name: ent.name, dir, manifest });
+  }
+  const results = [];
+  const failedSources = [];
+  for (const [source, members] of groups) {
+    let got;
+    try { got = await fetch(source); }
+    catch (e) { failedSources.push({ source, error: String(e?.message ?? e) }); continue; }
+    for (const m of members) {
+      try { results.push({ name: m.name, chk: buildChk(m.name, m.manifest, got.commit, got.skillsDir, m.dir, fsImpl) }); }
+      catch (e) { results.push({ name: m.name, chk: null, error: String(e?.message ?? e) }); }
+    }
+  }
+  return { results, failedSources };
 }
