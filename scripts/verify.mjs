@@ -1731,6 +1731,33 @@ const CASES = [
     },
   },
   {
+    id: 'plan-diff',
+    title: '期望态差异唯一算法：常驻区与项目生效区共用 diffPlan（保持/重建/新增/外来/悬空/摘除）',
+    async run(f) {
+      const { diffPlan } = await core('plan');
+      const ledger = { keepme: { kind: 'junction' }, rebuild: { kind: 'junction' }, dropme: { kind: 'copy' } };
+      const disk = { keepme: 'junction', foreignDir: 'dir', foreignFile: 'file' };
+      const targets = { keepme: '/lib/keepme', rebuild: '/lib/rebuild', fresh: '/lib/fresh', foreignDir: '/lib/foreignDir', foreignFile: '/lib/foreignFile' };
+      const plan = diffPlan({
+        names: ['keepme', 'rebuild', 'fresh', 'foreignDir', 'foreignFile', 'ghost'],
+        ledger,
+        resolve: (n) => (targets[n] ? { target: targets[n], targetKind: 'dir', origin: 'library' } : null),
+        probe: (n) => ({ onDisk: n in disk, kind: disk[n] ?? 'missing' }),
+      });
+      eq(plan.keep, ['keepme'], '台账在且在盘 → 保持');
+      eq(plan.add.map((a) => a.name), ['rebuild', 'fresh'], '台账在盘没了 → 重建；台账无盘无 → 新增');
+      eq(plan.add.map((a) => a.target), ['/lib/rebuild', '/lib/fresh'], 'add 带解析目标');
+      eq(plan.warnMissing, ['ghost'], '解析不到 → 悬空（不落盘）');
+      eq(plan.warnForeign, [{ name: 'foreignDir', kind: 'dir' }, { name: 'foreignFile', kind: 'file' }], '盘上有台账无 → 外来，不抢占');
+      eq(plan.remove, [{ name: 'dropme', kind: 'copy' }], '台账有期望无 → 摘除，kind 取台账');
+      eq(Object.keys(ledger).length, 3, '台账不被就地修改');
+      // 两个调用方都必须走这份实现：行为断言之外钉一条源码锚，防再出现第 3 份复制
+      const coreDir = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core');
+      ok(/diffPlan\(/.test(fs.readFileSync(path.join(coreDir, 'resident.js'), 'utf8')), 'resident 走共享差异算法');
+      ok(/diffPlan\(/.test(fs.readFileSync(path.join(coreDir, 'effective.js'), 'utf8')), 'effective 走共享差异算法');
+    },
+  },
+  {
     id: 'resident-relocate', title: 'P3-T4 常驻区搬迁：globalResidentDirs 默认 = agents 区、开关 = 额外保留旧区、prune 按台账精确回收',
     async run(f) {
       await withRoots(f);

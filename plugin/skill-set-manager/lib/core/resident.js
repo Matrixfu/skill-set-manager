@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadResident, saveResident } from './sets.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
+import { diffPlan } from './plan.js';
 
 /**
  * M4（终审 2026-10-26）：卸载常驻技能时从常驻名单剔除该名（调用方随后 syncResident 回收链接）。
@@ -24,41 +25,45 @@ export function dropResidentName(roots, name) {
  *  库里没有本体的名字 → 回收残留自建链并从名单剔除；回收失败则保留名单下次启动重试。 */
 export async function syncResident(roots, { fs: fsImpl = fs } = {}) {
   const doc = loadResident(roots);
-  const desired = new Set(doc.skills);
+  const names = doc.skills;
   const links = doc.links ?? {};
   const warnings = [];
   const ghosts = [];
   for (const dir of roots.globalResidentDirs) {
     const dirLinks = links[dir] ?? {};
-    for (const name of desired) {
-      const target = path.join(roots.libraryRoot, name);
-      const linkPath = path.join(dir, name);
-      let targetOk = false;
-      try { targetOk = fsImpl.statSync(path.join(target, 'SKILL.md')).isFile(); } catch {}
-      if (!targetOk) {
-        if (dirLinks[name]) {
-          try { removeEntry(linkPath, dirLinks[name].kind, { fs: fsImpl }); }
-          catch (e) { warnings.push(`${name}: 幽灵残链回收失败（名单保留，下次启动重试）: ${e?.message ?? e}`); continue; }
-          delete dirLinks[name];
-        }
-        if (!ghosts.includes(name)) ghosts.push(name);
-        warnings.push(`${name}: 库里没有技能体，已从常驻名单自动剔除`);
-        continue;
+    const { add, remove, keep, warnMissing, warnForeign } = diffPlan({
+      names,
+      ledger: dirLinks,
+      resolve: (name) => {
+        const target = path.join(roots.libraryRoot, name);
+        let ok = false;
+        try { ok = fsImpl.statSync(path.join(target, 'SKILL.md')).isFile(); } catch {}
+        return ok ? { target } : null;
+      },
+      probe: (name) => {
+        const kind = entryKind(path.join(dir, name), { fs: fsImpl });
+        return { onDisk: kind !== 'missing', kind };
+      },
+    });
+    for (const name of warnMissing) { // 幽灵名：回收残留自建链并从名单剔除；回收失败则保留名单下次启动重试
+      if (dirLinks[name]) {
+        try { removeEntry(path.join(dir, name), dirLinks[name].kind, { fs: fsImpl }); }
+        catch (e) { warnings.push(`${name}: 幽灵残链回收失败（名单保留，下次启动重试）: ${e?.message ?? e}`); continue; }
+        delete dirLinks[name];
       }
-      const mine = dirLinks[name];
-      const kind = entryKind(linkPath, { fs: fsImpl });
-      if (kind !== 'missing' && !mine) {
-        warnings.push(`${name}: 全局生效区已有同名条目（他人所有），未抢占，常驻对该区未生效`);
-        continue;
-      }
-      const made = makeEntry(target, linkPath, { fs: fsImpl });
+      if (!ghosts.includes(name)) ghosts.push(name);
+      warnings.push(`${name}: 库里没有技能体，已从常驻名单自动剔除`);
+    }
+    for (const w of warnForeign) warnings.push(`${w.name}: 全局生效区已有同名条目（他人所有），未抢占，常驻对该区未生效`);
+    // keep 也要重跑 makeEntry：「先摘再建」是修复语义（copied 条目每次机会重试 junction）
+    for (const name of [...keep, ...add.map((a) => a.name)]) {
+      const made = makeEntry(path.join(roots.libraryRoot, name), path.join(dir, name), { fs: fsImpl });
       dirLinks[name] = { kind: made.kind, ...(made.copied ? { copied: true } : {}) };
       if (made.copied) warnings.push(`${name}: 链接不可用，已复制（升级不自动传导）`);
     }
-    for (const name of Object.keys(dirLinks)) {
-      if (desired.has(name)) continue;
-      removeEntry(path.join(dir, name), dirLinks[name].kind, { fs: fsImpl });
-      delete dirLinks[name];
+    for (const item of remove) {
+      removeEntry(path.join(dir, item.name), item.kind, { fs: fsImpl });
+      delete dirLinks[item.name];
     }
     links[dir] = dirLinks;
   }

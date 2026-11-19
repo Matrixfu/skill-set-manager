@@ -11,6 +11,7 @@ import { readManaged, writeManaged } from './managed.js';
 import { readBinding } from './binding.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
 import { projectSkillsDir } from './paths.js';
+import { diffPlan } from './plan.js';
 
 export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = fs } = {}) {
   // 项目目录只放集条目；常驻经全局生效区可见（§5.3），display 口径的并集在 sets.effectiveNames。
@@ -25,30 +26,20 @@ export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = 
     names = [...new Set([...names.filter((n) => !removed.has(n)), ...(ov.added ?? [])])];
   }
   const { targets, missing: unresolved } = await resolveSkillTargets(roots, projectRoot, names, { fs: fsImpl });
-  const current = managed?.entries ?? {};
-  const targetSet = new Set(names);
-  const add = [];
-  const warnMissing = [];
-  const warnForeign = [];
-  const rebuilding = new Set();
   const skillsDir = projectSkillsDir(projectRoot);
-  for (const name of names) {
-    const t = targets.get(name);
-    if (!t) { warnMissing.push(name); continue; } // 悬空引用：警告，不写入
-    const kDir = entryKind(path.join(skillsDir, name), { fs: fsImpl });
-    const kFile = entryKind(path.join(skillsDir, `${name}.md`), { fs: fsImpl });
-    const onDisk = kDir !== 'missing' || kFile !== 'missing';
-    if (name in current) {
-      if (onDisk) continue; // 正常 keep
-      rebuilding.add(name); // 台账在、盘上没了（外删/死链）→ 重新进 add 重建（review M1）
-    } else if (onDisk) {
-      warnForeign.push({ name, kind: kDir === 'missing' ? kFile : kDir }); // 同名外来条目：不抢占不删除（§7.3/ADR-0003）
-      continue;
-    }
-    add.push({ name, target: t.path, targetKind: t.kind, origin: t.origin });
-  }
-  const remove = Object.keys(current).filter((name) => !targetSet.has(name)).map((name) => ({ name, kind: current[name].kind }));
-  const keep = names.filter((name) => name in current && targets.has(name) && !rebuilding.has(name));
+  const { add, remove, keep, warnMissing, warnForeign } = diffPlan({
+    names,
+    ledger: managed?.entries ?? {},
+    resolve: (name) => {
+      const t = targets.get(name);
+      return t ? { target: t.path, targetKind: t.kind, origin: t.origin } : null;
+    },
+    probe: (name) => {
+      const kDir = entryKind(path.join(skillsDir, name), { fs: fsImpl });
+      const kFile = entryKind(path.join(skillsDir, `${name}.md`), { fs: fsImpl });
+      return { onDisk: kDir !== 'missing' || kFile !== 'missing', kind: kDir === 'missing' ? kFile : kDir };
+    },
+  });
   return { setSlug, add, remove, keep, warnMissing, warnForeign, missing: [...new Set([...unresolved, ...warnMissing])] };
 }
 
