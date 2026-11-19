@@ -2622,6 +2622,7 @@ const CASES = [
       for (const term of ['**上游缓存（Upstream Cache）**', '**批量检查更新（Batch Update Check）**', '**可重试失败（Retryable Failure）**'])
         ok(gl.includes(term), `GLOSSARY 收录「${term.slice(2, -4)}」词条（终审 St4：本分支新术语有锚）`);
       ok(gl.includes('升级检查、批量检查更新与升级应用'), '长任务词条用 canonical「批量检查更新」（终审 St3：枚举与正式词条一致）');
+      ok(gl.includes('不得用同步 spawn 占满事件循环'), '长任务词条钉住「异步 git 不占事件循环」口径（2026-11-19 用户报整机冻结教训）');
     },
   },
   {
