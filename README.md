@@ -25,11 +25,39 @@ DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就�
 
 ## 安装
 
-本仓库不发布到 npm（`package.json` 为 `private: true`），以 DSH **本地插件**形式安装：
+插件是标准 DSH bundle（带 `dsh.bundle.patch` 的 npm 包），用 DSH 自带的 `dsh plugin` 命令安装，**不需要手工拷贝文件**。
 
-1. 把 `plugin/skill-set-manager` 装进 DSH desktop profile 的插件目录（例如指链到 `~/.dsh/profiles/desktop/node_modules/@matrixfu/skill-set-manager`）。
-2. 依赖（`zod`、`@deepseek-ai/dsh-typert-protocol`、`@deepseek-ai/schemastery`）随 DSH 插件安装流程解析。
-3. 重启 host 或刷新页面，设置页出现「技能集管理器」即安装成功。
+### 从 GitHub 源码安装
+
+插件在仓库的 `plugin/skill-set-manager` 子目录，用 pnpm 的 `path:` 参数指定子目录：
+
+```bash
+dsh plugin --profile desktop add "github:Matrixfu/skill-set-manager#path:/plugin/skill-set-manager"
+```
+
+装完后在 DSH 的「设置 → 插件」中启用「技能集管理器」：启用会把该 bundle 追加到 profile 的 `dsh.profile.bundles` 列表；重启 host 或刷新页面后，设置页出现「技能集管理器」即生效。
+
+### 本地开发安装（不拷贝）
+
+```bash
+dsh plugin --profile desktop add "file:C:/path/to/skill-set-manager/plugin/skill-set-manager"
+```
+
+`file:` 目录以链接方式装进 profile，改完代码重装或重启即可，无需复制目录。
+
+### 发布到 npm 后（最标准）
+
+```bash
+dsh plugin --profile desktop add @matrixfu/skill-set-manager
+```
+
+### 卸载
+
+```bash
+dsh plugin --profile desktop remove @matrixfu/skill-set-manager
+```
+
+依赖（`zod`、`@deepseek-ai/dsh-typert-protocol`、`@deepseek-ai/schemastery`）由 pnpm 按 `package.json` 自动解析。
 
 ## 目录结构
 
