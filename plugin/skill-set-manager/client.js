@@ -376,6 +376,32 @@ window.__ModuleLoader__.load({
       scored.sort((a, b) => a.rank - b.rank || String(a.row?.name ?? '').localeCompare(String(b.row?.name ?? '')));
       return scored.map((x) => x.row);
     }
+    /**
+     * 生效行的唯一选择器（架构评审候选 6）：面板左列与右栏此前各推导一遍
+     * 「生效行集合 + 缺失/死链/外来三集 + 徽章列表」，口径已漂移（右栏多常驻徽章、顺序不同）。
+     * 行渲染仍各自负责（面板要复选框、右栏要打开文件），这里只收状态推导。
+     */
+    function selectEffective(st) {
+      const sc = st?.selfCheck ?? {};
+      const resident = new Set(st?.resident ?? []);
+      const managed = new Set(Object.keys(st?.managed ?? {}));
+      const broken = new Set(sc.brokenLinks ?? []);
+      const missing = new Set(st?.effective?.missing ?? []);
+      const foreign = new Set(sc.foreign ?? []);
+      const names = [...new Set([...(st?.effective?.names ?? []).filter((n) => !resident.has(n)), ...managed, ...foreign])].sort();
+      return { sc, resident, managed, broken, missing, foreign, names };
+    }
+    /** 生效行徽章（视觉优先级）：受管 → 全局常驻 → 外来 → 死链 → 缺失 → 本地改动。 */
+    function effectiveBadges(t, name, rows, { localModified = false } = {}) {
+      const badges = [];
+      if (rows.managed.has(name)) badges.push({ kind: 'brand', text: t('managedTag') });
+      if (rows.resident.has(name)) badges.push({ kind: 'muted', text: t('grayResident') });
+      if (rows.foreign.has(name)) badges.push({ kind: 'muted', text: t('rpForeign') });
+      if (rows.broken.has(name)) badges.push({ kind: 'error', text: t('rpDead') });
+      if (rows.missing.has(name)) badges.push({ kind: 'error', text: t('rpMissing') });
+      if (localModified) badges.push({ kind: 'warn', text: t('modifiedTag') });
+      return badges;
+    }
 
     /**
      * 共享行壳（spec 2026-11-07 §6.2）：设置页/右栏共用的行卡骨架（Task 6 起弹框 SkillRow 也收口到这里）。
@@ -500,23 +526,16 @@ window.__ModuleLoader__.load({
         if (st.rootDrift) { setConfirm({ kind: 'switch', slug }); return; } // 仅根漂移需确认（§6.5）
         run(() => call(ctx, 'switchSet', { sessionId, slug }));
       };
-      const sc = st.selfCheck ?? {};
-      // —— 生效清单卡数据面（Task 3，spec §6.4）：徽章口径与右栏 rp* 同源 ——
-      const brokenSet = new Set(sc.brokenLinks ?? []);
-      const missingSet = new Set(st.effective?.missing ?? []);
-      const foreignSet = new Set(sc.foreign ?? []);
+      // —— 生效清单卡数据面（Task 3，spec §6.4）：行集合与徽章走唯一选择器（selectEffective/effectiveBadges）——
+      const rows = selectEffective(st);
+      const { sc } = rows;
+      const foreignSet = rows.foreign;
       const ov = st.sessionOverride ?? {};
       const srcOf = (n) => (st.library ?? []).find((l) => l.name === n);
-      // 生效行集合（甲案）：JSON 生效 ∪ 托管台账 ∪ 盘上外来，剔常驻（§5.4），字母序
-      const effNames = [...new Set([...(st.effective?.names ?? []).filter((n) => !resident.has(n)), ...managed, ...foreignSet])].sort();
+      const effNames = rows.names;
       const rowModel = (n) => {
         const l = srcOf(n) ?? { name: n, source: 'unknown', description: null, descriptionZh: null };
-        const badges = [];
-        if (managed.includes(n)) badges.push({ kind: 'brand', text: t('managedTag') });
-        if (l.localModified) badges.push({ kind: 'warn', text: t('modifiedTag') });
-        if (missingSet.has(n)) badges.push({ kind: 'error', text: t('rpMissing') });
-        if (brokenSet.has(n)) badges.push({ kind: 'error', text: t('rpDead') });
-        if (foreignSet.has(n)) badges.push({ kind: 'muted', text: t('rpForeign') });
+        const badges = effectiveBadges(t, n, rows, { localModified: !!l.localModified });
         const title = l.source && l.source !== 'unknown' ? `${l.name} · ${l.source}${l.commit ? '@' + String(l.commit).slice(0, 7) : ''}` : (l.descriptionZh ?? l.name);
         return { l, badges, title };
       };
@@ -879,12 +898,8 @@ window.__ModuleLoader__.load({
       }, [ctx, sessionId]);
       React.useEffect(() => { if (visible !== false) load(); }, [load, visible, token]); // parked 时暂停拉取（计划 T0 口径，review m3）；token=bus 刷新信号：tab 常驻挂载下 ⇥ 再点/面板切集都靠它触发重载（用户报告 2026-10-27）
       if (!sessionId) return h('div', { className: 'ssm-s-rp' }, t('rpNoSession')); // 早退只渲染 rpNoSession（数据机制照旧）
-      const sc = st?.selfCheck ?? {};
-      const resident = new Set(st?.resident ?? []);
-      const managed = st?.managed ?? {};
-      const foreign = new Set(sc.foreign ?? []);
-      const broken = new Set(sc.brokenLinks ?? []);
-      const missing = new Set(st?.effective?.missing ?? []);
+      const rows = selectEffective(st);
+      const { sc, resident, managed, foreign } = rows;
       const libMap = new Map((st?.library ?? []).map((l) => [l.name, l]));
       // 右栏列表口径（用户 2026-10-27）：已绑定 = 集成员 ∪ 托管台账 ∪ 外来条目（冻结/集被删回退生效清单），
       // 且剔除「仅全局常驻」行——不逐条列出全部全局技能，改由下方计数提示如实告知常驻已生效；
@@ -893,19 +908,13 @@ window.__ModuleLoader__.load({
       const residentSlugBound = st?.binding?.setSlug === '_resident';
       const setNames = new Set(st?.set?.skills ?? []);
       const baseNames = st?.set?.skills ?? (bound ? st?.effective?.names ?? [] : []);
-      let names = [...new Set([...baseNames, ...Object.keys(managed), ...foreign])].sort();
-      if (bound && !residentSlugBound) names = names.filter((n) => !resident.has(n) || setNames.has(n) || n in managed);
+      let names = [...new Set([...baseNames, ...managed, ...foreign])].sort();
+      if (bound && !residentSlugBound) names = names.filter((n) => !resident.has(n) || setNames.has(n) || managed.has(n));
       const row = (n) => {
         const l = libMap.get(n);
         const open = l?.skillMd && onOpenFile ? () => onOpenFile(l.skillMd) : null;
-        // 徽章组统一到弹框口径（spec §6.9）：受管 brand / 全局常驻 muted / 外来 muted / 失效 error / 缺失 error / 本地改动 warn
-        const badges = [];
-        if (n in managed) badges.push({ kind: 'brand', text: t('managedTag') });
-        if (resident.has(n)) badges.push({ kind: 'muted', text: t('grayResident') });
-        if (foreign.has(n)) badges.push({ kind: 'muted', text: t('rpForeign') });
-        if (broken.has(n)) badges.push({ kind: 'error', text: t('rpDead') });
-        if (missing.has(n)) badges.push({ kind: 'error', text: t('rpMissing') });
-        if (l?.localModified) badges.push({ kind: 'warn', text: t('rpModified') }); // 漂移补齐：右栏此前不显「本地改动」
+        // 徽章组走唯一选择器（spec §6.9）：受管 / 全局常驻 / 外来 / 失效 / 缺失 / 本地改动
+        const badges = effectiveBadges(t, n, rows, { localModified: !!l?.localModified });
         // 第二行中文用途（漂移补齐，与库页签 §6.5 同款回退：未翻译显英文 + 待翻译角标）
         const desc = l?.descriptionZh
           ? h('div', { className: 'ssm-p-desc', title: l.description ?? undefined }, l.descriptionZh)

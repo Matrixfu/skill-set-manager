@@ -2569,8 +2569,8 @@ const CASES = [
           ok(new RegExp(`${loc}: \\{[\\s\\S]*?${key}:`).test(src), `字典 ${loc} 含 ${key}`);
       ok(/t\('rpGlobalActiveUnbound'\)/.test(src), '未绑定空态改渲染全局常驻生效提示');
       ok(/t\('rpGlobalActiveHint'\)/.test(src), '已绑定列表上方给常驻计数提示');
-      ok(/names\.filter\(\(n\) => !resident\.has\(n\) \|\| setNames\.has\(n\) \|\| n in managed\)/.test(src),
-        '常驻行只剔「仅常驻」成员（集成员/台账行保留）');
+      ok(/names\.filter\(\(n\) => !resident\.has\(n\) \|\| setNames\.has\(n\) \|\| managed\.has\(n\)\)/.test(src),
+        '常驻行只剔「仅常驻」成员（集成员/台账行保留；managed 口径统一为 Set）');
     },
   },
   {
@@ -2748,6 +2748,20 @@ const CASES = [
       ok(/store\.put\('bindings'/.test(seg) && /\.catch\(/.test(seg), '索引自愈仍排队执行（m3 语义不变）');
       ok(/residentNames/.test(seg) && /_providerEntries/.test(seg), 'provider 组合复用同一份常驻名单');
       ok(/call\(ctx, 'panelSnapshot'/.test(clientSrc), '面板首屏走 panelSnapshot');
+    },
+  },
+  {
+    id: 'row-selectors',
+    title: '生效行选择器唯一：面板与右栏共用 selectEffective/effectiveBadges（徽章口径不再各写一遍）',
+    async run() {
+      const src = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js'), 'utf8');
+      ok(/function selectEffective\(st\)/.test(src), '存在唯一行集合选择器');
+      ok(/function effectiveBadges\(t, name, rows, \{ localModified = false \} = \{\}\)/.test(src), '存在唯一徽章构造');
+      eq((src.match(/selectEffective\(st\)/g) ?? []).length, 3, '定义 1 + 面板 1 + 右栏 1');
+      eq((src.match(/effectiveBadges\(t, /g) ?? []).length, 3, '定义 1 + 面板 1 + 右栏 1');
+      eq((src.match(/new Set\(sc\.brokenLinks/g) ?? []).length, 1, '死链集只在选择器里推导');
+      eq((src.match(/new Set\(sc\.foreign/g) ?? []).length, 1, '外来集只在选择器里推导');
+      ok(!/managed\.includes\(n\)/.test(src), '面板不再用数组口径判托管（统一 Set）');
     },
   },
   {
