@@ -935,6 +935,24 @@ const CASES = [
       }
       // 16) 终审 St6：清尸在 pwsh 缺失环境回落 powershell.exe（不再静默 no-op）
       ok(/'powershell'/.test(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core', 'github.js'), 'utf8')), '清尸命令回落 powershell.exe');
+      // 17) makeGit 异步化（用户报 2026-11-19：spawnSync 把 host 事件循环占满整段 git，
+      //     批量检查在飞的几分钟里整机冻结——新建对话/刷 Git 状态全部排队等它）
+      const mg = g.makeGit(8000);
+      const mp = mg(['--version'], process.cwd());
+      ok(mp && typeof mp.then === 'function', 'makeGit 返回 Promise：事件循环不被同步 git 占住');
+      const mv = await mp;
+      eq(mv.status, 0, '异步 git 正常跑完拿结论');
+      ok(/git version/.test(mv.stdout), 'stdout 照常收集');
+      // 超时：git stripspace 等 stdin 必吊死 → 800ms kill，结论 ETIMEDOUT（gitnet 可重试口径）
+      const t17 = Date.now();
+      const t17v = await g.makeGit(800)(['stripspace'], process.cwd());
+      ok(Date.now() - t17 < 5000, '超时 kill 即时生效，不无限吊');
+      eq(t17v.status, 'spawn', '超时结论 status=spawn');
+      ok(/ETIMEDOUT/.test(t17v.stderr), '超时结论带 ETIMEDOUT（走 gitnet 可重试分类）');
+      const gsrc17 = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core', 'github.js'), 'utf8');
+      ok(!/spawnSync\('git'/.test(gsrc17), 'github.js 不再同步 spawnSync git（host 事件循环不得被占）');
+      ok(/await runner\(/.test(gsrc17), 'fetchRepo 所有 git 调用点 await');
+      ok(/await runner\(args/.test(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core', 'updates.js'), 'utf8')), 'remoteHead 也 await ls-remote');
     },
   },
   {
@@ -2597,6 +2615,9 @@ const CASES = [
       ok(/title: iTitle\(t\('clearCache'\)\)/.test(body), '清空缓存钮走 iTitle：被单飞挡住时说明在跑什么（终审 St2：仓内图标钮统一口径）');
       ok(/const mergeChkAll = \(r, ran = null\)/.test(body) && /const keptF/.test(body) && /const keptE/.test(body),
         'banner 合并语义：sources 子集重试只替换本轮来源记录，不吞其他仓库的失败（终审 S4）');
+      ok(/const \[lib, setLib\] = React\.useState\(null\)/.test(body), 'lib 以 null 起步：首屏未回≠空库（用户报 2026-11-19：批量在飞时重进设置页显示「技能库还没有技能」）');
+      ok(/lib === null/.test(body) && /t\('sLoading'\)/.test(body), '首屏未回渲染加载态而非空态（空态只对加载完成后的真空库说话）');
+      ok(/sLoading: '加载技能库中…'/.test(body) && /sLoading: 'Loading skill library…'/.test(body), 'sLoading 键 zh/en 同 commit 补齐');
       const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
       for (const term of ['**上游缓存（Upstream Cache）**', '**批量检查更新（Batch Update Check）**', '**可重试失败（Retryable Failure）**'])
         ok(gl.includes(term), `GLOSSARY 收录「${term.slice(2, -4)}」词条（终审 St4：本分支新术语有锚）`);

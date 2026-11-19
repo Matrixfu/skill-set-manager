@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
         // 设置页/右栏美化（spec 2026-11-07）：基座新键，一次补齐（Task 3–6 消费；zh/en 同键集）
         rpModified: '本地改动',
         sAriaCheckUpd: '检查更新', sAriaTrashBin: '移入回收站', sAriaClaim: '改认领', sAriaUninstall: '卸载', sAriaReload: '刷新',
-        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sEmptyGlobal: '还没有全局常驻技能：勾选候选即在所有项目生效', sEmptyDiag: '未发现异常',
+        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sLoading: '加载技能库中…', sEmptyGlobal: '还没有全局常驻技能：勾选候选即在所有项目生效', sEmptyDiag: '未发现异常',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -157,7 +157,7 @@ window.__ModuleLoader__.load({
         // settings/right-panel beautify (spec 2026-11-07): base keys, added up front (consumed by Tasks 3-6; same key set as zh)
         rpModified: 'locally modified',
         sAriaCheckUpd: 'check for updates', sAriaTrashBin: 'move to trash', sAriaClaim: 're-claim source', sAriaUninstall: 'uninstall', sAriaReload: 'reload',
-        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sEmptyGlobal: 'No global resident skills yet: tick candidates to make them active in every project', sEmptyDiag: 'No issues found',
+        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sLoading: 'Loading skill library…', sEmptyGlobal: 'No global resident skills yet: tick candidates to make them active in every project', sEmptyDiag: 'No issues found',
       },
     };
 
@@ -968,7 +968,7 @@ window.__ModuleLoader__.load({
     function SettingsSection({ ctx, t }) {
       const tasks = useTasks(); // 模块级长任务态：关掉设置页也不丢进度与结果（用户 2026-10-29）
       const [tab, setTab] = React.useState('library');
-      const [lib, setLib] = React.useState([]);
+      const [lib, setLib] = React.useState(null); // null=首屏未回：未回≠空库（2026-11-19 用户报：批量在飞时重进设置页渲染成「技能库还没有技能」）
       const [filter, setFilter] = React.useState('');
       const [busy, setBusy] = React.useState(null);
       const [msg, setMsg] = React.useState(null); // {kind:'err'|'ok', text}
@@ -1048,8 +1048,8 @@ window.__ModuleLoader__.load({
       // 安装结果改从任务态读：原 instRes 是组件 state，关掉设置页就没了（Review Focus #1）
       const instDone = tasks.last?.op === 'installApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
-      const rows = searchRows(lib, filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
-      const gCorpus = [...lib, ...foreign.filter((n) => !lib.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
+      const rows = searchRows(lib ?? [], filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
+      const gCorpus = [...(lib ?? []), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
       const grows = searchRows(gCorpus, gq).filter((r) => !gOnly || resident.includes(r.name) || foreign.includes(r.name));
       const counts = (files) => {
         const c = { update: 0, add: 0, remove: 0, 'skip-modified': 0 };
@@ -1136,7 +1136,8 @@ window.__ModuleLoader__.load({
             ...chkFail.failed.map((x) => h('div', { key: x.source, className: 'ssm-p-desc', title: x.error }, `${x.source}: ${x.error}`)),
             ...chkFail.errors.map((x) => h('div', { key: x, className: 'ssm-p-desc' }, x))) : null,
           // 空态（§6.5 同款 .ssm-p-empty + 图标）：库为空=引导去安装；有过滤词无命中=没有匹配
-          rows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: filter.trim() ? 'search' : 'box' }), filter.trim() ? t('emptySearch') : t('sEmptyLib')) : null,
+          lib === null ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'refresh' }), t('sLoading'))
+            : rows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: filter.trim() ? 'search' : 'box' }), filter.trim() ? t('emptySearch') : t('sEmptyLib')) : null,
           // 技能行 = 行壳卡片（spec §6.5）：徽章组 + 中文用途第二行 + 图标动作条；状态变体（认领编辑/diff/confirm/回收站）
           // 一律经 RowShell 的 sub 槽嵌进同一张卡——操作前后不掉样式（AC#3）；RPC 调用面与参数字面一字未动。
           ...rows.map((x) => {

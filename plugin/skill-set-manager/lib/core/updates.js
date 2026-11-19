@@ -23,7 +23,7 @@ export async function remoteHead(spec, { git, url, timeoutMs = 15000, failLog } 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const t0 = Date.now();
     let r;
-    try { r = runner(args, process.cwd()); }
+    try { r = await runner(args, process.cwd()); }
     catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
     const sha = r && r.status === 0 ? String(r.stdout || '').trim().split(/\s/)[0] : '';
     if (sha) return sha;

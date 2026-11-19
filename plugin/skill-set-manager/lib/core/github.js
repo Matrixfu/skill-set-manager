@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeSkillManifest, rootSkillName } from './manifest.js';
 import { gitFailMessage } from './giterr.js';
 import { classifyAttempt } from './gitnet.js';
@@ -14,16 +14,41 @@ import { classifyAttempt } from './gitnet.js';
 /** 来源解析与归一在叶子模块 source.js（github 与 manifest 共用，避免 ESM 环）；此处转发保持既有 import 不变。 */
 export { parseRepoSpec, normalizeRepoSource } from './source.js';
 
-const defaultGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+/**
+ * 异步 git 子进程（2026-11-19 异步化，用户报：批量检查更新在飞的几分钟里整机冻结——
+ * spawnSync 把 host 事件循环占满整段 git，新建对话/刷 Git 状态全部排队等它）。
+ * timeoutMs 超时 kill，结论归一 `spawn git ETIMEDOUT`（gitnet 可重试口径）；kill 后
+ * 存活的孙进程仍归 sweepGitOrphans 口径管。resolve 与注入 git 夹具同形
+ * {status,stdout,stderr}，调用方只多一个 await。
+ */
+function spawnGit(args, cwd, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let child;
+    try { child = spawn('git', args, { cwd, windowsHide: true }); }
+    catch (e) { return finish({ status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }); }
+    let stdout = ''; let stderr = '';
+    child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (c) => { stdout += c; });
+    child.stderr?.on('data', (c) => { stderr += c; });
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+      finish({ status: 'spawn', stdout, stderr: `${stderr ? stderr + '\n' : ''}spawn git ETIMEDOUT` });
+    }, timeoutMs) : null;
+    timer?.unref?.();
+    child.on('error', (e) => { if (timer) clearTimeout(timer); finish({ status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }); });
+    child.on('close', (code) => { if (timer) clearTimeout(timer); finish({ status: code ?? 'killed', stdout, stderr }); });
+  });
+}
 
 /**
- * 带硬超时的默认 git 工厂（2026-11-17 加固）：spawnSync 原生 timeout+kill——代理半死
- * （TCP 通、传输吊死）时不再无限吊着 host。超时产出 ETIMEDOUT 结论，gitnet 判可重试。
- * 注入 git 的调用方（verify 夹具）自理超时；updates.js 的 ls-remote 也复用本工厂。
+ * 带硬超时的默认 git 工厂（2026-11-17 加固；2026-11-19 异步化，见 spawnGit 注释——
+ * **不得回退 spawnSync**，它会占满 host 事件循环整段 git 时长）。注入 git 的调用方
+ * （verify 夹具）自理超时；updates.js 的 ls-remote 也复用本工厂。
  */
 export function makeGit(timeoutMs) {
-  if (!timeoutMs) return defaultGit;
-  return (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: timeoutMs });
+  return (args, cwd) => spawnGit(args, cwd, timeoutMs || 0);
 }
 
 /** 上游缓存底（GLOSSARY「上游缓存」）：owner/repo(+ref) 哈希定键；同仓不同 ref 不串底。 */
@@ -86,10 +111,10 @@ function sweepGitOrphans() {
 export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweepOrphans = sweepGitOrphans } = {}) {
   const repoUrl = url ?? `https://github.com/${spec.owner}/${spec.repo}.git`;
   const runner = git ?? makeGit(timeoutMs);
-  const run = (args) => {
+  const run = async (args) => {
     let r;
     // 强制 LF：autocrlf 机器上检出 CRLF 会使逐文件哈希随行尾漂移（manifest 不可移植）。
-    try { r = runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }
+    try { r = await runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }
     catch (e) { throw new Error(`git ${args[0]} failed: ${e?.message ?? e}`); }
     if (!r || r.status !== 0) throw new Error(gitFailMessage(args, r));
     return r;
@@ -103,15 +128,15 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
   }
   fs.mkdirSync(dir, { recursive: true });
   if (fs.existsSync(path.join(dir, '.git'))) {
-    try { run(['remote', 'set-url', 'origin', repoUrl]); } // url 覆盖夹具/换 remote 都对齐
+    try { await run(['remote', 'set-url', 'origin', repoUrl]); } // url 覆盖夹具/换 remote 都对齐
     catch (e) { // 终审 St5：init 成功但 remote add 被超时 kill（HEAD 在、origin 缺）→
       // set-url 报 No such remote（非可重试），回落 add，绝不落「该缓存仓永红」
       if (!/No such remote/i.test(String(e?.message ?? e))) throw e;
-      run(['remote', 'add', 'origin', repoUrl]);
+      await run(['remote', 'add', 'origin', repoUrl]);
     }
   } else {
-    run(['init', '-q']);
-    run(['remote', 'add', 'origin', repoUrl]);
+    await run(['init', '-q']);
+    await run(['remote', 'add', 'origin', repoUrl]);
   }
   // partial clone（用户报告 2026-10-26：大仓库检查更新报「invalid index-pack output」）：
   // 整仓 depth-1 也要把**全部 blob** 压成一个 pack（diagram-design 那种带素材的仓库最容易炸），
@@ -119,13 +144,13 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
   // 只有「服务器/老 git 不认 filter」才退回全量拉法；真因（仓库不存在）不重试——
   // 慢网络下重试等于把等待翻倍（verify 有「非 filter 失败只拉一次」断言）；
   // 网络类（RPC failed/超时等，gitnet 口径）重试一次，失败各进 failLog。
-  const attemptFetch = (filtered) => {
+  const attemptFetch = async (filtered) => {
     const bare = ['fetch', '--depth', '1', ...(filtered ? ['--filter=blob:none'] : []), 'origin', spec.ref || 'HEAD'];
     const fetchArgs = ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...bare];
     for (let attempt = 1; attempt <= 2; attempt++) {
       const t0 = Date.now();
       let r;
-      try { r = runner(fetchArgs, dir); }
+      try { r = await runner(fetchArgs, dir); }
       catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
       const v = classifyAttempt({ cmd: 'fetch', args: bare, r, t0, failLog, attempt }); // head 用裸 args：-c 前缀不进结论（gitFailMessage 口径=命令名）
       if (v.ok) return;
@@ -136,21 +161,21 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
       }
     }
   };
-  try { attemptFetch(true); }
-  catch (e) { if (!e?.filterUnrecognized) throw e; attemptFetch(false); }
+  try { await attemptFetch(true); }
+  catch (e) { if (!e?.filterUnrecognized) throw e; await attemptFetch(false); }
   // sparse-checkout/checkout 层同样走「网络类重试一次 + 留痕」（Review Focus #2）：
   // blob:none 的 blob 下载发生在 checkout 时，大素材仓库（hyperframes）吊死在这层，
   // 与 fetch 层同款形状；两步皆幂等（set 可重入、detach -f 可重来），重试安全。
   // 陈旧锁自愈每次 attempt 前都清（活体实测 2026-11-17：60s kill checkout 留 index.lock 尸，
   // checkout -f 对它无解——只在开头清一次，重试必撞尸秒败，重试形同虚设）；
   // 长任务单飞口径（GLOSSARY「长任务」全局只允许一个）保证此刻必无活 git 在动这底，撞锁必是尸。
-  const runLogged = (cmd, args) => {
+  const runLogged = async (cmd, args) => {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try { fs.rmSync(path.join(dir, '.git', 'index.lock'), { force: true }); }
       catch { sweepOrphans(); try { fs.rmSync(path.join(dir, '.git', 'index.lock'), { force: true }); } catch {} }
       const t0 = Date.now();
       let r;
-      try { r = runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }
+      try { r = await runner(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], dir); }
       catch (e) { r = { status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }; }
       const v = classifyAttempt({ cmd, args, r, t0, failLog, attempt }); // head 用裸 args（-c 前缀不进结论）
       if (v.ok) return r;
@@ -163,9 +188,9 @@ export async function fetchRepo(spec, { dir, git, url, timeoutMs, failLog, sweep
       }
     }
   };
-  if (spec.subpath) runLogged('sparse-checkout', ['sparse-checkout', 'set', '--', spec.subpath]);
-  runLogged('checkout', ['checkout', '-q', '-f', '--detach', 'FETCH_HEAD']);
-  const commit = run(['rev-parse', 'FETCH_HEAD']).stdout.trim();
+  if (spec.subpath) await runLogged('sparse-checkout', ['sparse-checkout', 'set', '--', spec.subpath]);
+  await runLogged('checkout', ['checkout', '-q', '-f', '--detach', 'FETCH_HEAD']);
+  const commit = (await run(['rev-parse', 'FETCH_HEAD'])).stdout.trim();
   return { commit, skillsDir: path.join(dir, ...(spec.subpath ? spec.subpath.split('/') : [])) };
 }
 
