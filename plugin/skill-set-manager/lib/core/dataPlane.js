@@ -37,8 +37,8 @@ export async function libraryView(roots, store, { autoTranslate = false, onPendi
 }
 
 /** 外来常驻（设计 §6.4）：常驻区里「不在名单且含 SKILL.md」的条目（弹窗灰行判定源之一）。 */
-export function residentForeign(roots, { fs: fsImpl = fs } = {}) {
-  const listed = new Set(loadResident(roots).skills);
+export function residentForeign(roots, { fs: fsImpl = fs, residentNames = null } = {}) {
+  const listed = new Set(residentNames ?? loadResident(roots).skills);
   let names;
   try { names = fsImpl.readdirSync(roots.userAgentsRoot); } catch { names = []; }
   const out = [];
