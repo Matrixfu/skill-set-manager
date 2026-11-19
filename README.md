@@ -36,10 +36,7 @@ DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就�
 ```text
 plugin/skill-set-manager/     插件本体：host 半 index.js、client 半 client.js、lib/core/*（纯逻辑）
 scripts/                      验收与探针：verify.mjs、ui-gates.mjs 及各类探针
-docs/adr/                     架构决策记录（ADR-0001 ~ 0004）
-docs/superpowers/plans|specs/ 设计文档与实施计划
 GLOSSARY.md                   领域术语表
-Skill_Set_Manager_需求文档.md  需求文档（PRD）
 AGENTS.md                     面向 AI 协作者的项目约定
 ```
 
@@ -50,13 +47,6 @@ AGENTS.md                     面向 AI 协作者的项目约定
 - `node scripts/ui-gates.mjs` 跑语法与 UI 隔离门禁。
 - 两者都**必须在 DSH 文件沙箱外**、Windows 下运行：沙箱会把 junction 虚拟化成普通目录，link/junction 类 case 会假红。
 - 会话落盘是多帧 zstd：PATH 里有 `zstd`，或用环境变量 `ZSTD_BIN` 指定可执行文件；缺失时回退 Node 内置单帧解压（可能解不全）。
-
-## 设计文档
-
-- [ADR-0001：项目技能目录是唯一事实源](docs/adr/0001-project-skill-directory-as-single-source-of-truth.md)
-- [ADR-0002：技能集只按名字引用技能](docs/adr/0002-sets-reference-skills-by-name-only.md)
-- [ADR-0003：插件只接管最高优先级的项目技能目录](docs/adr/0003-plugin-owns-only-the-top-priority-project-skill-dir.md)
-- [ADR-0004：面板视觉语言只用 DSH 设计 token](docs/adr/0004-panel-visual-language-dsh-tokens-only.md)
 
 ## 许可
 
