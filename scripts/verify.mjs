@@ -2730,6 +2730,27 @@ const CASES = [
     },
   },
   {
+    id: 'panel-snapshot',
+    title: '面板快照：state/panelSnapshot 共用同一零写组合（索引自愈不 await、常驻名单只读一次）',
+    async run() {
+      const root = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager');
+      const hostSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
+      const clientSrc = fs.readFileSync(path.join(root, 'client.js'), 'utf8');
+      ok(/async panelSnapshot\(req\) \{ return this\._snapshot\(req\); \}/.test(hostSrc), 'panelSnapshot 是显式读契约');
+      ok(/async state\(req\) \{ return this\._snapshot\(req\); \}/.test(hostSrc), 'state 复用同一组合，不复制载荷');
+      const from = hostSrc.indexOf('async _snapshot(req)');
+      ok(from > 0, '找到 _snapshot');
+      const rest = hostSrc.slice(from);
+      const to = rest.search(/\n    (?:async\s|\w+\()/);
+      const seg = rest.slice(0, to < 0 ? rest.length : to);
+      eq((seg.match(/sets\.loadResident\(roots\)/g) ?? []).length, 1, '常驻名单在快照里只读一次');
+      ok(!/await store\.put\(/.test(seg), '读路径不等待索引写');
+      ok(/store\.put\('bindings'/.test(seg) && /\.catch\(/.test(seg), '索引自愈仍排队执行（m3 语义不变）');
+      ok(/residentNames/.test(seg) && /_providerEntries/.test(seg), 'provider 组合复用同一份常驻名单');
+      ok(/call\(ctx, 'panelSnapshot'/.test(clientSrc), '面板首屏走 panelSnapshot');
+    },
+  },
+  {
     id: 'client-batch-check', title: '库页签批量检查更新+失败仓库一键重试+清空上游缓存（2026-11-17 加固 T5）',
     async run() {
       const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');

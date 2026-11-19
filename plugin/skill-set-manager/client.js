@@ -448,7 +448,7 @@ window.__ModuleLoader__.load({
       const importDone = tasks.last?.op === 'importApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const reload = React.useCallback(async () => {
         if (!sessionId) return;
-        try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
+        try { const v = await call(ctx, 'panelSnapshot', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
       }, [ctx, sessionId]);
       React.useEffect(() => { reload(); }, [reload]);
       // host 闸门是单飞真相：打开面板补拉一次；host 仍在跑则每 2s 跟一次，跑完自动收尾

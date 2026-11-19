@@ -79,7 +79,7 @@ export function apply(ctx, config) {
 
   // Remote 命名空间 = 操作唯一实现（§14）；fetch 兜底通道共用同一清单。
   const REMOTE_METHODS = [
-    'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
+    'state', 'panelSnapshot', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'updateCheckAll', 'cacheClear', 'uninstallSkill', 'backupsList', 'backupRestore',
     'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource', 'longStatus',
@@ -122,11 +122,11 @@ export function apply(ctx, config) {
 
     /** 插件/Preset 提供技能（灰色只读分区）：运行时注入、不在生效区盘上，插件唯一可见
      *  口径是平台 skills 服务清单（探针事实 probe/skill-set-probe）。服务缺席 → null（不可知）。 */
-    async _providerEntries(projectRoot, { effectiveNames = [], managedEntries = {} } = {}) {
+    async _providerEntries(projectRoot, { effectiveNames = [], managedEntries = {}, residentNames = null } = {}) {
       if (!projectRoot) return null;
       try {
         const skills = this.ctx.get('skills');
-        const resident = sets.loadResident(roots).skills || [];
+        const resident = residentNames ?? sets.loadResident(roots).skills ?? [];
         return await providerSkills(
           { skillsService: skills, projectRoot, managedEntries },
           { effectiveNames, residentNames: resident },
@@ -137,21 +137,30 @@ export function apply(ctx, config) {
       }
     }
 
-    async state(req) {
+    /**
+     * 面板/设置/右栏共用的只读快照（架构评审候选 4）：
+     * - **零写**：索引自愈（review m3）照旧排队执行，但不再 await 一次 store 写；
+     * - **不重复读**：常驻名单在本次快照里只读一次，provider 组合与灰行判定复用同一份；
+     * - 面板走 panelSnapshot、设置/右栏走 state——两个名字是同一组合的显式契约，将来要分叉再各自加字段。
+     */
+    async _snapshot(req) {
       const loc = await this.locate(req);
       const binding = readBinding(loc.projectRoot);
       const set = binding?.setSlug ? sets.loadSet(roots, binding.setSlug) : null;
       const eff = binding?.setSlug ? sets.effectiveNames(roots, binding.setSlug) : { names: [], missing: [] };
       const sc = selfCheck(roots, loc.projectRoot);
       const managed = readManaged(loc.projectRoot);
+      const residentNames = sets.loadResident(roots).skills;
       const store = await storeOf();
       // 插件/Preset 分区：排除口径 = 生效清单（常驻 ∪ 集）+ 托管台账 + 常驻名单（库名不排除，见 providerSkills 注释）。
       const providerEntries = await this._providerEntries(loc.projectRoot, {
-        effectiveNames: eff.names, managedEntries: managed?.entries ?? {},
+        effectiveNames: eff.names, managedEntries: managed?.entries ?? {}, residentNames,
       });
-      // 索引自愈（review m3）：面板每打开一次该项目即入索引——MVP 期历史绑定项目最迟一次点面板补齐，
-      // uninstall/deleteSet 的候选推导自此不再漏项目。仅带会话的定位才入索引，host cwd 兜底行是垃圾（review n5）。
-      if (req?.sessionId && loc.projectRoot) { try { await store.put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); } catch {} }
+      // 索引自愈（review m3）：面板每打开一次该项目即入索引——仅带会话的定位才入索引，host cwd 兜底行是垃圾（review n5）。
+      // 只排队不等待：写得慢/失败不再拖慢首屏，也不改变 m3 语义。
+      if (req?.sessionId && loc.projectRoot) {
+        Promise.resolve(store.put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot })).catch(() => {});
+      }
       return {
         ...loc,
         sessionId: req?.sessionId ?? null,
@@ -160,8 +169,8 @@ export function apply(ctx, config) {
         sets: sets.listSets(roots),
         library: (await this.libraryList()).library,
         effective: eff,
-        resident: sets.loadResident(roots).skills,
-        residentForeign: dataPlane.residentForeign(roots), // 灰行判定源：常驻区名单外条目（设计 §6.4）
+        resident: residentNames,
+        residentForeign: dataPlane.residentForeign(roots, { residentNames }), // 灰行判定源：常驻区名单外条目（设计 §6.4）
         unmanaged: providerEntries, // 灰段数据源：插件/Preset 提供（不受技能集管控）；null = 不可知
         residentTarget: roots.globalResidentDirs[0], // 弹窗「去设置管理」文案指向
         selfCheck: { ok: sc.ok, frozen: sc.frozen, unbound: sc.unbound, missing: sc.missing, extra: sc.extra, foreign: sc.foreign, brokenLinks: sc.brokenLinks, detail: sc.detail },
@@ -171,6 +180,12 @@ export function apply(ctx, config) {
         undoAvailable: !!(await store.get('undo', projectKey(loc.projectRoot))),
       };
     }
+
+    /** 面板首屏的读契约（零写快照）。 */
+    async panelSnapshot(req) { return this._snapshot(req); }
+
+    /** 设置页/右栏的宽口径（同一零写快照；诊断另有 diagnoseRun）。 */
+    async state(req) { return this._snapshot(req); }
 
     async listSets() {
       return { sets: sets.listSets(roots), resident: sets.loadResident(roots) };
