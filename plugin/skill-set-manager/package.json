@@ -1,6 +1,6 @@
 {
   "name": "@matrixfu/skill-set-manager",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "技能集管理器：按项目绑定的技能集与生效清单（junction 生成、常驻并集、临时覆盖、自检红标）",
   "repository": {
