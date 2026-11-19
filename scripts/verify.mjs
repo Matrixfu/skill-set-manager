@@ -26,7 +26,8 @@ import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const CORE_DIR = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core');
-const ZSTD = 'C:/Users/fuhd2/miniconda3/Library/bin/zstd.exe';
+// 多帧会话文件需外部 zstd 逐帧解；可用 ZSTD_BIN 指定可执行文件，缺省取 PATH 中的 zstd
+const ZSTD = process.env.ZSTD_BIN || 'zstd';
 
 // ---------- core 动态装载（未实现 → 明确报红） ----------
 const _cache = new Map();
