@@ -37,7 +37,6 @@ DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就�
 plugin/skill-set-manager/     插件本体：host 半 index.js、client 半 client.js、lib/core/*（纯逻辑）
 scripts/                      验收与探针：verify.mjs、ui-gates.mjs 及各类探针
 GLOSSARY.md                   领域术语表
-AGENTS.md                     面向 AI 协作者的项目约定
 ```
 
 ## 开发与验收
