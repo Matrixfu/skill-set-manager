@@ -2751,6 +2751,29 @@ const CASES = [
     },
   },
   {
+    id: 'search-single-source',
+    title: '搜索匹配器只许一份口径：client 内联镜像必须与 lib/core/search.js 逐字相等（去空白）',
+    async run() {
+      const root = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager');
+      const clientSrc = fs.readFileSync(path.join(root, 'client.js'), 'utf8');
+      const coreSrc = fs.readFileSync(path.join(root, 'lib', 'core', 'search.js'), 'utf8');
+      const grab = (text, name) => {
+        const i = text.indexOf(`function ${name}(`);
+        ok(i >= 0, `找到 ${name}`);
+        let depth = 0;
+        for (let k = text.indexOf('{', i); k < text.length; k++) {
+          if (text[k] === '{') depth++;
+          else if (text[k] === '}') { depth -= 1; if (!depth) return text.slice(i, k + 1); }
+        }
+        ok(false, `${name} 未闭合`);
+      };
+      const norm = (s) => s.replace(/\s+/g, ' ').trim();
+      eq(norm(grab(clientSrc, 'normalize')), norm(grab(coreSrc, 'normalize')), 'normalize 逐字同源（改一处即红）');
+      eq(norm(grab(clientSrc, 'searchRows')), norm(grab(coreSrc, 'searchRows')), 'searchRows 逐字同源（改一处即红）');
+      ok(!/normalizeQuery/.test(clientSrc), 'client 不再保留第二套命名（避免第三条口径）');
+    },
+  },
+  {
     id: 'row-selectors',
     title: '生效行选择器唯一：面板与右栏共用 selectEffective/effectiveBadges（徽章口径不再各写一遍）',
     async run() {

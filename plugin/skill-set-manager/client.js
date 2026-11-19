@@ -354,27 +354,32 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 搜索匹配器——权威实现 = lib/core/search.js（verify CASES search-core 钉死口径）。
-     * client bundle 是 __ModuleLoader__ factory，require 解析不了相对路径（预裁定），内联同款；改口径须两处同步。
+     * 搜索匹配器——唯一权威 = lib/core/search.js；client bundle 是 __ModuleLoader__.factory，
+     * require 解析不了相对路径（预裁定），故此处保留逐字镜像：verify `search-single-source` 逐字
+     * 比对两份（去空白后必须相等），改一处即红，不存在第三条口径。
      */
-    function normalizeQuery(s) {
+    function normalize(s) {
       if (typeof s !== 'string') return '';
-      return s.toLowerCase().replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)).replace(/\u3000/g, ' ');
+      return s
+        .toLowerCase()
+        .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)) // 全角 ASCII → 半角
+        .replace(/\u3000/g, ' '); // 全角空格
     }
+
     function searchRows(rows, query, fields = ['name', 'source', 'description', 'descriptionZh']) {
       const list = Array.isArray(rows) ? rows : [];
-      const tokens = normalizeQuery(query).split(/\s+/).filter(Boolean);
+      const tokens = normalize(query).split(/\s+/).filter(Boolean);
       if (!tokens.length) return list.slice();
       const scored = [];
       for (const row of list) {
-        const vals = fields.map((f) => normalizeQuery(row?.[f]));
-        if (!tokens.every((tk) => vals.some((v) => v.includes(tk)))) continue;
+        const vals = fields.map((f) => normalize(row?.[f]));
+        if (!tokens.every((t) => vals.some((v) => v.includes(t)))) continue; // token AND、字段 OR
         const name = vals[0];
-        const rank = tokens.every((tk) => name.startsWith(tk)) ? 0 : tokens.every((tk) => name.includes(tk)) ? 1 : 2;
+        const rank = tokens.every((t) => name.startsWith(t)) ? 0 : tokens.every((t) => name.includes(t)) ? 1 : 2;
         scored.push({ row, rank });
       }
       scored.sort((a, b) => a.rank - b.rank || String(a.row?.name ?? '').localeCompare(String(b.row?.name ?? '')));
-      return scored.map((x) => x.row);
+      return scored.map((s) => s.row);
     }
     /**
      * 生效行的唯一选择器（架构评审候选 6）：面板左列与右栏此前各推导一遍
