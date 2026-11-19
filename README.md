@@ -45,12 +45,6 @@ dsh plugin --profile desktop add "file:C:/path/to/skill-set-manager/plugin/skill
 
 `file:` 目录以链接方式装进 profile，改完代码重装或重启即可，无需复制目录。
 
-### 发布到 npm 后（最标准）
-
-```bash
-dsh plugin --profile desktop add @matrixfu/skill-set-manager
-```
-
 ### 卸载
 
 ```bash
