@@ -9,7 +9,7 @@ import { snapshot } from './backup.js';
 import { listSets, loadSet, saveSet } from './sets.js';
 import { readBinding, bindingFile } from './binding.js';
 import { readManaged, writeManaged, managedFile } from './managed.js';
-import { planEffective, applyPlan } from './effective.js';
+import { converge } from './effective.js';
 import { entryKind, removeEntry } from './linkx.js';
 import { projectSkillsDir } from './paths.js';
 import { writeTextAtomic } from './atomic.js';
@@ -45,7 +45,7 @@ export async function uninstallSkill(roots, { name, bindings = [] }, { fs: fsImp
       writeManaged(projectRoot, managed, { fs: fsImpl });
     }
     try {
-      applyPlan(projectRoot, await planEffective(roots, projectRoot, binding.setSlug, { fs: fsImpl }), { fs: fsImpl });
+      await converge(roots, projectRoot, binding.setSlug, { fs: fsImpl });
       rewrittenProjects.push(projectRoot);
     } catch (e) { warnings.push(`${projectRoot} 重写失败: ${e?.message ?? e}`); }
   }

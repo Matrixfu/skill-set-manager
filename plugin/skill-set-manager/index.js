@@ -11,14 +11,15 @@ import { buildRoots, projectSkillsDir } from './lib/core/paths.js';
 import { registerLibrary, readManifest, localModified, backfillManifestStats, claimSource } from './lib/core/manifest.js';
 import * as sets from './lib/core/sets.js';
 import { findProjectRoot } from './lib/core/projectRoot.js';
-import { readBinding, writeBinding } from './lib/core/binding.js';
+import { readBinding } from './lib/core/binding.js';
 import { readManaged } from './lib/core/managed.js';
-import { planEffective, applyPlan, selfCheck, claimForeign } from './lib/core/effective.js';
+import { converge, selfCheck, claimForeign } from './lib/core/effective.js';
 import { providerSkills } from './lib/core/providerSkills.js';
 import { entryKind, removeEntry } from './lib/core/linkx.js';
-import { ensureGitignoreLine } from './lib/core/gitignore.js';
+import { bindProject } from './lib/core/provision.js';
+import { createOpGate } from './lib/core/opgate.js';
 import { openDomain, projectKey } from './lib/core/storage.js';
-import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo, dropOverrideOnBind } from './lib/core/pending.js';
+import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 import { syncResident, pruneLegacyResidentLinks, dropResidentName } from './lib/core/resident.js';
 import os from 'node:os';
 import { parseRepoSpec, fetchRepo, installSkills, cacheDirFor } from './lib/core/github.js';
@@ -72,6 +73,8 @@ export function apply(ctx, config) {
       catch (e) { ctx.logger.warn(`skill-set-manager：/ 菜单缓存失效事件发送失败: ${e?.message ?? e}`); }
     });
   };
+  // 长任务闸门（GLOSSARY「长任务」）：单飞、最近结果、写盘后的失效事件都在这里——不再靠每个调用点自己记得。
+  const gate = createOpGate({ onMutated: emitSlashCacheClear });
   const trInflight = new Set(); // M1 互斥（终审 2026-10-26）：autoTranslate 后台批与手动 translateRun 不叠加同条目重复出网
 
   // Remote 命名空间 = 操作唯一实现（§14）；fetch 兜底通道共用同一清单。
@@ -79,7 +82,7 @@ export function apply(ctx, config) {
     'state', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'updateCheckAll', 'cacheClear', 'uninstallSkill', 'backupsList', 'backupRestore',
-    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource',
+    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource', 'longStatus',
     // P3：翻译数据面
     'translatePending', 'translateRun', 'translateModels',
   ];
@@ -202,10 +205,10 @@ export function apply(ctx, config) {
     }
 
     async setResident(req) {
-      sets.saveResident(roots, req.names ?? []);
-      const synced = await syncResident(roots);
-      emitSlashCacheClear(); // 常驻链接增删在 `~/.agents/skills/`，也在生效区，菜单必须跟
-      return synced;
+      return await gate.mutate(async () => {
+        sets.saveResident(roots, req.names ?? []);
+        return await syncResident(roots); // 常驻链接增删在 `~/.agents/skills/`，也在生效区，菜单必须跟（失效事件由闸门补发）
+      });
     }
 
     async saveAsFromEffective(req) {
@@ -237,6 +240,10 @@ export function apply(ctx, config) {
      * 插件自己不擅自联网——只有 choices 选了 install 才拉。
      */
     async importApply(req) {
+      return await gate.run('importApply', { target: req.payload?.name ?? null }, () => this._importApply(req));
+    }
+
+    async _importApply(req) {
       const tmps = [];
       const notes = [];
       try {
@@ -273,18 +280,17 @@ export function apply(ctx, config) {
       }
     }
 
-    /** 绑定 + 直接写 + 幂等补 .gitignore 署名行（§7.6）。 */
+    /** 绑定 + 直接写 + 幂等补 .gitignore 署名行（§7.6）。顺序不变式见 provision.js（唯一绑定写点）。 */
     async bind(req) {
       const loc = await this.locate(req);
       if (!sets.loadSet(roots, req.slug) && req.slug !== sets.RESIDENT_SLUG) throw new Error(`技能集不存在: ${req.slug}`);
-      dropOverrideOnBind(loc.projectRoot); // 未绑定 → 绑定：丢弃会话临时覆盖（设计 2026-10-28）；须在 writeBinding 前判前态
-      writeBinding(loc.projectRoot, req.slug);
-      const plan = await planEffective(roots, loc.projectRoot, req.slug);
-      const result = applyPlan(loc.projectRoot, plan);
-      ensureGitignoreLine(loc.projectRoot, { enabled: config.gitignoreLine });
-      await (await storeOf()).put('bindings', projectKey(loc.projectRoot), { projectRoot: loc.projectRoot }); // P1a 索引：deleteSet/uninstall 全量推导
-      emitSlashCacheClear(); // 切集落盘即让 `/` 菜单重新拉取（switchSet/undo 之外的入口也覆盖：bind 是唯一绑定写点）
-      return { ...result, plan, projectRoot: loc.projectRoot };
+      return await bindProject(roots, loc.projectRoot, req.slug, {
+        gitignore: config.gitignoreLine,
+        // P1a 索引：deleteSet/uninstall 全量推导。手动绑定失败即如实失败，不静默吞
+        index: async (projectRoot) => { await (await storeOf()).put('bindings', projectKey(projectRoot), { projectRoot }); },
+        // 切集落盘即让 `/` 菜单重新拉取（switchSet/undo 之外的入口也覆盖：bind 是唯一绑定写点）
+        onCommitted: () => emitSlashCacheClear(),
+      });
     }
 
     /** 切换：先压一次性 undo 快照，再 bind（§5.2 撤销入口）。 */
@@ -299,16 +305,15 @@ export function apply(ctx, config) {
     async undoSwitch(req) {
       const store = await storeOf();
       const loc = await this.locate(req);
-      const restored = await applyUndo(store, roots, loc.projectRoot);
-      emitSlashCacheClear();
+      const restored = await gate.mutate(() => applyUndo(store, roots, loc.projectRoot));
       return { restored };
     }
 
     async startOverride(req) {
       const store = await storeOf();
       const loc = await this.locate(req);
-      const snap = await startOverride(store, roots, loc.projectRoot, { add: req.add ?? [], remove: req.remove ?? [], sessionId: req.sessionId ?? null });
-      emitSlashCacheClear(); // 未绑定态「勾选即起盘」也写 `.agents/skills/`（2026-10-28），菜单同样要跟
+      // 未绑定态「勾选即起盘」也写 `.agents/skills/`（2026-10-28），菜单同样要跟
+      const snap = await gate.mutate(() => startOverride(store, roots, loc.projectRoot, { add: req.add ?? [], remove: req.remove ?? [], sessionId: req.sessionId ?? null }));
       return { snapshot: snap };
     }
 
@@ -316,7 +321,7 @@ export function apply(ctx, config) {
       const store = await storeOf();
       const loc = await this.locate(req);
       const ended = await endOverride(store, roots, loc.projectRoot);
-      if (ended) emitSlashCacheClear();
+      if (ended) gate.touch();
       return { ended };
     }
 
@@ -401,44 +406,50 @@ export function apply(ctx, config) {
     }
 
     async installApply(req) {
-      await this._netGate();
-      const spec = parseRepoSpec(req.spec);
-      const dir = req.url ? fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-install-')) : cacheDirFor(roots, spec);
-      try {
-        // req.url：file:// 或私仓镜像覆盖（活体验证夹具也走这里）
-        const got = await fetchRepo(spec, { dir, timeoutMs: 180000, failLog: roots.failLog, ...(req.url ? { url: req.url } : {}) });
-        const results = await installSkills(roots, {
-          source: `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`,
-          commit: got.commit,
-          skillsDir: got.skillsDir,
-          names: req.names ?? null,
-          overwrite: !!req.overwrite,
-          backup: async (name) => bk.snapshot(roots, name),
-        });
-        registerLibrary(roots);
-        return { commit: got.commit, results };
-      } finally {
-        if (req.url) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
-      }
+      return await gate.run('installApply', { target: req.spec }, async () => {
+        await this._netGate();
+        const spec = parseRepoSpec(req.spec);
+        const dir = req.url ? fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-install-')) : cacheDirFor(roots, spec);
+        try {
+          // req.url：file:// 或私仓镜像覆盖（活体验证夹具也走这里）
+          const got = await fetchRepo(spec, { dir, timeoutMs: 180000, failLog: roots.failLog, ...(req.url ? { url: req.url } : {}) });
+          const results = await installSkills(roots, {
+            source: `github:${spec.owner}/${spec.repo}${spec.subpath ? `/${spec.subpath}` : ''}`,
+            commit: got.commit,
+            skillsDir: got.skillsDir,
+            names: req.names ?? null,
+            overwrite: !!req.overwrite,
+            backup: async (name) => bk.snapshot(roots, name),
+          });
+          registerLibrary(roots);
+          return { commit: got.commit, results };
+        } finally {
+          if (req.url) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+        }
+      });
     }
 
     async updateCheck(req) {
-      await this._netGate();
-      const tmps = [];
-      try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 120000) }); }
-      finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+      return await gate.run('updateCheck', { target: req.name, mutates: false }, async () => {
+        await this._netGate();
+        const tmps = [];
+        try { return await updates.checkUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 120000) }); }
+        finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+      });
     }
 
     /** 批量检查更新（GLOSSARY「批量检查更新」）：按来源仓库分组每仓一拉；sources 子集 = 重试失败仓库。 */
     async updateCheckAll(req) {
-      await this._netGate();
-      const tmps = [];
-      try {
-        return await updates.checkUpdateAll(roots, {
-          fetch: this._fetchFor(tmps, req.url ?? null, 120000),
-          sources: req.sources ?? null,
-        });
-      } finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+      return await gate.run('updateCheckAll', { mutates: false }, async () => {
+        await this._netGate();
+        const tmps = [];
+        try {
+          return await updates.checkUpdateAll(roots, {
+            fetch: this._fetchFor(tmps, req.url ?? null, 120000),
+            sources: req.sources ?? null,
+          });
+        } finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+      });
     }
 
     /** 清空上游缓存（逃生口：缓存坏了/换网络通道）：删底即下次自然重建，幂等。 */
@@ -448,10 +459,12 @@ export function apply(ctx, config) {
     }
 
     async updateApply(req) {
-      await this._netGate();
-      const tmps = [];
-      try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 180000), backup: async (n) => bk.snapshot(roots, n) }); }
-      finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+      return await gate.run('updateApply', { target: req.name }, async () => {
+        await this._netGate();
+        const tmps = [];
+        try { return await updates.applyUpdate(roots, req.name, { fetch: this._fetchFor(tmps, req.url ?? null, 180000), backup: async (n) => bk.snapshot(roots, n) }); }
+        finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
+      });
     }
 
     /** 候选项目集 = bindings 索引 ∪ pending/undo 记录（旧版遗留兜底）。 */
@@ -472,13 +485,15 @@ export function apply(ctx, config) {
     }
 
     async uninstallSkill(req) {
-      const res = await lifecycle.uninstallSkill(roots, { name: req.name, bindings: await this._candidateProjects() });
-      // M4（终审 2026-10-26）：卸载常驻技能 → 常驻名单同步剔除 + 回收链接（否则幽灵名灰行失真、启动 syncResident 反复告警）。
-      try {
-        if (dropResidentName(roots, req.name)) await syncResident(roots);
-      } catch (e) { ctx.logger.warn(`skill-set-manager 常驻名单剔除失败: ${e?.message ?? e}`); }
-      emitSlashCacheClear(); // 卸载回收各项目/常驻托管条目 = 生效清单变化，菜单要跟（queueMicrotask 合并防与 syncResident 双发）
-      return res;
+      return await gate.run('uninstallSkill', { target: req.name }, async () => {
+        const res = await lifecycle.uninstallSkill(roots, { name: req.name, bindings: await this._candidateProjects() });
+        // M4（终审 2026-10-26）：卸载常驻技能 → 常驻名单同步剔除 + 回收链接（否则幽灵名灰行失真、启动 syncResident 反复告警）。
+        try {
+          if (dropResidentName(roots, req.name)) await syncResident(roots);
+        } catch (e) { ctx.logger.warn(`skill-set-manager 常驻名单剔除失败: ${e?.message ?? e}`); }
+        // 失效事件由闸门在成功后统一补发（queueMicrotask 合并，与 syncResident 重入也不会双发）
+        return res;
+      });
     }
 
     async backupsList(req) {
@@ -542,8 +557,8 @@ export function apply(ctx, config) {
       if (reclaimed.length) writeManaged(loc.projectRoot, managed);
       let rebuilt = null;
       const slug = readBinding(loc.projectRoot)?.setSlug;
-      if (slug) rebuilt = applyPlan(loc.projectRoot, await planEffective(roots, loc.projectRoot, slug));
-      if (reclaimed.length || rebuilt) emitSlashCacheClear(); // 摘死链 + 重建都可能改生效清单
+      if (slug) rebuilt = await converge(roots, loc.projectRoot, slug);
+      if (reclaimed.length || rebuilt) gate.touch(); // 摘死链 + 重建都可能改生效清单
       return { reclaimed, rebuilt, warnings };
     }
 
@@ -553,17 +568,12 @@ export function apply(ctx, config) {
       const loc = await this.locate(req);
       const slug = readBinding(loc.projectRoot)?.setSlug;
       if (!slug) throw new Error('未绑定技能集，无从重建');
-      const plan = await planEffective(roots, loc.projectRoot, slug);
-      const result = applyPlan(loc.projectRoot, plan);
-      // 台账失配态下 add/remove/keep 三项皆空，理由只存在于 plan.warnForeign/warnMissing：
-      // 不并回 warnings 就成了「点了重新生成毫无反应」（活体复盘 2026-10-27，前端此前直接丢弃返回值）。
-      const planWarn = [
-        ...(plan.warnForeign ?? []).map((w) => `${w.name}: 生效目录已有同名${w.kind === 'file' ? '文件' : '条目'}（他人所有），未抢占未删除`
-          + (w.kind === 'junction' || w.kind === 'symlink' ? '——与当前集同名，可用「接管」认领回台账' : '——请改名或移除该条目后重试')),
-        ...(plan.warnMissing ?? []).map((n) => `${n}: 库/生效区解析不到（悬空引用），未生成`),
-      ];
-      emitSlashCacheClear(); // 重建改了生效清单（含空转时也无害：幂等清缓存）
-      return { ...result, warnings: [...(result.warnings ?? []), ...planWarn], plan };
+      return await gate.mutate(async () => {
+        // 台账失配态下 add/remove/keep 三项皆空，理由只存在于 plan.warnForeign/warnMissing：
+        // claimHint 让文案带「接管」指引（活体复盘 2026-10-27：前端此前直接丢弃返回值）。
+        const { plan, applied, warnings } = await converge(roots, loc.projectRoot, slug, { claimHint: true });
+        return { applied, warnings, plan }; // 重建改了生效清单，失效事件由闸门补发（空转时也无害：幂等）
+      });
     }
 
     /**
@@ -591,16 +601,14 @@ export function apply(ctx, config) {
     }
 
     async migrateApply() {
-      const pv = migrate.preview(roots);
-      const res = await migrate.apply(roots, { moves: pv.moves, ledger: this._migrateLedger() });
-      emitSlashCacheClear(); // 迁移把旧生效区条目搬进库 = 生效清单变化
-      return res;
+      return await gate.run('migrateApply', {}, async () => {
+        const pv = migrate.preview(roots);
+        return await migrate.apply(roots, { moves: pv.moves, ledger: this._migrateLedger() });
+      });
     }
 
     async migrateUndo() {
-      const res = await migrate.undo(roots, { ledger: this._migrateLedger() });
-      emitSlashCacheClear();
-      return res;
+      return await gate.run('migrateUndo', {}, () => migrate.undo(roots, { ledger: this._migrateLedger() }));
     }
 
     // ---- P3：~/.agents/skills 存量迁移（设计 §5.7/§6.6；ledger 独立域，不与旧向导互踩） ----
@@ -617,15 +625,11 @@ export function apply(ctx, config) {
     }
 
     async migrateAgentsApply() {
-      const res = await migrate.applyAgents(roots, { ledger: this._migrateAgentsLedger() });
-      emitSlashCacheClear(); // 跨 harness 通用区同样在生效区，搬动即改清单
-      return res;
+      return await gate.run('migrateAgentsApply', {}, () => migrate.applyAgents(roots, { ledger: this._migrateAgentsLedger() }));
     }
 
     async migrateAgentsUndo() {
-      const res = await migrate.undoAgents(roots, { ledger: this._migrateAgentsLedger() });
-      emitSlashCacheClear();
-      return res;
+      return await gate.run('migrateAgentsUndo', {}, () => migrate.undoAgents(roots, { ledger: this._migrateAgentsLedger() }));
     }
 
     // ---- P3：翻译数据面（设计 §6.1/§5.8——llm 主路由，translator 在场才兜底） ----
@@ -732,15 +736,21 @@ export function apply(ctx, config) {
       }
     }
 
+    /** 长任务态的 host 真相源（GLOSSARY「长任务」：进行中与结果不随界面关闭而消失）。 */
+    async longStatus() {
+      return gate.status();
+    }
+
     /** 解绑（面板缺口）：回收托管条目 + 删 binding/managed；gitignore 行保留。 */
     async unbind(req) {
       const loc = await this.locate(req);
-      const res = lifecycle.unbindProject(loc.projectRoot);
-      const store = await storeOf();
-      await store.delete('bindings', projectKey(loc.projectRoot));
-      await store.delete('pending', projectKey(loc.projectRoot)); // 解绑即撤掉临时覆盖标记：条目已回收，别留待还原的悬账
-      emitSlashCacheClear(); // 解绑回收了托管条目，菜单要跟着缩
-      return { ...res, projectRoot: loc.projectRoot };
+      return await gate.mutate(async () => {
+        const res = lifecycle.unbindProject(loc.projectRoot);
+        const store = await storeOf();
+        await store.delete('bindings', projectKey(loc.projectRoot));
+        await store.delete('pending', projectKey(loc.projectRoot)); // 解绑即撤掉临时覆盖标记：条目已回收，别留待还原的悬账
+        return { ...res, projectRoot: loc.projectRoot }; // 解绑回收了托管条目，菜单要跟着缩（闸门补发）
+      });
     }
   }
 
@@ -959,11 +969,13 @@ export function apply(ctx, config) {
         const projectRoot = findProjectRoot(cwd);
         if (readBinding(projectRoot)) return;
         if (!sets.loadSet(roots, config.autoBindSlug)) return;
-        dropOverrideOnBind(projectRoot); // 自动绑定也是绑定：先丢未绑定态的临时覆盖，否则 planEffective 把临时条目并进期望态、粘进刚绑定的集（设计 2026-10-28）
-        writeBinding(projectRoot, config.autoBindSlug);
-        applyPlan(projectRoot, await planEffective(roots, projectRoot, config.autoBindSlug));
-        ensureGitignoreLine(projectRoot, { enabled: config.gitignoreLine });
-        try { await (await storeOf()).put('bindings', projectKey(projectRoot), { projectRoot }); } catch {} // session/created 自动绑定同步入索引（P1b-T1）
+        // 自动绑定与手动绑定同一条链（provision.js）：丢覆盖的顺序不变式、gitignore、索引、失效事件一次做完
+        await bindProject(roots, projectRoot, config.autoBindSlug, {
+          gitignore: config.gitignoreLine,
+          // 自动绑定不得因索引失败打断会话创建；手动 bind 则如实失败（口径差异仅此一处）
+          index: async (pr) => { try { await (await storeOf()).put('bindings', projectKey(pr), { projectRoot: pr }); } catch {} },
+          onCommitted: () => emitSlashCacheClear(), // 补正：这条路径历史上漏发 / 菜单失效
+        });
       } catch (e) {
         ctx.logger.warn(`skill-set-manager 自动绑定失败: ${e?.message ?? e}`);
       }

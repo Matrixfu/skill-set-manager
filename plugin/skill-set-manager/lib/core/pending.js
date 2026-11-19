@@ -9,7 +9,7 @@ import path from 'node:path';
 import { projectKey } from './storage.js';
 import { readManaged, writeManaged, managedFile } from './managed.js';
 import { readBinding, writeBinding } from './binding.js';
-import { planEffective, applyPlan } from './effective.js';
+import { converge } from './effective.js';
 import { loadSet, RESIDENT_SLUG } from './sets.js';
 import { resolveSkillTargets } from './resolver.js';
 import { makeEntry, removeEntry, entryKind } from './linkx.js';
@@ -150,7 +150,7 @@ async function restoreProject(roots, projectRoot, rec = null) {
   // planEffective 按覆盖口径收敛、覆盖标记与盘面互相矛盾（活体口径教训）。
   const managed = readManaged(projectRoot);
   if (managed && managed.sessionOverride) writeManaged(projectRoot, { ...managed, sessionOverride: null });
-  applyPlan(projectRoot, await planEffective(roots, projectRoot, binding.setSlug));
+  await converge(roots, projectRoot, binding.setSlug);
   return true;
 }
 
@@ -204,7 +204,7 @@ export async function applyUndo(store, roots, projectRoot) {
     // 会让 planEffective 读到撤销前的覆盖标记、还原不出快照里的条目。
     const mg = snap.managed ? { setSlug: snap.setSlug, entries: snap.managed.entries ?? {}, sessionOverride: snap.managed.sessionOverride ?? null } : null;
     if (mg) writeManaged(projectRoot, mg);
-    applyPlan(projectRoot, await planEffective(roots, projectRoot, snap.setSlug));
+    await converge(roots, projectRoot, snap.setSlug);
   }
   return true;
 }

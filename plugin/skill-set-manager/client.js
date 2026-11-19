@@ -234,12 +234,45 @@ window.__ModuleLoader__.load({
       };
       call(ctx, op, args).then(
         (value) => settle({ ok: true, value, error: null, warnings: Array.isArray(value?.warnings) ? value.warnings : [] }),
-        (error) => settle({ ok: false, value: null, error, warnings: [] }),
+        (error) => {
+          // host 闸门说「别的长任务在跑」：置为该次被挡，并把在跑者拉回来（按钮 title/单飞随之校正）
+          const busy = /^BUSY:/.test(String(error?.message ?? ''));
+          settle({ ok: false, value: null, error, warnings: [] });
+          if (busy) syncHostTasks(ctx);
+        },
       );
       return true;
     }
     /** 清除已结束的任务。在飞不提供清除：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」。 */
     function clearTask() { if (!tasks.running) { tasks.last = null; emitTasks(); } }
+
+    /**
+     * host 真相源 → 本地任务态（GLOSSARY「长任务」：进行中与结果不随界面关闭而消失）。
+     * host 的 opgate 是单飞与最近结果的唯一真相：界面关掉再回来，在跑者与最终结果从这里复原；
+     * 本地已有在飞任务时不覆盖（本地那份带着进度条与收尾回调）。
+     */
+    function adoptHostTask(rec, running) {
+      if (!rec?.name) return false;
+      const t2 = {
+        id: 0, op: rec.name, target: rec.target ?? null, args: null, note: null,
+        T: SLOW_OPS[rec.name]?.T ?? 15000, startedAt: rec.startedAt, doneAt: rec.doneAt ?? null,
+        status: rec.status, result: rec.result ?? null,
+        error: rec.error ? { message: rec.error } : null, warnings: rec.warnings ?? [],
+      };
+      if (running) { if (tasks.running) return true; tasks.running = t2; tasks.last = t2; emitTasks(); return true; }
+      const sameAsLocal = tasks.last && tasks.last.doneAt && tasks.last.doneAt === rec.doneAt;
+      if (!tasks.running && !sameAsLocal) { tasks.last = t2; emitTasks(); }
+      return false;
+    }
+    /** 拉一次 host 长任务态；返回 host 是否仍在跑（调用方据此继续轮询）。旧 host 无此 RPC 时静默降级。 */
+    async function syncHostTasks(ctx) {
+      try {
+        const st = await call(ctx, 'longStatus');
+        if (st?.running) return adoptHostTask(st.running, true);
+        if (st?.last) adoptHostTask(st.last, false);
+      } catch { /* 无 longStatus：纯客户端任务态照常工作 */ }
+      return false;
+    }
     /** 运行中永不到 100%（封顶 95）：条子自己爬满就是在谎报完成（反目标 #1）；只有 RPC 真返回才 100。 */
     const taskPercent = (task, now) => task.status !== 'running' ? 100
       : Math.min(95, Math.round(95 * (1 - Math.exp(-(now - task.startedAt) / task.T))));
@@ -418,6 +451,13 @@ window.__ModuleLoader__.load({
         try { const v = await call(ctx, 'state', { sessionId }); setState(v); bus.setState(v); } catch (e) { setError(`${t('loadFailed')}: ${e?.message ?? e}`); }
       }, [ctx, sessionId]);
       React.useEffect(() => { reload(); }, [reload]);
+      // host 闸门是单飞真相：打开面板补拉一次；host 仍在跑则每 2s 跟一次，跑完自动收尾
+      React.useEffect(() => {
+        let alive = true; let timer = null;
+        const tick = async () => { const live = await syncHostTasks(ctx); if (alive && live) timer = setTimeout(tick, 2000); };
+        tick();
+        return () => { alive = false; clearTimeout(timer); };
+      }, [ctx]);
       React.useEffect(() => {
         const onKey = (e) => { if (e.key === 'Escape') onClose(); };
         window.addEventListener('keydown', onKey);
@@ -1028,6 +1068,13 @@ window.__ModuleLoader__.load({
         } catch { /* 无会话时项目面可能拒；全局字段照常取 */ }
       }, [ctx]);
       React.useEffect(() => { loadState(); }, [loadState]);
+      // 设置页常驻挂载：进来/切回来时把 host 在跑的长任务与最近结果拉回来（关掉界面再回来仍见）
+      React.useEffect(() => {
+        let alive = true; let timer = null;
+        const tick = async () => { const live = await syncHostTasks(ctx); if (alive && live) timer = setTimeout(tick, 2000); };
+        tick();
+        return () => { alive = false; clearTimeout(timer); };
+      }, [ctx]);
       const run = async (key, fn) => {
         setBusy(key); setMsg(null);
         try {

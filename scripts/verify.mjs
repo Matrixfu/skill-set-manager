@@ -1548,14 +1548,75 @@ const CASES = [
       // 无覆盖时未绑定口径不变
       await p.endOverride(store, f.roots, f.projectB);
       eq(selfCheck(f.roots, f.projectB).detail, '未绑定：插件不改动该项目', '无覆盖：未绑定口径不变');
-      // 终审 Important 2：`session/created` 自动绑定也是绑定路径——须在 writeBinding/applyPlan 前丢临时覆盖，
-      // 否则 planEffective 把 override.added 并进期望态，临时条目粘进刚自动绑定的集（设计反目标）。
-      // index.js 是 Cordis 激活体，套件无法起 ctx，只能钉接线顺序（与 client-unbound-override 同一手法）。
+      // 终审 Important 2：`session/created` 自动绑定也是绑定路径——须与手动绑定同路（唯一写点 bindProject：
+      // 丢覆盖→写 binding→收敛→gitignore→索引→失效事件一次做完）。丢覆盖的顺序不变式随之下沉进
+      // bindProject，由 #bind-single-point 在 core 层行为断言；这里只钉「自动绑定没另起一条链」。
       const hostSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'index.js'), 'utf8');
       const autoFrom = hostSrc.indexOf("ctx.on('session/created'");
       ok(autoFrom > 0, '找到自动绑定分支');
-      const autoSeg = hostSrc.slice(autoFrom, hostSrc.indexOf('applyPlan(projectRoot, await planEffective(roots, projectRoot, config.autoBindSlug))'));
-      ok(/dropOverrideOnBind\(projectRoot\)/.test(autoSeg), '自动绑定：writeBinding 之前丢临时覆盖');
+      const autoEnd = hostSrc.indexOf('// 事件级还原', autoFrom);
+      ok(autoEnd > autoFrom, '定位自动绑定段末尾');
+      const autoSeg = hostSrc.slice(autoFrom, autoEnd);
+      ok(/bindProject\(roots, projectRoot, config\.autoBindSlug/.test(autoSeg), '自动绑定走唯一绑定写点 bindProject');
+      ok(/onCommitted: \(\) => emitSlashCacheClear\(\)/.test(autoSeg), '自动绑定与手动绑定共享 / 菜单失效事件（补正历史漏发）');
+    },
+  },
+  {
+    id: 'bind-single-point',
+    title: '绑定唯一写点：bindProject 一次做完「丢覆盖→写 binding→收敛→gitignore→索引→失效事件」，converge 收掉同形 plan+apply',
+    async run(f) {
+      await withRoots(f);
+      const s = await core('sets');
+      writeSkill(f.library, 'bp-alpha');
+      writeSkill(f.library, 'bp-beta');
+      await s.saveSet(f.roots, { slug: 'bp-set', name: 'BP', skills: ['bp-alpha'] });
+      const { readBinding } = await core('binding');
+      const { readManaged, writeManaged } = await core('managed');
+      const prov = await core('provision');
+
+      // ① 未绑定 + 有临时覆盖：必须先丢覆盖再写 binding（否则临时条目粘进刚绑定的集，2026-10-28 设计）
+      writeManaged(f.projectA, { setSlug: null, entries: {}, sessionOverride: { added: ['bp-beta'], removed: [] } });
+      const seen = [];
+      const r1 = await prov.bindProject(f.roots, f.projectA, 'bp-set', {
+        gitignore: true,
+        index: (projectRoot, slug) => { seen.push(['index', projectRoot, slug]); },
+        onCommitted: () => { seen.push(['emit']); },
+      });
+      eq(readBinding(f.projectA).setSlug, 'bp-set', '绑定落盘');
+      eq(readManaged(f.projectA)?.sessionOverride, null, '未绑定态临时覆盖在写 binding 前被丢弃');
+      setEq(skillDirNames(f.projectA), ['bp-alpha'], '生效清单 = 集条目（临时条目未粘入）');
+      ok(fs.readFileSync(path.join(f.projectA, '.gitignore'), 'utf8').includes('# skill-set-manager'), '.gitignore 署名行写入');
+      eq(seen.map((x) => x[0]), ['index', 'emit'], '索引与失效事件各一次，且先索引后事件');
+      eq([seen[0][1], seen[0][2]], [f.projectA, 'bp-set'], '索引回调拿到 projectRoot/slug');
+      eq(r1.applied.added, 1, '返回 applied');
+      eq(r1.plan.add.map((a) => a.name), ['bp-alpha'], '返回 plan');
+      eq(r1.projectRoot, f.projectA, '返回 projectRoot');
+
+      // ② gitignore 开关：关闭即不写署名行（与 host config.gitignoreLine 同口径）
+      fs.rmSync(path.join(f.projectA, '.gitignore'), { force: true });
+      await prov.bindProject(f.roots, f.projectA, 'bp-set', { gitignore: false });
+      ok(!fs.existsSync(path.join(f.projectA, '.gitignore')), 'gitignore:false 不补署名行');
+
+      // ③ 已绑定再绑定（切换）：临时覆盖保留——dropOverrideOnBind 只清「未绑定→绑定」
+      const mg = readManaged(f.projectA);
+      writeManaged(f.projectA, { ...mg, sessionOverride: { added: ['bp-beta'], removed: [] } });
+      await prov.bindProject(f.roots, f.projectA, 'bp-set', { gitignore: false });
+      ok(readManaged(f.projectA)?.sessionOverride?.added?.includes('bp-beta'), '已绑定切换：临时覆盖保留');
+
+      // ④ converge：同形 plan+apply 的唯一实现，warning 文案唯一来源
+      const { converge, describePlanWarnings } = await core('effective');
+      writeSkill(f.library, 'bp-gamma');
+      await s.saveSet(f.roots, { slug: 'bp-set', name: 'BP', skills: ['bp-alpha', 'bp-gamma'] });
+      const foreign = path.join(f.projectA, '.agents', 'skills', 'bp-gamma');
+      mkdirp(foreign);
+      fs.writeFileSync(path.join(foreign, 'SKILL.md'), '# user content\n');
+      const c1 = await converge(f.roots, f.projectA, 'bp-set');
+      ok(Array.isArray(c1.plan?.add) && !!c1.applied, 'converge 返回 plan + applied');
+      ok(!c1.plan.add.some((a) => a.name === 'bp-gamma'), '同名外来不抢占');
+      eq(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), '# user content\n', '外来内容不动');
+      ok(c1.warnings.some((w) => w.includes('bp-gamma')), 'converge 的 warnings 含外来冲突（applyPlan 经 describePlanWarnings）');
+      ok(describePlanWarnings({ warnForeign: [{ name: 'ln', kind: 'junction' }] }, { claimHint: true })[0].includes('接管'), 'claimHint 变体带接管指引');
+      ok(!describePlanWarnings({ warnForeign: [{ name: 'ln', kind: 'junction' }] })[0].includes('接管'), '默认变体不带接管指引（一份来源 + 变体）');
     },
   },
   {
@@ -2595,6 +2656,53 @@ const CASES = [
     },
   },
   {
+    id: 'long-gate',
+    title: '长任务闸门：host 单飞（BUSY 点名在跑者）+ 改盘成功补发失效事件（只读不发）+ 进行中与最近结果留存',
+    async run() {
+      const { createOpGate } = await core('opgate');
+      let mutated = 0;
+      const gate = createOpGate({ onMutated: () => { mutated += 1; } });
+
+      // ① 单飞：第二个长任务立即被挡，且消息里点名在跑的是谁
+      let release; const slow = new Promise((r) => { release = r; });
+      const p = gate.run('installApply', { target: 'acme/skills' }, async () => { await slow; return { warnings: ['w1'] }; });
+      ok(gate.isBusy(), '长任务在飞时 isBusy');
+      eq(gate.status().running?.name, 'installApply', 'status.running 报在跑者');
+      eq(gate.status().running?.target, 'acme/skills', 'status.running 带目标');
+      let busy = null;
+      try { await gate.run('updateApply', { target: 'x' }, async () => 1); } catch (e) { busy = e; }
+      eq(busy?.code, 'BUSY', '重复进入抛 code=BUSY');
+      ok(String(busy?.message).startsWith('BUSY: installApply acme/skills'), 'BUSY 文本点名在跑者（Remote 桥丢字段时的保底）');
+      eq(mutated, 0, '未完成不发失效事件');
+      release();
+      const v = await p;
+      eq(v?.warnings?.[0], 'w1', '长任务原样返回结果');
+      eq(mutated, 1, '改盘成功补发一次失效事件（installApply 历史漏发的补正）');
+      eq(gate.status().last?.status, 'ok', '最近结果留存');
+      eq(gate.status().last?.warnings?.[0], 'w1', '最近结果留存 warnings');
+      ok(!gate.isBusy(), '结束后释放单飞');
+
+      // ② 只读长任务不发事件（检查更新不写盘）
+      await gate.run('updateCheck', { target: 'alpha', mutates: false }, async () => ({ ok: 1 }));
+      eq(mutated, 1, 'updateCheck 不发失效事件');
+
+      // ③ 失败：原样抛出 + 如实记 err + 释放单飞 + 不发事件
+      let boom = null;
+      try { await gate.run('migrateApply', {}, async () => { throw new Error('upstream down'); }); } catch (e) { boom = e; }
+      eq(boom?.message, 'upstream down', '失败原样抛出');
+      eq(gate.status().last?.status, 'err', '失败也留存最近结果');
+      eq(gate.status().last?.error, 'upstream down', '失败原因留存');
+      eq(mutated, 1, '失败不发失效事件');
+      ok(!gate.isBusy(), '失败后释放单飞');
+
+      // ④ 短写 mutate：成功即发；条件写用 touch
+      const r = await gate.mutate(async () => 42);
+      eq([r, mutated], [42, 2], '短写 mutate 落盘后发事件并原样返回');
+      gate.touch();
+      eq(mutated, 3, '条件写用 touch 发事件');
+    },
+  },
+  {
     id: 'client-batch-check', title: '库页签批量检查更新+失败仓库一键重试+清空上游缓存（2026-11-17 加固 T5）',
     async run() {
       const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
@@ -2640,7 +2748,9 @@ const CASES = [
       ok(/queueMicrotask\(\(\) => \{[\s\S]*?slashClearQueued = false;/.test(hostSrc), 'queueMicrotask 合并：同轮多次写盘只发一次');
       ok(/if \(slashClearQueued\) return;/.test(hostSrc), '在队即返回（幂等合并）');
       ok(/catch \(e\) \{ ctx\.logger\.warn\(`skill-set-manager：\/ 菜单缓存失效事件发送失败/.test(hostSrc), 'emit 失败只 warn：不连带炸 RPC 结果');
-      // 每个会改「生效区盘上内容」的方法都必须在成功路径补发；bind 是唯一绑定写点（switchSet 复用 bind，不得双发）。
+      // 每个会改「生效区盘上内容」的操作都必须在成功路径补发；机制已收进 opgate：
+      // 长任务 gate.run（单飞 + 成功补发）、短写 gate.mutate（不可漏发）、条件写 gate.touch()。
+      // bind 是唯一绑定写点（switchSet 复用 bind，不得双发）。
       const seg = (name) => {
         const from = hostSrc.indexOf(`async ${name}(`);
         ok(from > 0, `找到方法 ${name}`);
@@ -2648,12 +2758,16 @@ const CASES = [
         const to = rest.search(/\n    (?:async\s|\w+\(|\/\*\*)/);
         return rest.slice(0, to < 0 ? rest.length : to);
       };
-      for (const name of ['bind', 'undoSwitch', 'startOverride', 'endOverride', 'setResident', 'unbind',
-        'uninstallSkill', 'reclaimDeadLinks', 'rebuildManaged', 'migrateApply', 'migrateUndo',
-        'migrateAgentsApply', 'migrateAgentsUndo'])
-        ok(/emitSlashCacheClear\(\)/.test(seg(name)), `${name} 落盘后补发 / 菜单缓存失效`);
+      ok(/onCommitted: \(\) => emitSlashCacheClear\(\)/.test(seg('bind')), 'bind 经唯一绑定写点补发 / 菜单缓存失效');
+      for (const name of ['undoSwitch', 'startOverride', 'setResident', 'unbind', 'rebuildManaged'])
+        ok(/gate\.mutate\(/.test(seg(name)), `${name} 改盘走 gate.mutate（失效事件不可漏发）`);
+      for (const op of ['installApply', 'importApply', 'updateApply', 'uninstallSkill',
+        'migrateApply', 'migrateUndo', 'migrateAgentsApply', 'migrateAgentsUndo'])
+        ok(new RegExp(`gate\\.run\\('${op}'`).test(hostSrc), `${op} 走长任务闸门（单飞 + 成功补发）`);
+      ok(/gate\.run\('updateCheck', \{ target: req\.name, mutates: false \}/.test(hostSrc), 'updateCheck 只读：闸门不发事件');
+      ok(/gate\.run\('updateCheckAll', \{ mutates: false \}/.test(hostSrc), 'updateCheckAll 只读：闸门不发事件');
       ok(!/emitSlashCacheClear\(\)/.test(seg('switchSet')), 'switchSet 不双发（bind 是唯一绑定写点）');
-      ok(/if \(ended\) emitSlashCacheClear\(\);/.test(hostSrc), 'endOverride 无覆盖可撤时不发（零写盘不发事件）');
+      ok(/if \(ended\) gate\.touch\(\);/.test(hostSrc), 'endOverride 无覆盖可撤时不发（零写盘不发事件）');
       // 面板文案：旧「新会话前不同步」警示已被同步语义取代，中英双语一致（client 字典无 linter，静态钉）。
       const client = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js'), 'utf8');
       const zh = client.slice(client.indexOf('      zh: {'), client.indexOf('      en: {'));

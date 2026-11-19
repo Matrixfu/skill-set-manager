@@ -52,8 +52,27 @@ export async function planEffective(roots, projectRoot, setSlug, { fs: fsImpl = 
   return { setSlug, add, remove, keep, warnMissing, warnForeign, missing: [...new Set([...unresolved, ...warnMissing])] };
 }
 
+/**
+ * plan.warnForeign / warnMissing → 用户可见文案（**唯一来源**）。
+ * claimHint = 「重新生成」场景：多一句「可用接管认领回台账」的处置指引。
+ */
+export function describePlanWarnings(plan, { claimHint = false } = {}) {
+  return [
+    ...(plan.warnForeign ?? []).map((w) => {
+      const kind = w.kind === 'file' ? '文件' : '条目';
+      const tail = !claimHint
+        ? '，请改名或移除该条目后重试'
+        : (w.kind === 'junction' || w.kind === 'symlink'
+          ? '——与当前集同名，可用「接管」认领回台账'
+          : '——请改名或移除该条目后重试');
+      return `${w.name}: 生效目录已有同名${kind}（他人所有），未抢占未删除${tail}`;
+    }),
+    ...(plan.warnMissing ?? []).map((n) => `${n}: 库/生效区解析不到（悬空引用），未生成`),
+  ];
+}
+
 /** 直接写（崩溃即设计前提，§6.6）：写前快照由 undo 层负责，这里只落盘。 */
-export function applyPlan(projectRoot, plan, { fs: fsImpl = fs } = {}) {
+export function applyPlan(projectRoot, plan, { fs: fsImpl = fs, claimHint = false } = {}) {
   const managed = readManaged(projectRoot, { fs: fsImpl }) ?? { setSlug: null, entries: {}, sessionOverride: null };
   const entries = { ...managed.entries };
   const warnings = [];
@@ -67,10 +86,20 @@ export function applyPlan(projectRoot, plan, { fs: fsImpl = fs } = {}) {
     entries[item.name] = { kind: made.kind, from: item.origin ?? item.target, ...(made.copied ? { copied: true } : {}), ...(made.flat ? { flat: true } : {}) };
     if (made.copied) warnings.push(`${item.name}: 链接不可用，已复制（升级不自动传导，可「重新链接」）`);
   }
-  for (const name of plan.warnMissing ?? []) warnings.push(`${name}: 技能不存在（悬空引用），未写入`);
-  for (const w of plan.warnForeign ?? []) warnings.push(`${w.name}: 生效目录已有同名外来条目（他人所有），未抢占未删除，请改名或移除该条目后重试`);
+  warnings.push(...describePlanWarnings(plan, { claimHint }));
   writeManaged(projectRoot, { setSlug: plan.setSlug ?? managed.setSlug, entries, sessionOverride: managed.sessionOverride }, { fs: fsImpl });
   return { applied: { added: plan.add.length, removed: plan.remove.length, kept: plan.keep.length }, warnings };
+}
+
+/**
+ * 「按期望态收敛盘面」的唯一实现：plan + apply 两步。
+ * 收口前它是 7 处逐字相同的 `applyPlan(projectRoot, await planEffective(roots, projectRoot, slug))`
+ * （index.js bind/rebuild/reclaim/autoBind、pending.js restore/undo、lifecycle.js uninstall）。
+ */
+export async function converge(roots, projectRoot, setSlug, { fs: fsImpl = fs, claimHint = false } = {}) {
+  const plan = await planEffective(roots, projectRoot, setSlug, { fs: fsImpl });
+  const { applied, warnings } = applyPlan(projectRoot, plan, { fs: fsImpl, claimHint });
+  return { plan, applied, warnings };
 }
 
 /** 读回自检原（§7.5；T5 的 selfCheck 在其上补外来条目/冻结绑定判定）。 */
