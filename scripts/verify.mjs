@@ -2519,6 +2519,76 @@ const CASES = [
     },
   },
   {
+    id: 'helper-callers',
+    title: 'client.js：三处分段列表共用同一个渲染件（设计 2026-11-20 §6.1/§6.9）——Task 1 钉本体，Task 4 补三处复用计数',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(/const SectionedRows = \(sections\)/.test(body), '分段渲染件收口：SectionedRows(sections) 一份实现');
+      ok(/className: 'ssm-p-seclabel'/.test(body) && /String\(s\.rows\.length\)/.test(body), '小标题只活在渲染件里，计数 = 当前要渲染的行数（不是全量）');
+      ok(/\.filter\(\(s\) => s\.rows\.length\)/.test(body), '空段（连小标题一起）整段不渲染');
+      ok(!/managed\.includes\(n\)/.test(body), '不撞 row-selectors 负锚：渲染件内不得写 managed.includes(n)');
+      eq((body.match(/SectionedRows\(/g) ?? []).length, 3, '三处消费同一渲染件：成员抽屉 / 全局 tab / composer 搜索视图（签名不带括号故不计）');
+      eq((body.match(/ssm-p-seclabel/g) ?? []).length, 2, '小标题只活在渲染件与 CSS 各一处：三处不再各自拼装');
+    },
+  },
+  {
+    id: 'members-grouping',
+    title: 'client.js：成员抽屉三段（当前成员 / 候选技能 / 常驻·不属于本集）+ 草稿差异可见 + 保存剔除常驻残留（设计 2026-11-20 §6.2–§6.4）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(/\{ key: 'on', label: t\('memberSecOn'\)/.test(body) && /\{ key: 'cand', label: t\('candidates'\)/.test(body) && /\{ key: 'stray', label: t\('residentSecOut'\)/.test(body),
+        '成员抽屉三段：当前成员在上、候选技能在中、常驻残留只读段在末');
+      ok(/dim: kind === 'on' && !edit\.picked\[row\.name\]/.test(body), '上段未勾成员整行灰化（持久态分区：点击不重排，保存后才换位）');
+      ok(/const memberSet = new Set\(inSet\.filter\(\(n\) => !resident\.has\(n\) && !foreignRes\.has\(n\)\)\)/.test(body) && /const onRows = listed\.filter\(\(r\) => memberSet\.has\(r\.name\)\)/.test(body),
+        '上段按**持久名单**分流而非按草稿 picked：改成按 picked 排，取消勾选的成员会两头不落、直接消失（Review Focus #1）');
+      ok(/t\('pendingRemove'\)/.test(body) && /t\('pendingAdd'\)/.test(body), '草稿差异徽章：待移除（warn）/ 待加入（muted）');
+      ok(/t\('draftDiff'\)/.test(body) && /t\('draftHidden'\)/.test(body), '改动计数行：含被过滤词藏起来的改动数（保存前可见）');
+      ok(/t\('residentSecHint'\)/.test(body), '常驻残留段带解释：保存后会从本集名单移除');
+      ok(/skills: Object\.keys\(edit\.picked\)\.filter\(\(n\) => edit\.picked\[n\] && !\(resident\.has\(n\) \|\| foreignRes\.has\(n\)\)\)/.test(body),
+        '保存名单剔除常驻残留（GLOSSARY「全局常驻」边界句的落点，不静默：上面有只读段与 hint）');
+      for (const copy of [
+        '当前成员', '常驻 · 不属于本集', 'Resident · not part of this set', '待加入', '待移除',
+        '本次改动：新增 {n} · 移除 {m}', 'This edit: add {n} · remove {m}',
+        '（含 {k} 项不在当前结果中）', '({k} not in the current results)',
+        '常驻技能在所有集自动包含，无需在集内点名；保存后这些名字将从本集名单移除。',
+        'Resident skills are auto-included in every set; these names are dropped from this set on save.',
+      ]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+      const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
+      ok(gl.includes('**候选技能（Candidate Skills）**'), 'GLOSSARY 收录「候选技能」词条（设计 2026-11-20 §9）');
+      ok(gl.includes('冗余引用'), 'GLOSSARY「全局常驻」补边界句：集名单里残留的常驻名是冗余引用');
+    },
+  },
+  {
+    id: 'global-grouping',
+    title: 'client.js：设置页「全局技能集」tab 三段（全局常驻 / 候选技能 / 外来常驻）+ 段内字典序 + 空态随分区改口径（设计 2026-11-20 §6.5/§6.6）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(/\{ key: 'res', label: t\('globalSecResident'\)/.test(body) && /\{ key: 'cand', label: t\('candidates'\)/.test(body) && /\{ key: 'foreign', label: t\('foreignSec'\)/.test(body),
+        '全局 tab 三段：全局常驻在上、候选技能在中、外来常驻只读段在末');
+      ok(/const gCorpus = \[\.\.\.\(lib \?\? \[\]\)\.slice\(\)\.sort\(\(a, b\) => a\.name\.localeCompare\(b\.name\)\)/.test(body),
+        '段内序从文件系统序换成字典序（fs 序对用户无含义；searchRows 本体不动）');
+      ok(/t\('foreignSameName'\)/.test(body), '在库又是外来常驻的行如实标注：它已全局生效，但不在插件名单里');
+      ok(/gray: true, title: t\('foreignRow'\)/.test(body), '外来常驻长文案进 hover：段标题已承载语义，不再每行挂长徽章');
+      ok(/\.filter\(\(r\) => !gOnly \|\| resident\.includes\(r\.name\) \|\| foreign\.includes\(r\.name\)\)/.test(body),
+        '「只看常驻」不加分区特例分支：中段自然为空由渲染件隐藏');
+      ok(/grows\.filter\(\(r\) => !r\.foreign && resident\.includes\(r\.name\)\)/.test(body) && /grows\.filter\(\(r\) => !r\.foreign && !resident\.includes\(r\.name\)\)/.test(body),
+        '上中两段按**即时** resident 分流：勾选写库后行立即换位，无草稿态可缓冲（§5.7）');
+      ok(/badges: foreign\.includes\(r\.name\) \? \[\{ kind: 'muted', text: t\('foreignSameName'\) \}\]/.test(body),
+        '同名外来常驻徽章只挂「在库名同时命中 residentForeign」，其余行不带（§6.6）');
+      ok(/grows\.length === 0 \? h\('div', \{ className: 'ssm-p-empty' \}/.test(body), '空态只在整表为空时说话（上段为空只是隐藏一段）');
+      for (const copy of [
+        '库里没有可勾选为常驻的技能', 'No skills available to make resident',
+        '常驻区已有同名条目 · 他人所有', 'same name already resident · owned elsewhere',
+      ]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+    },
+  },
+  {
     id: 'client-scope',
     title: 'client.js 分段作用域扫描：只在点击路径上炸的 ReferenceError（§10 UI 无 linter）',
     async run() {

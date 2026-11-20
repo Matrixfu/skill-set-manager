@@ -76,7 +76,7 @@ window.__ModuleLoader__.load({
         taskCancel: '取消', taskCancelled: '已取消', taskCancelledDetail: '已取消：{n} 个来源仓库未检查', // 2026-11-20 取消长任务（GLOSSARY「取消长任务」）
         opPartial: '部分完成：{n} 装入 · {m} 未装（逐条结果见「运维」页签）',
         // 面板美化（spec 2026-11-06）：新结构文案键（Task 2/3/4 消费）
-        effTitle: '生效清单', candidates: '候选', notActive: '未生效',
+        effTitle: '生效清单', candidates: '候选技能', notActive: '未生效',
         ovBanner: '临时覆盖中 · 剔除 {n} 项 · 加入 {m} 项',
         grayResident: '全局常驻', grayForeign: '外来常驻', grayProvider: '插件/Preset 提供', grayItems: '项',
         otherSec: '其他（不受技能集管控）',
@@ -85,7 +85,13 @@ window.__ModuleLoader__.load({
         // 设置页/右栏美化（spec 2026-11-07）：基座新键，一次补齐（Task 3–6 消费；zh/en 同键集）
         rpModified: '本地改动',
         sAriaCheckUpd: '检查更新', sAriaTrashBin: '移入回收站', sAriaClaim: '改认领', sAriaUninstall: '卸载', sAriaReload: '刷新',
-        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sLoading: '加载技能库中…', sEmptyGlobal: '还没有全局常驻技能：勾选候选即在所有项目生效', sEmptyDiag: '未发现异常',
+        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sLoading: '加载技能库中…', sEmptyGlobal: '库里没有可勾选为常驻的技能', sEmptyDiag: '未发现异常',
+        // 成员抽屉/全局 tab 分区（设计 2026-11-20 §6.7）：段名/徽章/hint 新键一次补齐（Task 2/3 消费；zh/en 同键集）
+        memberSecOn: '当前成员', globalSecResident: '全局常驻', foreignSec: '外来常驻', residentSecOut: '常驻 · 不属于本集',
+        residentSecHint: '常驻技能在所有集自动包含，无需在集内点名；保存后这些名字将从本集名单移除。',
+        pendingAdd: '待加入', pendingRemove: '待移除',
+        draftDiff: '本次改动：新增 {n} · 移除 {m}', draftHidden: '（含 {k} 项不在当前结果中）',
+        foreignSameName: '常驻区已有同名条目 · 他人所有',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -159,7 +165,13 @@ window.__ModuleLoader__.load({
         // settings/right-panel beautify (spec 2026-11-07): base keys, added up front (consumed by Tasks 3-6; same key set as zh)
         rpModified: 'locally modified',
         sAriaCheckUpd: 'check for updates', sAriaTrashBin: 'move to trash', sAriaClaim: 're-claim source', sAriaUninstall: 'uninstall', sAriaReload: 'reload',
-        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sLoading: 'Loading skill library…', sEmptyGlobal: 'No global resident skills yet: tick candidates to make them active in every project', sEmptyDiag: 'No issues found',
+        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sLoading: 'Loading skill library…', sEmptyGlobal: 'No skills available to make resident', sEmptyDiag: 'No issues found',
+        // member drawer / global tab sections (design 2026-11-20 §6.7): keys added up front (consumed by Tasks 2/3; same key set as zh)
+        memberSecOn: 'Members', globalSecResident: 'Global Resident', foreignSec: 'Foreign Resident', residentSecOut: 'Resident · not part of this set',
+        residentSecHint: 'Resident skills are auto-included in every set; these names are dropped from this set on save.',
+        pendingAdd: 'to add', pendingRemove: 'to remove',
+        draftDiff: 'This edit: add {n} · remove {m}', draftHidden: ' ({k} not in the current results)',
+        foreignSameName: 'same name already resident · owned elsewhere',
       },
     };
 
@@ -458,6 +470,18 @@ window.__ModuleLoader__.load({
         line(desc), line(sub));
     }
 
+    /**
+     * 分段列表渲染件（设计 2026-11-20 §6.1）：成员抽屉 / 设置页「全局技能集」tab / composer 搜索视图
+     * 三处共用「小标题 + 计数 + 段内行」的同一份渲染，杜绝「一处修好、两处漂移」。
+     * sections = [{ key, label, rows }]：label 由调用点解析好文案，rows 是已带 React key 的行 vdom（`key` 只作调用点可读性）；
+     * 返回可直接 `...` 展开的数组，空段（连小标题一起）不渲染——计数是**当前要渲染的行数**，不是全量。
+     * 只管「始终展开的段」：卡标题的 PBadge 计数与折叠钮「N 项」不进这里（§6.1 边界）；排序由调用点负责。
+     * 顶层段声明（client-scope）：Panel/SettingsSection 都要消费，不能塞进某段内部。
+     */
+    const SectionedRows = (sections) => sections
+      .filter((s) => s.rows.length)
+      .flatMap((s) => [h('div', { key: s.key, className: 'ssm-p-seclabel' }, s.label, ' ', String(s.rows.length)), ...s.rows]);
+
     function Panel({ ctx, t, sessionId, onClose, bs, seed }) {
       const tasks = useTasks(); // 与设置页同一份模块级任务态：面板关掉后，导入的进行中与结果仍在这份状态里
       // 秒开：chip 挂载即预拉过同一会话的 state（ComposerChip），那份快照就是首屏数据源，
@@ -551,18 +575,18 @@ window.__ModuleLoader__.load({
         const title = l.source && l.source !== 'unknown' ? `${l.name} · ${l.source}${l.commit ? '@' + String(l.commit).slice(0, 7) : ''}` : (l.descriptionZh ?? l.name);
         return { l, badges, title };
       };
-      // 同款列表行（Task 4 成员抽屉复用）：on=null → 只读无复选框；ro → 灰区只读行；removed → 删除线
+      // 同款列表行（Task 4 成员抽屉复用）：on=null → 只读无复选框；ro → 灰区只读行；removed → 删除线；dim → 灰化但仍可点（成员抽屉「待移除」行）
       // Task 6.1 收口（spec 2026-11-07 §6.2）：骨架换成共享 RowShell——同一批 .ssm-p-* 原子件，DOM 由 rowwrap 换行卡；
       // 勾选语义照旧：原 label 包整行（点名字=勾选）现由行 onClick 承接——点复选框本身走 input onChange，
       // 点击目标命中 input 即跳过，绝不双跑 RPC；busy 时不挂 onClick=整行不可点，同「被禁 input 的 label 不激活」口径。
-      const SkillRow = ({ key, l, on, ro, removed, onChange, badges, title }) => {
+      const SkillRow = ({ key, l, on, ro, removed, onChange, badges, title, dim }) => {
         const desc = l.descriptionZh
           ? h('div', { className: 'ssm-p-desc', title: l.description ?? undefined }, l.descriptionZh)
           : l.description
             ? h('div', { className: 'ssm-p-desc', title: l.description }, l.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
             : null;
         return h(RowShell, {
-          key, t, name: l.name, badges, desc, gray: !!ro, removed,
+          key, t, name: l.name, badges, desc, gray: !!ro || !!dim, removed,
           title: title ?? l.descriptionZh ?? undefined,
           leading: on == null ? null : h('input', { type: 'checkbox', checked: on === true, disabled: busy, 'aria-label': l.name, onChange: () => onChange?.() }),
           ...(on != null && !busy ? { onClick: (e) => { if (e.target?.closest?.('input')) return; onChange?.(); } } : {}),
@@ -652,27 +676,60 @@ window.__ModuleLoader__.load({
                   mq ? h('button', { className: 'ssm-p-icon-btn', disabled: busy, 'aria-label': t('none'), onClick: () => setMq('') }, h(Icon, { n: 'x', s: 12 })) : null),
                 h('div', { className: 'ssm-p-row' },
                   h('input', { className: 'ssm-input', placeholder: t('descPh'), value: edit.desc ?? '', disabled: busy, 'aria-label': t('descPh'), onChange: (e) => setEdit({ ...edit, desc: e.target.value }) })),
-                ...searchRows(
+                ...(() => { // 成员抽屉三段（设计 2026-11-20 §6.2/§6.3）：上段=打开抽屉时该集的成员（持久态：点击不重排，保存后才换位）；
+                  // 中段=候选技能；末段=集名单里残留的常驻名（只读，保存时移出名单）。
                   // 常驻 = 所有集自动包含（§17#3）→ 不进成员候选（用户报告 2026-10-26，与另存为 excludeResident 同口径）；
-                  // 已存进本集的常驻名仍列出并标注，避免保存时被静默剔除
-                  [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])]
-                    .filter((n) => !(resident.has(n) || foreignRes.has(n)) || (s.skills ?? []).includes(n))
-                    .sort()
-                    .map((n) => {
-                      const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
-                      return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
-                    }),
-                  mq,
-                ).map((row) => SkillRow({ key: row.name, l: row, on: !!edit.picked[row.name],
-                  badges: [
-                    ...((st.library ?? []).some((l) => l.name === row.name) ? [] : [{ kind: 'warn', text: t('memberMissing') }]),
-                    ...((resident.has(row.name) || foreignRes.has(row.name)) ? [{ kind: 'muted', text: t('memberResidentTag') }] : []),
-                  ],
-                  onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [row.name]: !edit.picked[row.name] } }) })),
-                h('div', { className: 'ssm-hint' }, t('memberHint')),
+                  // 已存进本集的常驻名不再算成员，落到只读段并带解释，避免保存时被静默剔除（GLOSSARY「全局常驻」边界句）。
+                  const inSet = s.skills ?? [];
+                  const straySet = new Set(inSet.filter((n) => resident.has(n) || foreignRes.has(n)));
+                  const memberSet = new Set(inSet.filter((n) => !resident.has(n) && !foreignRes.has(n)));
+                  const listed = searchRows(
+                    [...new Set([...(st.library ?? []).map((l) => l.name), ...inSet])]
+                      .filter((n) => !(resident.has(n) || foreignRes.has(n)) || inSet.includes(n))
+                      .sort()
+                      .map((n) => {
+                        const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
+                        return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
+                      }),
+                    mq,
+                  );
+                  const rowsOf = (list, kind) => list.map((row) => SkillRow({
+                    key: row.name, l: row,
+                    on: kind === 'stray' ? null : !!edit.picked[row.name],
+                    ...(kind === 'stray' ? { ro: true, title: resident.has(row.name) ? t('memberResidentTag') : t('foreignRow') } : {}),
+                    dim: kind === 'on' && !edit.picked[row.name],
+                    badges: [
+                      ...((st.library ?? []).some((l) => l.name === row.name) ? [] : [{ kind: 'warn', text: t('memberMissing') }]),
+                      ...(kind === 'on' && !edit.picked[row.name] ? [{ kind: 'warn', text: t('pendingRemove') }] : []),
+                      ...(kind === 'cand' && edit.picked[row.name] ? [{ kind: 'muted', text: t('pendingAdd') }] : []),
+                    ],
+                    ...(kind === 'stray' ? {} : { onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [row.name]: !edit.picked[row.name] } }) }),
+                  }));
+                  const onRows = listed.filter((r) => memberSet.has(r.name));
+                  const strayRows = listed.filter((r) => straySet.has(r.name));
+                  const candRows = listed.filter((r) => !memberSet.has(r.name) && !straySet.has(r.name));
+                  const added = Object.keys(edit.picked).filter((n) => edit.picked[n] && !inSet.includes(n));
+                  const dropped = inSet.filter((n) => !edit.picked[n]);
+                  const hiddenN = [...added, ...dropped].filter((n) => !listed.some((r) => r.name === n)).length; // 改动行被过滤词藏起来仍会写库（§6.3）
+                  return [
+                    ...SectionedRows([
+                      { key: 'on', label: t('memberSecOn'), rows: rowsOf(onRows, 'on') },
+                      { key: 'cand', label: t('candidates'), rows: rowsOf(candRows, 'cand') },
+                      { key: 'stray', label: t('residentSecOut'), rows: rowsOf(strayRows, 'stray') },
+                    ]),
+                    strayRows.length ? h('div', { className: 'ssm-hint' }, t('residentSecHint')) : null,
+                    h('div', { className: 'ssm-hint' }, t('memberHint')),
+                    // 改动计数（§6.3）：零改动不显示；改动行被当前过滤词藏起来时追加提示——它们保存时照样写库
+                    added.length || dropped.length
+                      ? h('div', { className: 'ssm-hint' },
+                        t('draftDiff').replace('{n}', added.length).replace('{m}', dropped.length),
+                        hiddenN ? t('draftHidden').replace('{k}', hiddenN) : '')
+                      : null,
+                  ];
+                })(),
                 h('div', { className: 'ssm-row' },
                   h('button', { disabled: busy, onClick: () => run(async () => {
-                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: edit.desc ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n]) } }); // 描述随保存一并写回（§6.6 入口③，host 透传）
+                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: edit.desc ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n] && !(resident.has(n) || foreignRes.has(n))) } }); // 描述随保存一并写回（§6.6 入口③，host 透传）；常驻残留顺手移出（§6.4）
                     if (st.binding?.setSlug === s.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 立即收敛生效清单，不留「改了但没生效」窗口
                     setEdit(null);
                   }) }, t('saveBtn')),
@@ -812,19 +869,11 @@ window.__ModuleLoader__.load({
                       badges: [{ kind: 'muted', text: resident.has(l.name) ? t('grayResident') : foreignRes.has(l.name) ? t('grayForeign') : t('grayProvider') }],
                       title: resident.has(l.name) ? t('residentRow') : foreignRes.has(l.name) ? t('foreignRow') : t('providerRowGo') }));
                   if (!act.length && !cand.length && !other.length) return [h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptySearch'))];
-                  return [
-                    ...(act.length ? [
-                      h('div', { className: 'ssm-p-seclabel' }, t('effTitle'), ' ', String(act.length)),
-                      ...act.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : eff.has(n), badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(eff.has(n) ? { remove: [n] } : { add: [n] }) })) }); }),
-                    ] : []),
-                    ...(cand.length ? [
-                      h('div', { className: 'ssm-p-seclabel' }, t('candidates'), ' ', String(cand.length)),
-                      ...cand.map((l) => SkillRow({ key: l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })),
-                    ] : []),
-                    ...(other.length ? [
-                      h('div', { className: 'ssm-p-seclabel' }, t('otherSec'), ' ', String(other.length)),
-                      ...other,
-                    ] : [])];
+                  return [...SectionedRows([ // 三段改调共享渲染件（设计 2026-11-20 §6.8）：行参/徽章/勾选语义逐参数照搬，可见输出零变化
+                    { key: 'eff', label: t('effTitle'), rows: act.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : eff.has(n), badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(eff.has(n) ? { remove: [n] } : { add: [n] }) })) }); }) },
+                    { key: 'cand', label: t('candidates'), rows: cand.map((l) => SkillRow({ key: l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })) },
+                    { key: 'other', label: t('otherSec'), rows: other },
+                  ])];
                 })())
             : h(React.Fragment, null,
                 effNames.length ? null : h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptyList')),
@@ -1117,7 +1166,12 @@ window.__ModuleLoader__.load({
       const instDone = tasks.last?.op === 'installApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
       const rows = searchRows(lib ?? [], filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
-      const gCorpus = [...(lib ?? []), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
+      // 段内序 = 字典序（设计 2026-11-20 §6.5）：fs readdirSync 序对用户没有含义，分区之后两段各自乱排更难对齐；
+      // 只排 gCorpus 的副本（slice），库 tab 的 fs 序不受影响；有过滤词时仍由 searchRows 的 rank 说话；
+      // 三段都排（含末段外来常驻补行）——同屏两段字典序、一段扫描序会显得没规则。
+      // 比较器取 localeCompare（与 searchRows 同级排序同口径，连字符/大小写不按码点权重）；成员抽屉语料沿用既有
+      // 无比较器 .sort()（码点序）不改：纯英文名两处同序，差异只在符号名上，无功能影响。
+      const gCorpus = [...(lib ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null })).sort((a, b) => a.name.localeCompare(b.name))];
       const grows = searchRows(gCorpus, gq).filter((r) => !gOnly || resident.includes(r.name) || foreign.includes(r.name));
       const counts = (files) => {
         const c = { update: 0, add: 0, remove: 0, 'skip-modified': 0 };
@@ -1311,31 +1365,43 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-p-row' }, // 过滤框/只看常驻换同款 .ssm-p-search + .ssm-p-check 语汇（§6.6）
             h('input', { className: 'ssm-p-search', placeholder: t('searchPh'), value: gq, disabled: locked, 'aria-label': t('searchPh'), onChange: (e) => setGq(e.target.value) }),
             h('label', { className: 'ssm-p-check' }, h('input', { type: 'checkbox', checked: gOnly, disabled: locked, onChange: (e) => setGOnly(e.target.checked) }), t('residentOnly'))),
-          // 空态（§6.6 同款 .ssm-p-empty + 图标）：无过滤词 = 引导勾选候选；有过滤词无命中 = 没有匹配
-          grows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: gq.trim() ? 'search' : 'box' }), gq.trim() ? t('emptySearch') : t('sEmptyGlobal')) : null,
-          ...grows.map((r) => {
-            if (r.foreign) return h(RowShell, { key: r.name, t, name: r.name, gray: true, badges: [{ kind: 'warn', text: t('foreignRow') }] }); // N5：已在设置页内，不再挂「去设置管理」文案；灰态只读（§6.6）
-            const on = resident.includes(r.name);
-            // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款回退口径）
-            const desc = r.descriptionZh
-              ? h('div', { className: 'ssm-p-desc', title: r.description ?? undefined }, r.descriptionZh)
-              : r.description
-                ? h('div', { className: 'ssm-p-desc', title: r.description }, r.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
-                : null;
-            return h(RowShell, {
-              key: r.name, t, name: r.name, desc,
-              // 复选胶囊（§6.6）：label 包住复选框即胶囊，选中态 brand 软底走新区变体 .ssm-p-check-on——
-              // 不动 composer 在用的 .ssm-p-check 基样（AC#14 composer 观感零变化）；setResident 勾选语义一字未动（AC#5）
-              leading: h('label', { className: 'ssm-p-check' + (on ? ' ssm-p-check-on' : '') },
-                h('input', { type: 'checkbox', checked: on, disabled: locked, 'aria-label': r.name, onChange: () => run(`res:${r.name}`, async () => {
-                  const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
-                  await call(ctx, 'setResident', { names: next });
-                  await loadState();
-                }) })),
-              // github 来源展示口径照旧：截断片段进第三行 muted 文本
-              sub: String(r.source).startsWith('github:') ? h('div', { className: 'ssm-p-desc' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
-            });
-          })) : null,
+          ...(() => { // 全局 tab 三段（设计 2026-11-20 §6.5）：全局常驻 / 候选技能 / 外来常驻（只读）；勾选即时写库 → 行随之在上段与中段间换位（无草稿态可缓冲，§5.7）
+            const rowOf = (r) => {
+              if (r.foreign) return h(RowShell, { key: 'f-' + r.name, t, name: r.name, gray: true, title: t('foreignRow') }); // N5：已在设置页内；段标题承载语义，长文案进 hover（§6.5）
+              const on = resident.includes(r.name);
+              // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款回退口径）
+              const desc = r.descriptionZh
+                ? h('div', { className: 'ssm-p-desc', title: r.description ?? undefined }, r.descriptionZh)
+                : r.description
+                  ? h('div', { className: 'ssm-p-desc', title: r.description }, r.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
+                  : null;
+              return h(RowShell, {
+                key: r.name, t, name: r.name, desc,
+                // 在库又是外来常驻（§6.6）：库里那个技能体可勾选，盘上同名条目归他人所有——如实标注；勾选既不抢占也不会误删
+                badges: foreign.includes(r.name) ? [{ kind: 'muted', text: t('foreignSameName') }] : [],
+                // 复选胶囊（§6.6）：label 包住复选框即胶囊，选中态 brand 软底走新区变体 .ssm-p-check-on——
+                // 不动 composer 在用的 .ssm-p-check 基样（AC#14 composer 观感零变化）；setResident 勾选语义一字未动（AC#5）
+                leading: h('label', { className: 'ssm-p-check' + (on ? ' ssm-p-check-on' : '') },
+                  h('input', { type: 'checkbox', checked: on, disabled: locked, 'aria-label': r.name, onChange: () => run(`res:${r.name}`, async () => {
+                    const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
+                    await call(ctx, 'setResident', { names: next });
+                    await loadState();
+                  }) })),
+                // github 来源展示口径照旧：截断片段进第三行 muted 文本
+                sub: String(r.source).startsWith('github:') ? h('div', { className: 'ssm-p-desc' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
+              });
+            };
+            return [
+              // 空态（§6.6 同款 .ssm-p-empty + 图标）：整表皆空才说话——分区后「没有常驻」只是隐藏一段，旧文案在那时不成立
+              grows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: gq.trim() ? 'search' : 'box' }), gq.trim() ? t('emptySearch') : t('sEmptyGlobal')) : null,
+              ...SectionedRows([
+                { key: 'res', label: t('globalSecResident'), rows: grows.filter((r) => !r.foreign && resident.includes(r.name)).map(rowOf) },
+                { key: 'cand', label: t('candidates'), rows: grows.filter((r) => !r.foreign && !resident.includes(r.name)).map(rowOf) },
+                { key: 'foreign', label: t('foreignSec'), rows: grows.filter((r) => r.foreign).map(rowOf) },
+              ]),
+            ];
+          })(),
+        ) : null,
         tab === 'ops' ? h(React.Fragment, null, // 分节卡片化（spec §6.7）：GitHub 安装 / 两级迁移各一张 .ssm-p-card；动作按钮 = 新区品牌软底复刻 .ssm-s-btn（.ssm-p-row>button 特异性坑由已入库 .ssm-p-row>.ssm-s-btn 抬回规则接住）
           h('div', { className: 'ssm-p-card' },
             h('div', { className: 'ssm-p-card-title' }, t('installTitle')),
