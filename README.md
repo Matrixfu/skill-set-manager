@@ -69,13 +69,15 @@ dsh plugin --profile desktop add "file:C:/path/to/skill-set-manager/plugin/skill
 
 `file:` 目录以链接方式装进 profile，改完代码重装或重启即可，无需复制目录。
 
+注意：`link:` / `file:` 安装只建链接，**不会**给源目录装依赖。先在插件目录跑一次 `npm install`（或 `pnpm install`），否则 host 加载时会从该目录向上找不到依赖，报 `ERR_MODULE_NOT_FOUND: @deepseek-ai/schemastery`（Module import 失败 → 组件启用失败）。
+
 ### 卸载
 
 ```bash
 dsh plugin --profile desktop remove @matrixfu/skill-set-manager
 ```
 
-依赖（`zod`、`@deepseek-ai/dsh-typert-protocol`、`@deepseek-ai/schemastery`）由 pnpm 按 `package.json` 自动解析。
+依赖（`zod`、`@deepseek-ai/dsh-typert-protocol`、`@deepseek-ai/schemastery`）在 registry / GitHub 源码安装时由 pnpm 按 `package.json` 自动解析；`link:` / `file:` 链接安装不在此列（见上节）。
 
 ## 目录结构
 
