@@ -7,17 +7,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write # npm Trusted Publishing 走 OIDC，不再使用 token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      # 公共 npm 源发布需要 npm Automation token（仓库 secret 名 NPM_TOKEN）。
-      # 包内 .npmrc 用 ${NPM_TOKEN} 取 token；setup-node 生成的 user .npmrc 走 NODE_AUTH_TOKEN。
+          package-manager-cache: false
+      # 包内 npmrc 不含凭据；发布身份由 npm 侧的 Trusted Publisher 配置（仓库 + publish.yml）授予。
       - run: npm publish
         working-directory: plugin/skill-set-manager
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
