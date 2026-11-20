@@ -954,6 +954,13 @@ const CASES = [
       ok(!/spawnSync\('git'/.test(gsrc17), 'github.js 不再同步 spawnSync git（host 事件循环不得被占）');
       ok(/await runner\(/.test(gsrc17), 'fetchRepo 所有 git 调用点 await');
       ok(/await runner\(args/.test(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'lib', 'core', 'updates.js'), 'utf8')), 'remoteHead 也 await ls-remote');
+      // 18) onChild 注入（取消长任务 2026-11-20）：host 要把在飞 git 子进程收进集合才能当场 kill
+      const kids18 = [];
+      const mv18 = await g.makeGit(8000, { onChild: (c) => kids18.push(c) })(['--version'], process.cwd());
+      eq(mv18.status, 0, 'onChild 注入不改正常结论');
+      ok(kids18.length === 1 && typeof kids18[0]?.kill === 'function', 'onChild 收到可 kill 的子进程句柄');
+      const mv18b = await g.makeGit(8000)(['--version'], process.cwd());
+      eq(mv18b.status, 0, '不传 opts 的 makeGit 照常工作（既有注入方零改动）');
     },
   },
   {
@@ -991,6 +998,29 @@ const CASES = [
       eq(calls.join(','), 'github:o/x', 'sources 子集只拉给定来源');
       eq(out2.results.length, 0, '子集无命中 results 空');
       eq(out2.failedSources.length, 1, '子集失败仍单列');
+      // 取消长任务（GLOSSARY「取消长任务」，2026-11-20）：协作标记在仓边界停，部分结果保留
+      ok(out.cancelled === undefined, '没传 cancelled 的常态批量不带 cancelled 字段');
+      const boxA = { on: false };
+      const outA = await up.checkUpdateAll(f.roots, {
+        fetch: async (source) => {
+          if (source === 'github:o/r/skills') { boxA.on = true; return { commit: 'c-new', skillsDir: upR }; }
+          throw new Error('不该再拉：' + source);
+        },
+        cancelled: () => boxA.on,
+      });
+      eq(outA.cancelled, true, '仓边界见标记即停并报 cancelled');
+      eq(outA.unchecked, 1, '未检查来源仓库计数：第二仓');
+      eq(outA.failedSources.length, 0, '取消不算失败：未轮到的仓不进失败名单');
+      eq(outA.results.map((r) => r.name).sort().join(','), 'alpha,beta', '已查完仓库的结论照常保留（取消不丢弃）');
+      const boxB = { on: false };
+      const outB = await up.checkUpdateAll(f.roots, {
+        fetch: async () => { boxB.on = true; throw new Error('killed by cancel'); }, // 模拟在飞 fetch 被 kill
+        cancelled: () => boxB.on,
+      });
+      eq(outB.cancelled, true, '在飞 fetch 被 kill 也归为取消，不是批量失败');
+      eq(outB.failedSources.length, 0, '被 kill 的仓不进失败名单（不触发「重试失败仓库」钮）');
+      eq(outB.unchecked, 2, '两仓都没查完 → 未检查数 = 2');
+      eq(outB.results.length, 0, '无已查完仓库 → results 空');
     },
   },
   {
@@ -1013,13 +1043,20 @@ const CASES = [
       ok(slice('async installApply(req)', 700).includes('timeoutMs: 180000'), 'installApply 180s');
       ok(slice('async updateCheck(req)', 350).includes('120000'), 'updateCheck 120s（活体实测 2026-11-17：checkout blob 层经代理 >60s，60s 必红）');
       ok(slice('async updateApply(req)', 350).includes('180000'), 'updateApply 180s');
-      ok(slice('async updateCheckAll(req)', 400).includes('120000'), 'updateCheckAll 120s（同上口径）');
+      ok(slice('async updateCheckAll(req)', 900).includes('120000'), 'updateCheckAll 120s（同上口径）');
       ok(slice('install: async (name, pin)', 900).includes('timeoutMs: 180000'), 'importApply install 180s');
       // 5) failLog 装配 + cacheClear 删底
       ok((hostSrc.match(/failLog: roots\.failLog/g) || []).length >= 3, 'fetchRepo 调用都带 failLog: roots.failLog');
       ok(/rmSync\(roots\.cacheDir/.test(hostSrc), 'cacheClear 删整个缓存底');
       // 6) 批量检查透传 sources 重试口径
       ok(/sources: req\.sources/.test(hostSrc), 'updateCheckAll 透传 req.sources（重试失败仓库）');
+      // 7) 取消长任务接线（GLOSSARY「取消长任务」，2026-11-20）
+      ok(/'longCancel'/.test(hostSrc.replace(/\s+/g, ' ')), 'REMOTE_METHODS 含 longCancel');
+      ok(/async longCancel\(\)[\s\S]{0,150}gate\.cancel\(\)/.test(hostSrc), 'longCancel 调 gate.cancel()');
+      ok(/gate\.run\('updateCheckAll', \{ mutates: false, cancellable: true \}/.test(hostSrc), 'updateCheckAll 在闸门标 cancellable（其余长任务不加）');
+      ok(/cancel\.onKill\(kill\)/.test(slice('async updateCheckAll(req)', 900)), '批量挂 kill 钩子：取消当场杀在飞 git');
+      ok(/cancelled: cancel\.cancelled/.test(slice('async updateCheckAll(req)', 1200)), '协作标记透传 checkUpdateAll');
+      ok(/kids\.add\(c\)[\s\S]{0,120}c\.kill\('SIGKILL'\)/.test(slice('async updateCheckAll(req)', 1200)), '取消后新 spawn 的子进程当场杀（防 fetchRepo 重试竞态）');
     },
   },
   {
@@ -2635,7 +2672,8 @@ const CASES = [
       const KEYS = ['taskConnect', 'taskFetching', 'taskSlowRepo', 'taskImport', 'taskUpdateCheck', 'taskUpdateApply',
         'taskUninstall', 'taskMigrate', 'taskElapsed', 'taskBusyWith', 'taskDismiss',
         'taskOpInstall', 'taskOpImport', 'taskOpUninstall', 'taskOpMigrate', 'taskOpCheck', 'taskOpApply', 'opPartial',
-        'taskOpCheckAll', 'taskUpdateCheckAll']; // 2026-11-17 加固 T5：批量检查任务文案两本字典同 commit
+        'taskOpCheckAll', 'taskUpdateCheckAll',
+        'taskCancel', 'taskCancelled', 'taskCancelledDetail']; // 2026-11-17 加固 T5 + 2026-11-20 取消长任务：任务文案两本字典同 commit
       for (const k of KEYS) { ok(zh.includes(`${k}:`), `字典 zh 缺 ${k}`); ok(en.includes(`${k}:`), `字典 en 缺 ${k}`); } // Review Focus #4
       for (const op of ['installApply', 'importApply', 'updateCheck', 'updateApply', 'updateCheckAll', 'uninstallSkill',
         'migrateApply', 'migrateUndo', 'migrateAgentsApply', 'migrateAgentsUndo'])
@@ -2647,16 +2685,21 @@ const CASES = [
       ok(/Math\.min\(95,/.test(body), '运行中进度封顶 95%（反目标：不得谎报完成）');
       ok(/task\.status !== 'running' \? 100/.test(body), '只有 RPC 真返回才 100%');
       ok(/opts\.onDone\?\.\(\{ ok:/.test(body), 'settle 后回调 onDone(settled)');
-      ok(/function TaskStrip\(\{ t, tasks \}\)/.test(body), 'TaskStrip 组件签名');
+      ok(/function TaskStrip\(\{ t, tasks, ctx \}\)/.test(body), 'TaskStrip 组件签名（ctx：取消钮要能调 host longCancel，2026-11-20）');
       ok(/h\('div', \{ className: 'ssm-p-task' \}/.test(body), 'TaskStrip 根是新类横幅（spec §6.3 横幅形态，不再挂旧 .ssm-task）');
       ok(/\.ssm-bar\{/.test(body) && /\.ssm-bar-fill\{/.test(body) && /\.ssm-bar-ok\{/.test(body) && /\.ssm-bar-err\{/.test(body), '进度条 CSS 四件套（类名保留不动，锚点稳定）');
       ok(/\.ssm-p-task\{/.test(body), '横幅根 .ssm-p-task CSS 住新区（MARK 之后，spec §6.1）');
       ok(/style: \{ width: pct \+ '%' \}/.test(body), '进度条宽度按 percent 驱动');
       ok(/setInterval\(tick, 500\)/.test(body), '耗时每 500ms 刷一次');
-      ok(/tasks\.running \? null : h\('button', \{ className: 'ssm-p-icon-btn'/.test(body), '在飞不提供清除：不能取消就别假装能收起；× 换 .ssm-p-icon-btn（spec §6.3）');
+      ok(/tasks\.running \? \(task\.op === 'updateCheckAll' \? h\('button', \{ className: 'ssm-s-btn', onClick: \(\) => call\(ctx, 'longCancel', \{\}\)/.test(body),
+        '在飞行：只有批量检查更新挂「取消」钮（2026-11-20 取消长任务：走 host longCancel，别的 op 不提供）');
+      ok(/\) : h\('button', \{ className: 'ssm-p-icon-btn', onClick: \(\) => clearTask\(\)/.test(body), '× 仍只在已结束任务：隐藏一个还在跑的任务=「点了没反应」（spec §6.3）');
       ok(/\.\.\.\(task\.warnings \?\? \[\]\)\.map/.test(body), 'warnings 可见（Review Focus #3）');
       ok(/className: task\.status === 'err' \? 'ssm-bar-fill ssm-bar-err'/.test(body), '失败染红，不转绿（Review Focus #3）');
-      ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : null/.test(body), '结束后文案收口：完成显文案，失败交给下方红行（终审 I1/N3）');
+      ok(/task\.status === 'running' \? t\(taskStageKey\(task, now\)\) : task\.status === 'ok' \? t\('opDone'\) : task\.status === 'cancelled' \? t\('taskCancelled'\) : null/.test(body), '结束后文案收口：完成/已取消显文案，失败交给下方红行（终审 I1/N3 + 2026-11-20 取消语态）');
+      ok(/taskCancelledDetail'\)\.replace\('\{n\}'/.test(body), '取消明细行带「{n} 个来源仓库未检查」计数（用户最想知道还剩多少）');
+      ok(/task\.status = s\.ok \? \(s\.value\?\.cancelled \? 'cancelled' : 'ok'\) : 'err'/.test(body), 'settle：结果带 cancelled 旗即置已取消语态，不是完成也不是失败');
+      ok(/status: rec\.status === 'ok' && rec\.result\?\.cancelled \? 'cancelled' : rec\.status/.test(body), 'host 复原的取消结果同样显示已取消语态（界面关了重开）');
       ok(/if \(last\?\.op !== 'updateCheck' \|\| last\.status !== 'ok' \|\| !last\.result\) return;/.test(body), '检查更新结果从任务态补回（终审 I2）');
       ok(/noteOf: \(s\) => s\.ok && s\.value\?\.backup/.test(body), '备份路径提示改挂任务 note（终审 I2）');
       ok(/opts\.noteOf\?\.\(s\)/.test(body), 'settle 可按结果派生 note（终审 I3）');
@@ -2672,10 +2715,10 @@ const CASES = [
       ok(/const locked = !!tasks\.running \|\| !!busy;/.test(body), '被挡住按钮的禁用口径');
       ok(/t\('taskBusyWith'\)\.replace\('\{n\}'/.test(body), '被挡按钮说明在跑什么（Review Focus #2）');
       ok(/const rowBusy = \(op, name\) =>/.test(body), '行内转圈改由任务态驱动');
-      ok(/h\(TaskStrip, \{ t, tasks \}\)/.test(body), '设置页页签下方渲染任务条');
+      ok(/h\(TaskStrip, \{ t, tasks, ctx \}\)/.test(body), '设置页页签下方渲染任务条');
       ok(!/const \[instRes, setInstRes\]/.test(body), '安装结果改从任务态读（Review Focus #1）');
       ok(body.includes("startLong(ctx, 'importApply'"), '按 pin 导入接长任务');
-      eq((body.match(/h\(TaskStrip, \{ t, tasks \}\)/g) ?? []).length, 2, '设置页与会话面板各一条（Review Focus #1）');
+      eq((body.match(/h\(TaskStrip, \{ t, tasks, ctx \}\)/g) ?? []).length, 2, '设置页与会话面板各一条（Review Focus #1）');
       ok(!/setIo\(\{ \.\.\.io, applied: await/.test(body), '导入结果不再只存组件内');
       ok(/T: 25000 \* Math\.max\(1,/.test(body), '导入耗时预期按所选技能数放大');
       const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
@@ -2727,6 +2770,41 @@ const CASES = [
       eq([r, mutated], [42, 2], '短写 mutate 落盘后发事件并原样返回');
       gate.touch();
       eq(mutated, 3, '条件写用 touch 发事件');
+
+      // ⑤ 取消长任务（GLOSSARY「取消长任务」，2026-11-20）：cancellable 标记 + kill 钩子 + 协作标记
+      let release2; const slow2 = new Promise((r2) => { release2 = r2; });
+      let killed = 0;
+      const p2 = gate.run('updateCheckAll', { mutates: false, cancellable: true }, async (cancel) => {
+        cancel.onKill(() => { killed += 1; });
+        eq(cancel.cancelled(), false, '任务体内起始标记为未取消');
+        await slow2;
+        return { cancelled: cancel.cancelled(), results: [], failedSources: [] };
+      });
+      eq(gate.cancel(), true, '在飞的可取消任务：cancel 返回 true');
+      eq(killed, 1, 'cancel 触发 kill 钩子（杀在飞 git 子进程）');
+      eq(gate.isBusy(), true, 'cancel 不直接释放单飞：等任务体带部分结果自然收尾');
+      release2();
+      const v2 = await p2;
+      eq(v2.cancelled, true, '任务体内 cancelled() 翻真，照常返回部分结果');
+      eq(gate.status().last?.status, 'ok', '取消的批量记 ok（结果自带 cancelled 旗，不是 err）');
+      eq(mutated, 3, '取消收尾也不发失效事件（updateCheckAll 只读）');
+      // 取消之后才挂的 onKill 立即触发（无竞态：晚到的子进程当场被杀）
+      const p3 = gate.run('updateCheckAll', { mutates: false, cancellable: true }, async (cancel) => {
+        await new Promise((r3) => setTimeout(r3, 50)); // 让 cancel 先发生
+        let late = 0;
+        cancel.onKill(() => { late += 1; });
+        return { late };
+      });
+      eq(gate.cancel(), true, '第二次取消同样生效');
+      eq((await p3).late, 1, '取消后注册 onKill 立即补触发（防竞态）');
+      // 非 cancellable 的长任务对取消免疫；空闲时 cancel 返回 false
+      let release4; const slow4 = new Promise((r4) => { release4 = r4; });
+      const p4 = gate.run('installApply', {}, async () => { await slow4; return {}; });
+      eq(gate.cancel(), false, '写盘任务（installApply）不提供取消');
+      eq(gate.isBusy(), true, '不可取消任务的 cancel 不改任何状态');
+      release4();
+      await p4;
+      eq(gate.cancel(), false, '空闲时 cancel 返回 false');
     },
   },
   {
@@ -2803,6 +2881,7 @@ const CASES = [
       ok(/startLong\(ctx, 'updateCheckAll'/.test(body), '批量检查钮走 startLong（单飞+进度条+跨界面存活）');
       ok(/call\(ctx, 'cacheClear', \{\}\)/.test(body), '清空上游缓存钮走普通 call（纯本地 IO 不长任务）');
       ok(/last\?\.op === 'updateCheckAll'/.test(body), '批量检查结果从任务态补回（重开界面，同款终审 I2）');
+      ok(/\(last\.status === 'ok' \|\| last\.status === 'cancelled'\) && last\.result/.test(body), '被取消的批量结果也补回：部分结论不丢（2026-11-20 取消长任务）');
       ok(/t\('checkUpdFailed'\)\.replace\('\{n\}'/.test(body), '失败仓库 banner 语态');
       ok(/sources: chkFail\.failed\.map/.test(body), '重试只拉失败仓库（sources 子集）');
       ok(/if \(e\.chk\) nx\[e\.name\] = e\.chk/.test(body), '批量结果回填 upRes，行级失败（chk=null）跳过不伪装');
@@ -2813,10 +2892,22 @@ const CASES = [
       ok(/lib === null/.test(body) && /t\('sLoading'\)/.test(body), '首屏未回渲染加载态而非空态（空态只对加载完成后的真空库说话）');
       ok(/sLoading: '加载技能库中…'/.test(body) && /sLoading: 'Loading skill library…'/.test(body), 'sLoading 键 zh/en 同 commit 补齐');
       const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
-      for (const term of ['**上游缓存（Upstream Cache）**', '**批量检查更新（Batch Update Check）**', '**可重试失败（Retryable Failure）**'])
+      for (const term of ['**上游缓存（Upstream Cache）**', '**批量检查更新（Batch Update Check）**', '**可重试失败（Retryable Failure）**', '**取消长任务（Cancel Long Operation）**'])
         ok(gl.includes(term), `GLOSSARY 收录「${term.slice(2, -4)}」词条（终审 St4：本分支新术语有锚）`);
       ok(gl.includes('升级检查、批量检查更新与升级应用'), '长任务词条用 canonical「批量检查更新」（终审 St3：枚举与正式词条一致）');
       ok(gl.includes('不得用同步 spawn 占满事件循环'), '长任务词条钉住「异步 git 不占事件循环」口径（2026-11-19 用户报整机冻结教训）');
+    },
+  },
+  {
+    id: 'panel-overlay-mask', title: '技能集弹层遮罩与设置弹窗对齐：官方 token、无虚化（用户 2026-11-20）',
+    async run() {
+      const src = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js'), 'utf8');
+      const m = /\.ssm-p-overlay\{[^}]*\}/.exec(src);
+      ok(m, '.ssm-p-overlay 规则在');
+      const rule = m[0];
+      ok(rule.includes('var(--dsw-alias-bg-mask-1)'), '遮罩 = 官方 token --dsw-alias-bg-mask-1：与设置弹窗逐像素一致、明暗主题自动跟随（asar 取证：设置遮罩 backdrop-filter 即 --dsw-mask-blur:none）');
+      ok(!/backdrop-filter/.test(rule), '虚化已退役：不再需要毛玻璃背景');
+      ok(!/rgba\(0,0,0,\.35\)/.test(rule), '自写 alpha 退役，改用 token');
     },
   },
   {
@@ -2850,7 +2941,7 @@ const CASES = [
         'migrateApply', 'migrateUndo', 'migrateAgentsApply', 'migrateAgentsUndo'])
         ok(new RegExp(`gate\\.run\\('${op}'`).test(hostSrc), `${op} 走长任务闸门（单飞 + 成功补发）`);
       ok(/gate\.run\('updateCheck', \{ target: req\.name, mutates: false \}/.test(hostSrc), 'updateCheck 只读：闸门不发事件');
-      ok(/gate\.run\('updateCheckAll', \{ mutates: false \}/.test(hostSrc), 'updateCheckAll 只读：闸门不发事件');
+      ok(/gate\.run\('updateCheckAll', \{ mutates: false, cancellable: true \}/.test(hostSrc), 'updateCheckAll 只读：闸门不发事件（cancellable 见 host-net case，2026-11-20 取消长任务）');
       ok(!/emitSlashCacheClear\(\)/.test(seg('switchSet')), 'switchSet 不双发（bind 是唯一绑定写点）');
       ok(/if \(ended\) gate\.touch\(\);/.test(hostSrc), 'endOverride 无覆盖可撤时不发（零写盘不发事件）');
       // 面板文案：旧「新会话前不同步」警示已被同步语义取代，中英双语一致（client 字典无 linter，静态钉）。

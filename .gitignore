@@ -1,0 +1,27 @@
+# skill-set-manager dev workspace
+node_modules/
+probe-out/
+probe-0/
+tmp-verify/
+tmp/
+.superpowers/
+# skill-set-manager: project skill entries (managed)
+.agents/skills/
+# skill-set-manager: local binding state (machine-local runtime fact)
+.dsh/skill-set-binding.json
+scratch/
+
+# 本机调研笔记（含本机绝对路径/宿主内部细节，不入库）
+/research/
+
+# 内部设计/需求文档，不入库
+/docs/
+/Skill_Set_Manager_需求文档.md
+
+# archify 
+.archify/
+skill-set-manager-reel/
+qa/
+promo30/
+
+browser-screenshots/

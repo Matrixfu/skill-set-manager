@@ -73,6 +73,7 @@ window.__ModuleLoader__.load({
         taskElapsed: '已等待 {n}s', taskBusyWith: '正在{n}，请先等它跑完', taskDismiss: '清除',
         taskOpInstall: '安装', taskOpImport: '导入', taskOpUninstall: '卸载', taskOpMigrate: '迁移', taskOpCheck: '检查更新', taskOpApply: '应用更新',
         taskOpCheckAll: '批量检查更新', taskUpdateCheckAll: '检查更新中', checkUpdFailed: '{n} 个来源仓库检查失败（其余照常）', retryFailedSrcs: '重试失败仓库', // 2026-11-17 加固 T5
+        taskCancel: '取消', taskCancelled: '已取消', taskCancelledDetail: '已取消：{n} 个来源仓库未检查', // 2026-11-20 取消长任务（GLOSSARY「取消长任务」）
         opPartial: '部分完成：{n} 装入 · {m} 未装（逐条结果见「运维」页签）',
         // 面板美化（spec 2026-11-06）：新结构文案键（Task 2/3/4 消费）
         effTitle: '生效清单', candidates: '候选', notActive: '未生效',
@@ -146,6 +147,7 @@ window.__ModuleLoader__.load({
         taskElapsed: 'Waiting {n}s', taskBusyWith: '{n} in progress — wait for it to finish', taskDismiss: 'Dismiss',
         taskOpInstall: 'Install', taskOpImport: 'Import', taskOpUninstall: 'Uninstall', taskOpMigrate: 'Migrate', taskOpCheck: 'Update check', taskOpApply: 'Apply update',
         taskOpCheckAll: 'Batch check updates', taskUpdateCheckAll: 'Checking updates', checkUpdFailed: '{n} source repo(s) failed to check (others checked)', retryFailedSrcs: 'Retry failed repos', // hardening T5
+        taskCancel: 'Cancel', taskCancelled: 'Cancelled', taskCancelledDetail: 'Cancelled: {n} source repo(s) not checked', // 2026-11-20 Cancel Long Operation (GLOSSARY)
         opPartial: 'Partially done: {n} installed · {m} skipped (per-skill results are in the Ops tab)',
         // panel beautify (spec 2026-11-06): keys for the new structure (consumed by Tasks 2-4)
         effTitle: 'Effective list', candidates: 'Candidates', notActive: 'not active',
@@ -204,7 +206,8 @@ window.__ModuleLoader__.load({
     /**
      * 模块级长任务态（用户 2026-10-29：安装中退出设置界面，回来必须仍见进度与最终结果）。
      * promise 本来就与组件无关（host 侧无人取消），丢的一直是 UI 侧的状态与结果——所以状态不放 useState。
-     * 单飞：host 没有取消能力（git 走 spawnSync），并行没有真实收益，同名技能还会互踩，故全局只允许一个。
+     * 单飞：并行没有真实收益，同名技能还会互踩，故全局只允许一个；取消只给批量检查更新
+     * （longCancel，GLOSSARY「取消长任务」），写盘任务不提供——中途没有安全中止点。
      */
     const tasks = { seq: 0, running: null, last: null, subs: new Set() };
     const emitTasks = () => tasks.subs.forEach((f) => f());
@@ -226,7 +229,7 @@ window.__ModuleLoader__.load({
       };
       tasks.running = task; tasks.last = task; emitTasks();
       const settle = (s) => {
-        task.status = s.ok ? 'ok' : 'err';
+        task.status = s.ok ? (s.value?.cancelled ? 'cancelled' : 'ok') : 'err'; // 结果自带 cancelled 旗 → 已取消语态（2026-11-20 取消长任务）
         task.result = s.value; task.error = s.error; task.warnings = s.warnings; try { task.note = opts.noteOf?.(s) ?? s.note ?? null; } catch { task.note = null; } // noteOf 只是附加说明，抛错不得卡住 settle（终审 N1）
         task.doneAt = Date.now(); tasks.running = null; emitTasks();
         // 收尾回调拿同一份 settled：调用方只在 ok 时写回，失败不再被 run() 的 catch 降级成「操作失败」
@@ -256,7 +259,7 @@ window.__ModuleLoader__.load({
       const t2 = {
         id: 0, op: rec.name, target: rec.target ?? null, args: null, note: null,
         T: SLOW_OPS[rec.name]?.T ?? 15000, startedAt: rec.startedAt, doneAt: rec.doneAt ?? null,
-        status: rec.status, result: rec.result ?? null,
+        status: rec.status === 'ok' && rec.result?.cancelled ? 'cancelled' : rec.status, result: rec.result ?? null,
         error: rec.error ? { message: rec.error } : null, warnings: rec.warnings ?? [],
       };
       if (running) { if (tasks.running) return true; tasks.running = t2; tasks.last = t2; emitTasks(); return true; }
@@ -290,7 +293,7 @@ window.__ModuleLoader__.load({
      * now 每次渲染现算 ⇒ 关掉界面再重开，耗时与阶段按 startedAt 续算、进度条不重置（Review Focus #1）。
      * 秒表只在「有任务在飞」且组件挂载时跑，卸载即 clearInterval——不挂载就不刷。
      */
-    function TaskStrip({ t, tasks }) {
+    function TaskStrip({ t, tasks, ctx }) {
       const [now, setNow] = React.useState(() => Date.now());
       React.useEffect(() => {
         if (!tasks.running) return undefined;
@@ -309,13 +312,17 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ssm-cur' }, t(SLOW_OPS[task.op].label)),
           task.target ? h('span', { className: 'ssm-n' }, task.target) : null,
           // 失败不在这行重复「操作失败」：下方 error 横幅已带同一个 key 的前缀（终审 N3）
-          h('span', { className: 'ssm-n' }, task.status === 'running' ? t(taskStageKey(task, now)) : task.status === 'ok' ? t('opDone') : null),
+          h('span', { className: 'ssm-n' }, task.status === 'running' ? t(taskStageKey(task, now)) : task.status === 'ok' ? t('opDone') : task.status === 'cancelled' ? t('taskCancelled') : null),
           h('span', { className: 'ssm-grow' }, null),
           h('span', { className: 'ssm-n' }, t('taskElapsed').replace('{n}', `${secs}`)),
-          // 在飞不提供 ×：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」（设计末条判断）
-          tasks.running ? null : h('button', { className: 'ssm-p-icon-btn', onClick: () => clearTask(), title: t('taskDismiss') }, h(Icon, { n: 'x' }))),
+          // 在飞行：只有批量检查更新挂「取消」（GLOSSARY「取消长任务」，2026-11-20）——走 host longCancel
+          // （置标记 + kill 在飞 git），旧 host 无此 RPC 时 catch 静默。× 仍只在已结束任务：
+          // 隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」（设计末条判断）
+          tasks.running ? (task.op === 'updateCheckAll' ? h('button', { className: 'ssm-s-btn', onClick: () => call(ctx, 'longCancel', {}).catch(() => {}) }, t('taskCancel')) : null) : h('button', { className: 'ssm-p-icon-btn', onClick: () => clearTask(), title: t('taskDismiss') }, h(Icon, { n: 'x' }))),
         h('div', { className: 'ssm-bar' },
           h('div', { className: task.status === 'err' ? 'ssm-bar-fill ssm-bar-err' : task.status === 'ok' ? 'ssm-bar-fill ssm-bar-ok' : 'ssm-bar-fill', style: { width: pct + '%' } })),
+        // 取消明细（2026-11-20）：已完成仓的结论照常合并进列表，这里只说还剩多少没查
+        task.status === 'cancelled' ? h('div', { className: 'ssm-p-descwrap' }, t('taskCancelledDetail').replace('{n}', String(task.result?.unchecked ?? 0))) : null,
         // 明细行换 .ssm-p-banner 语态（Task 2 转交项：横幅壳下不再挂旧 .ssm-err/.ssm-warn 小底行；文案与语义零改动，⚠ 由 alert 图标承载）
         task.status === 'err' ? h('div', { className: 'ssm-p-banner ssm-p-banner-error' }, h(Icon, { n: 'alert' }), `${t('opFailed')}: ${String(task.error?.message ?? task.error ?? '')}`) : null,
         task.note ? h('div', { className: 'ssm-p-descwrap' }, task.note) : null,
@@ -581,7 +588,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ssm-grow' }, null),
           bs || ctx.get('betterSidebar') ? h('button', { className: 'ssm-p-icon-btn', title: t('openRight'), 'aria-label': t('openRight'), onClick: () => (bs ?? ctx.get('betterSidebar'))?.openTab({ type: 'skill-set-manager:detail', title: t('tabTitle') }, { sessionId }) }, h(Icon, { n: 'external' })) : null,
           h('button', { className: 'ssm-p-icon-btn', onClick: onClose, 'aria-label': t('close') }, h(Icon, { n: 'x' }))),
-        h(TaskStrip, { t, tasks }), // 面板顶部一条：导入块（io）被关掉后，进度与结果仍在这行上（设计 §5）
+        h(TaskStrip, { t, tasks, ctx }), // 面板顶部一条：导入块（io）被关掉后，进度与结果仍在这行上（设计 §5）
         st.projectRoot ? h('div', { className: 'ssm-p-rootline' }, h('span', { title: st.projectRoot }, t('projectRoot'), '：', st.projectRoot), st.rootDrift ? h(PBadge, { kind: 'warn', text: t('rootDrift') }) : null) : null,
         st.presetWarn ? h('div', { className: 'ssm-p-banner ssm-p-banner-warn' }, h(Icon, { n: 'alert' }), st.presetWarn) : null,
         sc.ok === false && !sc.unbound
@@ -1066,7 +1073,7 @@ window.__ModuleLoader__.load({
       };
       React.useEffect(() => {
         const last = tasks.last;
-        if (last?.op === 'updateCheckAll') { if (last.status === 'ok' && last.result) mergeChkAll(last.result, last.args?.sources ?? null); return; }
+        if (last?.op === 'updateCheckAll') { if ((last.status === 'ok' || last.status === 'cancelled') && last.result) mergeChkAll(last.result, last.args?.sources ?? null); return; } // 取消的部分结论也补回（2026-11-20）
         if (last?.op !== 'updateCheck' || last.status !== 'ok' || !last.result) return;
         setUpRes((m) => (m[last.target] ? m : { ...m, [last.target]: last.result }));
       }, [tasks.last]);
@@ -1121,7 +1128,7 @@ window.__ModuleLoader__.load({
       const tabBtn = (id, label) => h('button', { className: 'ssm-s-tab' + (tab === id ? ' ssm-s-tab-on' : ''), onClick: () => setTab(id) }, label); // 页签不加 disabled（spec §5.4/AC#1）；文案沿用 tab* 键（verify 字面锚点）
       return h('div', { className: 'ssm-s-settings' },
         h('div', { className: 'ssm-s-tabs' }, tabBtn('library', t('tabLibrary')), tabBtn('global', t('tabGlobal')), tabBtn('ops', t('tabOps')), tabBtn('diag', t('tabDiag'))),
-        h(TaskStrip, { t, tasks }), // 条子挂在页签下方：切到任何页签都看得见（Review Focus #1/#5）
+        h(TaskStrip, { t, tasks, ctx }), // 条子挂在页签下方：切到任何页签都看得见（Review Focus #1/#5）
         msg ? h('div', { className: `ssm-p-banner ${msg.kind === 'err' ? 'ssm-p-banner-error' : 'ssm-p-banner-ok'}` }, h(Icon, { n: msg.kind === 'err' ? 'alert' : 'check' }), msg.text) : null, // msg 换 banner 语态：成功 ok 底、失败 error 底（spec §6.4）
         tab === 'library' ? h(React.Fragment, null,
           h('div', { className: 'ssm-p-row' }, // 过滤框换同款 .ssm-p-search（spec §6.5）；宽度归 flex-basis 管，不再 inline maxWidth
@@ -1425,7 +1432,7 @@ window.__ModuleLoader__.load({
 .ssm-confirm button{font:inherit;font-size:11px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 8px;cursor:pointer}
 /* 面板美化（spec 2026-11-06 · ADR-0004）：新结构全部 .ssm-p-* 原子件 + 页面布局类 .ssm-s-*（spec 2026-11-07 §6.1 白名单）；
    旧 .ssm-* 只留 composer Panel/TaskStrip 仍在用的（§5.5 使用矩阵）——设置页/右栏迁移后归零的旧类与 .ssm-settings 后代规则已于 Task 6.3 删除，残留检查进 ui-gates ⑤ */
-.ssm-p-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center;padding:0 12px 12px;pointer-events:auto}
+.ssm-p-overlay{position:fixed;inset:0;z-index:1000;background:var(--dsw-alias-bg-mask-1);display:flex;align-items:flex-end;justify-content:center;padding:0 12px 12px;pointer-events:auto} /* 遮罩用官方 token --dsw-alias-bg-mask-1：与设置弹窗一致（明暗主题跟随）；虚化已退役（用户 2026-11-20，asar 取证：设置遮罩 --dsw-mask-blur:none） */
 .ssm-p-panel{width:min(760px,94vw);max-height:78vh;overflow:auto;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:0 14px 10px;display:flex;flex-direction:column;gap:10px;box-shadow:0 16px 48px rgba(0,0,0,.4);font-size:13px;animation:ssm-pop .12s ease-out}
 @keyframes ssm-pop{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){.ssm-p-panel{animation:none}.ssm-p-skel{animation:none}}
