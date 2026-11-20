@@ -7,6 +7,19 @@
     "type": "git",
     "url": "git+https://github.com/Matrixfu/skill-set-manager.git"
   },
+  "homepage": "https://github.com/Matrixfu/skill-set-manager#readme",
+  "bugs": {
+    "url": "https://github.com/Matrixfu/skill-set-manager/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "agent-skills",
+    "skills",
+    "skill-manager"
+  ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
     "access": "public"

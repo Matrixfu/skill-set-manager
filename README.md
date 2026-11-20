@@ -1,5 +1,8 @@
 # Skill Set Manager（技能集管理器）
 
+[![npm](https://img.shields.io/npm/v/@matrixfu/skill-set-manager)](https://www.npmjs.com/package/@matrixfu/skill-set-manager)
+[![DSH plugin](https://img.shields.io/badge/DSH-desktop%20plugin-4B6EF5)](https://github.com/Matrixfu/skill-set-manager)
+
 DSH desktop 的技能集管理插件：把技能按**具名集合**组织、绑定到**单个项目**，只让当前项目需要的技能生效。
 
 DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就会加载大量用不上的技能、白烧 context。本插件只守一条主线：**具名技能组合 + 项目绑定 + 按项目自动生效**；技能安装/升级/备份/诊断是支撑能力，不是卖点。
@@ -54,7 +57,7 @@ dsh plugin --profile desktop add "@matrixfu/skill-set-manager"
 dsh plugin --profile desktop add "github:Matrixfu/skill-set-manager#path:/plugin/skill-set-manager"
 ```
 
-装完后在 DSH 的「设置 → 插件」中启用「技能集管理器」：启用会把该 bundle 追加到 profile 的 `dsh.profile.bundles` 列表；重启 host 或刷新页面后，设置页出现「技能集管理器」即生效。
+装完后在左侧栏「插件」页启用「技能集管理器」：启用会把该 bundle 追加到 profile 的 `dsh.profile.bundles` 列表；重启 host 或刷新页面后，设置页出现「技能集管理器」即生效。
 
 ### 本地开发安装（不拷贝）
 
