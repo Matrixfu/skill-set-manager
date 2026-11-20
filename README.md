@@ -17,15 +17,34 @@ DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就�
 
 ## 环境要求
 
-| 依赖 | 版本 / 说明 |
-| --- | --- |
+| 依赖        | 版本 / 说明                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------- |
 | DSH desktop | `>= 0.2.0-rc.2 < 0.3.0`（见 `plugin/skill-set-manager/package.json` 的 `engines.dsh`） |
-| Node.js | `>= 22` |
-| 操作系统 | Windows（项目技能目录用 junction 实现） |
+| Node.js     | `>= 22`                                                                                    |
+| 操作系统    | Windows（项目技能目录用 junction 实现）                                                      |
 
 ## 安装
 
 插件是标准 DSH bundle（带 `dsh.bundle.patch` 的 npm 包），用 DSH 自带的 `dsh plugin` 命令安装，**不需要手工拷贝文件**。
+
+### 从 npm 安装（推荐）
+
+包名 `@matrixfu/skill-set-manager`，发布在公共 npm 源（`registry.npmjs.org`），无需配置源或凭据：
+
+```bash
+dsh plugin --profile desktop add "@matrixfu/skill-set-manager"
+```
+
+装指定版本时加 `@<version>`（如 `@matrixfu/skill-set-manager@1.1.2`）。
+
+### 在 DSH desktop 中安装（添加插件）
+
+不想用命令行时，可直接在图形界面装同一份 npm 包：
+
+1. 打开左侧栏的「插件」页，点右上角「添加插件」（也可点箭头 →「安装第三方插件」）。
+2. 在包名输入框填 `@matrixfu/skill-set-manager`（可带版本，如 `@matrixfu/skill-set-manager@1.1.2`）。
+3. 「安装源」保持「默认安装源」即可（公共 npm 源或本机已配置的镜像都能解析）。
+4. 点「安装」，跑完后点「立即启用」；重启 host 或刷新页面，插件生效。
 
 ### 从 GitHub 源码安装
 

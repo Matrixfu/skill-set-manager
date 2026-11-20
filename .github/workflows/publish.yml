@@ -13,11 +13,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://npm.pkg.github.com
-      # 包内 .npmrc 用 ${NPM_TOKEN} 取 token（本地开发口径）；CI 里两个名字都指向仓库内置 GITHUB_TOKEN，
-      # 避免为空导致 401。setup-node 生成的 user .npmrc 走 NODE_AUTH_TOKEN。
+          registry-url: https://registry.npmjs.org
+      # 公共 npm 源发布需要 npm Automation token（仓库 secret 名 NPM_TOKEN）。
+      # 包内 .npmrc 用 ${NPM_TOKEN} 取 token；setup-node 生成的 user .npmrc 走 NODE_AUTH_TOKEN。
       - run: npm publish
         working-directory: plugin/skill-set-manager
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
