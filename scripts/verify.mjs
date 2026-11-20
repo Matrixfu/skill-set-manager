@@ -2519,6 +2519,19 @@ const CASES = [
     },
   },
   {
+    id: 'helper-callers',
+    title: 'client.js：三处分段列表共用同一个渲染件（设计 2026-11-20 §6.1/§6.9）——Task 1 钉本体，Task 4 补三处复用计数',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(/const SectionedRows = \(sections\)/.test(body), '分段渲染件收口：SectionedRows(sections) 一份实现');
+      ok(/className: 'ssm-p-seclabel'/.test(body) && /String\(s\.rows\.length\)/.test(body), '小标题只活在渲染件里，计数 = 当前要渲染的行数（不是全量）');
+      ok(/\.filter\(\(s\) => s\.rows\.length\)/.test(body), '空段（连小标题一起）整段不渲染');
+      ok(!/managed\.includes\(n\)/.test(body), '不撞 row-selectors 负锚：渲染件内不得写 managed.includes(n)');
+    },
+  },
+  {
     id: 'client-scope',
     title: 'client.js 分段作用域扫描：只在点击路径上炸的 ReferenceError（§10 UI 无 linter）',
     async run() {

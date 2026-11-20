@@ -76,7 +76,7 @@ window.__ModuleLoader__.load({
         taskCancel: '取消', taskCancelled: '已取消', taskCancelledDetail: '已取消：{n} 个来源仓库未检查', // 2026-11-20 取消长任务（GLOSSARY「取消长任务」）
         opPartial: '部分完成：{n} 装入 · {m} 未装（逐条结果见「运维」页签）',
         // 面板美化（spec 2026-11-06）：新结构文案键（Task 2/3/4 消费）
-        effTitle: '生效清单', candidates: '候选', notActive: '未生效',
+        effTitle: '生效清单', candidates: '候选技能', notActive: '未生效',
         ovBanner: '临时覆盖中 · 剔除 {n} 项 · 加入 {m} 项',
         grayResident: '全局常驻', grayForeign: '外来常驻', grayProvider: '插件/Preset 提供', grayItems: '项',
         otherSec: '其他（不受技能集管控）',
@@ -85,7 +85,13 @@ window.__ModuleLoader__.load({
         // 设置页/右栏美化（spec 2026-11-07）：基座新键，一次补齐（Task 3–6 消费；zh/en 同键集）
         rpModified: '本地改动',
         sAriaCheckUpd: '检查更新', sAriaTrashBin: '移入回收站', sAriaClaim: '改认领', sAriaUninstall: '卸载', sAriaReload: '刷新',
-        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sLoading: '加载技能库中…', sEmptyGlobal: '还没有全局常驻技能：勾选候选即在所有项目生效', sEmptyDiag: '未发现异常',
+        sEmptyLib: '技能库还没有技能：到「安装与更新」页签从 GitHub 安装', sLoading: '加载技能库中…', sEmptyGlobal: '库里没有可勾选为常驻的技能', sEmptyDiag: '未发现异常',
+        // 成员抽屉/全局 tab 分区（设计 2026-11-20 §6.7）：段名/徽章/hint 新键一次补齐（Task 2/3 消费；zh/en 同键集）
+        memberSecOn: '当前成员', globalSecResident: '全局常驻', foreignSec: '外来常驻', residentSecOut: '常驻 · 不属于本集',
+        residentSecHint: '常驻技能在所有集自动包含，无需在集内点名；保存后这些名字将从本集名单移除。',
+        pendingAdd: '待加入', pendingRemove: '待移除',
+        draftDiff: '本次改动：新增 {n} · 移除 {m}', draftHidden: '（含 {k} 项不在当前结果中）',
+        foreignSameName: '常驻区已有同名条目 · 他人所有',
       },
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
@@ -159,7 +165,13 @@ window.__ModuleLoader__.load({
         // settings/right-panel beautify (spec 2026-11-07): base keys, added up front (consumed by Tasks 3-6; same key set as zh)
         rpModified: 'locally modified',
         sAriaCheckUpd: 'check for updates', sAriaTrashBin: 'move to trash', sAriaClaim: 're-claim source', sAriaUninstall: 'uninstall', sAriaReload: 'reload',
-        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sLoading: 'Loading skill library…', sEmptyGlobal: 'No global resident skills yet: tick candidates to make them active in every project', sEmptyDiag: 'No issues found',
+        sEmptyLib: 'No skills in the library yet — install from GitHub in the Install & update tab', sLoading: 'Loading skill library…', sEmptyGlobal: 'No skills available to make resident', sEmptyDiag: 'No issues found',
+        // member drawer / global tab sections (design 2026-11-20 §6.7): keys added up front (consumed by Tasks 2/3; same key set as zh)
+        memberSecOn: 'Members', globalSecResident: 'Global Resident', foreignSec: 'Foreign Resident', residentSecOut: 'Resident · not part of this set',
+        residentSecHint: 'Resident skills are auto-included in every set; these names are dropped from this set on save.',
+        pendingAdd: 'to add', pendingRemove: 'to remove',
+        draftDiff: 'This edit: add {n} · remove {m}', draftHidden: '({k} not in the current results)',
+        foreignSameName: 'same name already resident · owned elsewhere',
       },
     };
 
@@ -457,6 +469,18 @@ window.__ModuleLoader__.load({
           ...(actions ?? [])),
         line(desc), line(sub));
     }
+
+    /**
+     * 分段列表渲染件（设计 2026-11-20 §6.1）：成员抽屉 / 设置页「全局技能集」tab / composer 搜索视图
+     * 三处共用「小标题 + 计数 + 段内行」的同一份渲染，杜绝「一处修好、两处漂移」。
+     * sections = [{ key, label, rows }]：label 由调用点解析好文案，rows 是已带 React key 的行 vdom（`key` 只作调用点可读性）；
+     * 返回可直接 `...` 展开的数组，空段（连小标题一起）不渲染——计数是**当前要渲染的行数**，不是全量。
+     * 只管「始终展开的段」：卡标题的 PBadge 计数与折叠钮「N 项」不进这里（§6.1 边界）；排序由调用点负责。
+     * 顶层段声明（client-scope）：Panel/SettingsSection 都要消费，不能塞进某段内部。
+     */
+    const SectionedRows = (sections) => sections
+      .filter((s) => s.rows.length)
+      .flatMap((s) => [h('div', { className: 'ssm-p-seclabel' }, s.label, ' ', String(s.rows.length)), ...s.rows]);
 
     function Panel({ ctx, t, sessionId, onClose, bs, seed }) {
       const tasks = useTasks(); // 与设置页同一份模块级任务态：面板关掉后，导入的进行中与结果仍在这份状态里
