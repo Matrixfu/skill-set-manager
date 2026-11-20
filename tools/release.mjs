@@ -82,15 +82,22 @@ console.log(`RELEASE: https://github.com/Matrixfu/skill-set-manager/releases/tag
 
 // 4) 轮询 CI
 const sha = sh(`git rev-parse v${VER}`); // 轻量 tag → 即 commit sha
-let run = null;
+let run = null, apiNote = "";
 for (let i = 0; i < 60 && !(run && run.status === "completed"); i++) {
   await new Promise(r => setTimeout(r, 10000));
-  const { workflow_runs } = (await gh("/repos/Matrixfu/skill-set-manager/actions/runs?per_page=5&event=push")).json();
-  run = workflow_runs.find(w => w.head_sha === sha);
+  const j = (await gh("/repos/Matrixfu/skill-set-manager/actions/runs?per_page=5&event=push")).json();
+  // 轮询面偶发非预期响应（限流/MITM/代理），别把整条发布炸成 TypeError：留痕重试，末尾再判定。
+  if (!Array.isArray(j.workflow_runs)) { apiNote = `runs API 非预期响应：${JSON.stringify(j).slice(0, 160)}`; continue; }
+  run = j.workflow_runs.find(w => w.head_sha === sha) ?? run;
   if (run) process.stdout.write(`\rCI: ${run.status}/${run.conclusion ?? "-"} (attempt ${run.run_attempt})   `);
 }
 console.log();
-if (run?.conclusion !== "success") {
+if (!run) {
+  console.error(`没在最近 5 条 push run 里找到 tag ${`v${VER}`}（sha ${sha}）。${apiNote}\n` +
+    `手动核对：https://github.com/Matrixfu/skill-set-manager/actions?query=${sha}`);
+  process.exit(1);
+}
+if (run.conclusion !== "success") {
   const buf = Buffer.from(await (await gh(`/repos/Matrixfu/skill-set-manager/actions/runs/${run.id}/logs?attempt=${run.run_attempt}`)).arrayBuffer());
   const dir = mkdtempSync(join(tmpdir(), "rellogs"));
   const z = join(dir, "l.zip"); writeFileSync(z, buf);
