@@ -5,6 +5,8 @@
 
 DSH desktop 的技能集管理插件：把技能按**具名集合**组织、绑定到**单个项目**，只让当前项目需要的技能生效。
 
+*A DSH desktop plugin (DeepSeek Harness) that groups skills into named sets, binds one set per project, and loads only what that project needs.*
+
 DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就会加载大量用不上的技能、白烧 context。本插件只守一条主线：**具名技能组合 + 项目绑定 + 按项目自动生效**；技能安装/升级/备份/诊断是支撑能力，不是卖点。
 
 ## 功能
