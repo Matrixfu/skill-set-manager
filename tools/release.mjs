@@ -31,10 +31,13 @@ if (!/^\d+\.\d+\.\d+([-+][\w.]+)?$/.test(VER || "")) {
   process.exit(2);
 }
 // 直连 github/npmjs 不可达（PAC 代理），NODE_USE_ENV_PROXY 需启动时注入 → 自我重启一次
+// 另注：必须带 NODE_OPTIONS=--use-system-ca——SteamTools PAC 代理签出的证书链只装在系统 Root 存储，
+// Node 默认 CA 库验不过，api.github.com 的 fetch 会报 UNABLE_TO_VERIFY_LEAF_SIGNATURE（2026-11-20 v1.3.0 实测：
+// bump/tag/push 都成功，只有建 Release 那步挂）。
 if (!process.env.HTTPS_PROXY && !FLAGS.includes("--no-proxy")) {
   const r = await import("node:child_process").then(({ spawnSync }) => spawnSync(
     process.execPath, process.argv.slice(1),
-    { stdio: "inherit", env: { ...process.env, HTTPS_PROXY: "http://127.0.0.1:26561", HTTP_PROXY: "http://127.0.0.1:26561", NODE_USE_ENV_PROXY: "1" } }));
+    { stdio: "inherit", env: { ...process.env, HTTPS_PROXY: "http://127.0.0.1:26561", HTTP_PROXY: "http://127.0.0.1:26561", NODE_USE_ENV_PROXY: "1", NODE_OPTIONS: [process.env.NODE_OPTIONS, "--use-system-ca"].filter(Boolean).join(" ") } }));
   process.exit(r.status ?? 1);
 }
 const sh = (cmd, opts = {}) => execSync(cmd, { cwd: ROOT, encoding: "utf8", ...opts }).trim();
