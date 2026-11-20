@@ -2529,6 +2529,8 @@ const CASES = [
       ok(/className: 'ssm-p-seclabel'/.test(body) && /String\(s\.rows\.length\)/.test(body), '小标题只活在渲染件里，计数 = 当前要渲染的行数（不是全量）');
       ok(/\.filter\(\(s\) => s\.rows\.length\)/.test(body), '空段（连小标题一起）整段不渲染');
       ok(!/managed\.includes\(n\)/.test(body), '不撞 row-selectors 负锚：渲染件内不得写 managed.includes(n)');
+      eq((body.match(/SectionedRows\(/g) ?? []).length, 3, '三处消费同一渲染件：成员抽屉 / 全局 tab / composer 搜索视图（签名不带括号故不计）');
+      eq((body.match(/ssm-p-seclabel/g) ?? []).length, 2, '小标题只活在渲染件与 CSS 各一处：三处不再各自拼装');
     },
   },
   {

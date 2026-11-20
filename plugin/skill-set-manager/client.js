@@ -869,19 +869,11 @@ window.__ModuleLoader__.load({
                       badges: [{ kind: 'muted', text: resident.has(l.name) ? t('grayResident') : foreignRes.has(l.name) ? t('grayForeign') : t('grayProvider') }],
                       title: resident.has(l.name) ? t('residentRow') : foreignRes.has(l.name) ? t('foreignRow') : t('providerRowGo') }));
                   if (!act.length && !cand.length && !other.length) return [h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptySearch'))];
-                  return [
-                    ...(act.length ? [
-                      h('div', { className: 'ssm-p-seclabel' }, t('effTitle'), ' ', String(act.length)),
-                      ...act.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : eff.has(n), badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(eff.has(n) ? { remove: [n] } : { add: [n] }) })) }); }),
-                    ] : []),
-                    ...(cand.length ? [
-                      h('div', { className: 'ssm-p-seclabel' }, t('candidates'), ' ', String(cand.length)),
-                      ...cand.map((l) => SkillRow({ key: l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })),
-                    ] : []),
-                    ...(other.length ? [
-                      h('div', { className: 'ssm-p-seclabel' }, t('otherSec'), ' ', String(other.length)),
-                      ...other,
-                    ] : [])];
+                  return [...SectionedRows([ // 三段改调共享渲染件（设计 2026-11-20 §6.8）：行参/徽章/勾选语义逐参数照搬，可见输出零变化
+                    { key: 'eff', label: t('effTitle'), rows: act.map((n) => { const { l, badges, title } = rowModel(n); return SkillRow({ key: n, l, on: foreignSet.has(n) ? null : eff.has(n), badges, title, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(eff.has(n) ? { remove: [n] } : { add: [n] }) })) }); }) },
+                    { key: 'cand', label: t('candidates'), rows: cand.map((l) => SkillRow({ key: l.name, l, on: bound ? false : managed.includes(l.name), badges: [{ kind: 'muted', text: t('notActive') }], title: l.descriptionZh ?? undefined, onChange: () => run(() => call(ctx, 'startOverride', { sessionId, ...(managed.includes(l.name) ? { remove: [l.name] } : { add: [l.name] }) })) })) },
+                    { key: 'other', label: t('otherSec'), rows: other },
+                  ])];
                 })())
             : h(React.Fragment, null,
                 effNames.length ? null : h('div', { className: 'ssm-p-empty' }, h(Icon, { n: 'fileWarn', s: 16 }), t('emptyList')),
