@@ -894,7 +894,10 @@ const CASES = [
           dir: held12, git: okGit([]),
           sweepOrphans: () => { swept12++; holder12.kill(); const kt = Date.now(); while (Date.now() - kt < 600) { /* 等句柄释放 */ } },
         });
-        eq(swept12, 1, '锁清不动触发行尸（只一次）');
+        // 清尸只一次 = Windows 强制独占语义：夹具用 pwsh `[IO.File]::Open(…, 'None')` 真持句柄，
+        // 产品侧「锁能不能挪走」的探测在 POSIX 上是 advisory flock → 直接成功，本就不该触发清尸（行为正确）。
+        // 故这条断言按平台钉住，别把 Linux 的「无需清尸」当回归；POSIX 侧仍验「照常成功」那一条。
+        if (process.platform === 'win32') eq(swept12, 1, '锁清不动触发行尸（只一次）');
         eq(got12.commit, 'cafe', '清尸后照常成功');
         // 13) 半尸目录删不动（同款跨进程持句柄）：清尸后推倒重建走 init
         const held13 = path.join(f.base, 'cache-half-sweep');
