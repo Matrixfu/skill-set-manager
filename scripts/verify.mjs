@@ -2543,6 +2543,8 @@ const CASES = [
       ok(/\{ key: 'on', label: t\('memberSecOn'\)/.test(body) && /\{ key: 'cand', label: t\('candidates'\)/.test(body) && /\{ key: 'stray', label: t\('residentSecOut'\)/.test(body),
         '成员抽屉三段：当前成员在上、候选技能在中、常驻残留只读段在末');
       ok(/dim: kind === 'on' && !edit\.picked\[row\.name\]/.test(body), '上段未勾成员整行灰化（持久态分区：点击不重排，保存后才换位）');
+      ok(/const memberSet = new Set\(inSet\.filter\(\(n\) => !resident\.has\(n\) && !foreignRes\.has\(n\)\)\)/.test(body) && /const onRows = listed\.filter\(\(r\) => memberSet\.has\(r\.name\)\)/.test(body),
+        '上段按**持久名单**分流而非按草稿 picked：改成按 picked 排，取消勾选的成员会两头不落、直接消失（Review Focus #1）');
       ok(/t\('pendingRemove'\)/.test(body) && /t\('pendingAdd'\)/.test(body), '草稿差异徽章：待移除（warn）/ 待加入（muted）');
       ok(/t\('draftDiff'\)/.test(body) && /t\('draftHidden'\)/.test(body), '改动计数行：含被过滤词藏起来的改动数（保存前可见）');
       ok(/t\('residentSecHint'\)/.test(body), '常驻残留段带解释：保存后会从本集名单移除');
@@ -2575,6 +2577,10 @@ const CASES = [
       ok(/gray: true, title: t\('foreignRow'\)/.test(body), '外来常驻长文案进 hover：段标题已承载语义，不再每行挂长徽章');
       ok(/\.filter\(\(r\) => !gOnly \|\| resident\.includes\(r\.name\) \|\| foreign\.includes\(r\.name\)\)/.test(body),
         '「只看常驻」不加分区特例分支：中段自然为空由渲染件隐藏');
+      ok(/grows\.filter\(\(r\) => !r\.foreign && resident\.includes\(r\.name\)\)/.test(body) && /grows\.filter\(\(r\) => !r\.foreign && !resident\.includes\(r\.name\)\)/.test(body),
+        '上中两段按**即时** resident 分流：勾选写库后行立即换位，无草稿态可缓冲（§5.7）');
+      ok(/badges: foreign\.includes\(r\.name\) \? \[\{ kind: 'muted', text: t\('foreignSameName'\) \}\]/.test(body),
+        '同名外来常驻徽章只挂「在库名同时命中 residentForeign」，其余行不带（§6.6）');
       ok(/grows\.length === 0 \? h\('div', \{ className: 'ssm-p-empty' \}/.test(body), '空态只在整表为空时说话（上段为空只是隐藏一段）');
       for (const copy of [
         '库里没有可勾选为常驻的技能', 'No skills available to make resident',

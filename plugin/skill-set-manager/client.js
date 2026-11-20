@@ -170,7 +170,7 @@ window.__ModuleLoader__.load({
         memberSecOn: 'Members', globalSecResident: 'Global Resident', foreignSec: 'Foreign Resident', residentSecOut: 'Resident · not part of this set',
         residentSecHint: 'Resident skills are auto-included in every set; these names are dropped from this set on save.',
         pendingAdd: 'to add', pendingRemove: 'to remove',
-        draftDiff: 'This edit: add {n} · remove {m}', draftHidden: '({k} not in the current results)',
+        draftDiff: 'This edit: add {n} · remove {m}', draftHidden: ' ({k} not in the current results)',
         foreignSameName: 'same name already resident · owned elsewhere',
       },
     };
@@ -1167,8 +1167,11 @@ window.__ModuleLoader__.load({
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
       const rows = searchRows(lib ?? [], filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
       // 段内序 = 字典序（设计 2026-11-20 §6.5）：fs readdirSync 序对用户没有含义，分区之后两段各自乱排更难对齐；
-      // 只排 gCorpus 的副本（slice），库 tab 的 fs 序不受影响；有过滤词时仍由 searchRows 的 rank 说话。
-      const gCorpus = [...(lib ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
+      // 只排 gCorpus 的副本（slice），库 tab 的 fs 序不受影响；有过滤词时仍由 searchRows 的 rank 说话；
+      // 三段都排（含末段外来常驻补行）——同屏两段字典序、一段扫描序会显得没规则。
+      // 比较器取 localeCompare（与 searchRows 同级排序同口径，连字符/大小写不按码点权重）；成员抽屉语料沿用既有
+      // 无比较器 .sort()（码点序）不改：纯英文名两处同序，差异只在符号名上，无功能影响。
+      const gCorpus = [...(lib ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null })).sort((a, b) => a.name.localeCompare(b.name))];
       const grows = searchRows(gCorpus, gq).filter((r) => !gOnly || resident.includes(r.name) || foreign.includes(r.name));
       const counts = (files) => {
         const c = { update: 0, add: 0, remove: 0, 'skip-modified': 0 };
