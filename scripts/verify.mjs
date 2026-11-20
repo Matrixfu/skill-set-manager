@@ -2559,6 +2559,28 @@ const CASES = [
     },
   },
   {
+    id: 'global-grouping',
+    title: 'client.js：设置页「全局技能集」tab 三段（全局常驻 / 候选技能 / 外来常驻）+ 段内字典序 + 空态随分区改口径（设计 2026-11-20 §6.5/§6.6）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(/\{ key: 'res', label: t\('globalSecResident'\)/.test(body) && /\{ key: 'cand', label: t\('candidates'\)/.test(body) && /\{ key: 'foreign', label: t\('foreignSec'\)/.test(body),
+        '全局 tab 三段：全局常驻在上、候选技能在中、外来常驻只读段在末');
+      ok(/const gCorpus = \[\.\.\.\(lib \?\? \[\]\)\.slice\(\)\.sort\(\(a, b\) => a\.name\.localeCompare\(b\.name\)\)/.test(body),
+        '段内序从文件系统序换成字典序（fs 序对用户无含义；searchRows 本体不动）');
+      ok(/t\('foreignSameName'\)/.test(body), '在库又是外来常驻的行如实标注：它已全局生效，但不在插件名单里');
+      ok(/gray: true, title: t\('foreignRow'\)/.test(body), '外来常驻长文案进 hover：段标题已承载语义，不再每行挂长徽章');
+      ok(/\.filter\(\(r\) => !gOnly \|\| resident\.includes\(r\.name\) \|\| foreign\.includes\(r\.name\)\)/.test(body),
+        '「只看常驻」不加分区特例分支：中段自然为空由渲染件隐藏');
+      ok(/grows\.length === 0 \? h\('div', \{ className: 'ssm-p-empty' \}/.test(body), '空态只在整表为空时说话（上段为空只是隐藏一段）');
+      for (const copy of [
+        '库里没有可勾选为常驻的技能', 'No skills available to make resident',
+        '常驻区已有同名条目 · 他人所有', 'same name already resident · owned elsewhere',
+      ]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+    },
+  },
+  {
     id: 'client-scope',
     title: 'client.js 分段作用域扫描：只在点击路径上炸的 ReferenceError（§10 UI 无 linter）',
     async run() {

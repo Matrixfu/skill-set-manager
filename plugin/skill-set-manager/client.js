@@ -480,7 +480,7 @@ window.__ModuleLoader__.load({
      */
     const SectionedRows = (sections) => sections
       .filter((s) => s.rows.length)
-      .flatMap((s) => [h('div', { className: 'ssm-p-seclabel' }, s.label, ' ', String(s.rows.length)), ...s.rows]);
+      .flatMap((s) => [h('div', { key: s.key, className: 'ssm-p-seclabel' }, s.label, ' ', String(s.rows.length)), ...s.rows]);
 
     function Panel({ ctx, t, sessionId, onClose, bs, seed }) {
       const tasks = useTasks(); // 与设置页同一份模块级任务态：面板关掉后，导入的进行中与结果仍在这份状态里
@@ -1174,7 +1174,9 @@ window.__ModuleLoader__.load({
       const instDone = tasks.last?.op === 'installApply' && tasks.last.status === 'ok' ? tasks.last.result : null;
       const sess = () => (bus.sessionId ? { sessionId: bus.sessionId } : {}); // 项目面必须带活动会话（review M2）
       const rows = searchRows(lib ?? [], filter); // P3：过滤框 = 同款匹配器（名称/来源/描述/中文用途）
-      const gCorpus = [...(lib ?? []), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
+      // 段内序 = 字典序（设计 2026-11-20 §6.5）：fs readdirSync 序对用户没有含义，分区之后两段各自乱排更难对齐；
+      // 只排 gCorpus 的副本（slice），库 tab 的 fs 序不受影响；有过滤词时仍由 searchRows 的 rank 说话。
+      const gCorpus = [...(lib ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)), ...foreign.filter((n) => !lib?.some((l) => l.name === n)).map((n) => ({ name: n, source: 'foreign', foreign: true, descriptionZh: null }))];
       const grows = searchRows(gCorpus, gq).filter((r) => !gOnly || resident.includes(r.name) || foreign.includes(r.name));
       const counts = (files) => {
         const c = { update: 0, add: 0, remove: 0, 'skip-modified': 0 };
@@ -1368,31 +1370,43 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-p-row' }, // 过滤框/只看常驻换同款 .ssm-p-search + .ssm-p-check 语汇（§6.6）
             h('input', { className: 'ssm-p-search', placeholder: t('searchPh'), value: gq, disabled: locked, 'aria-label': t('searchPh'), onChange: (e) => setGq(e.target.value) }),
             h('label', { className: 'ssm-p-check' }, h('input', { type: 'checkbox', checked: gOnly, disabled: locked, onChange: (e) => setGOnly(e.target.checked) }), t('residentOnly'))),
-          // 空态（§6.6 同款 .ssm-p-empty + 图标）：无过滤词 = 引导勾选候选；有过滤词无命中 = 没有匹配
-          grows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: gq.trim() ? 'search' : 'box' }), gq.trim() ? t('emptySearch') : t('sEmptyGlobal')) : null,
-          ...grows.map((r) => {
-            if (r.foreign) return h(RowShell, { key: r.name, t, name: r.name, gray: true, badges: [{ kind: 'warn', text: t('foreignRow') }] }); // N5：已在设置页内，不再挂「去设置管理」文案；灰态只读（§6.6）
-            const on = resident.includes(r.name);
-            // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款回退口径）
-            const desc = r.descriptionZh
-              ? h('div', { className: 'ssm-p-desc', title: r.description ?? undefined }, r.descriptionZh)
-              : r.description
-                ? h('div', { className: 'ssm-p-desc', title: r.description }, r.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
-                : null;
-            return h(RowShell, {
-              key: r.name, t, name: r.name, desc,
-              // 复选胶囊（§6.6）：label 包住复选框即胶囊，选中态 brand 软底走新区变体 .ssm-p-check-on——
-              // 不动 composer 在用的 .ssm-p-check 基样（AC#14 composer 观感零变化）；setResident 勾选语义一字未动（AC#5）
-              leading: h('label', { className: 'ssm-p-check' + (on ? ' ssm-p-check-on' : '') },
-                h('input', { type: 'checkbox', checked: on, disabled: locked, 'aria-label': r.name, onChange: () => run(`res:${r.name}`, async () => {
-                  const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
-                  await call(ctx, 'setResident', { names: next });
-                  await loadState();
-                }) })),
-              // github 来源展示口径照旧：截断片段进第三行 muted 文本
-              sub: String(r.source).startsWith('github:') ? h('div', { className: 'ssm-p-desc' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
-            });
-          })) : null,
+          ...(() => { // 全局 tab 三段（设计 2026-11-20 §6.5）：全局常驻 / 候选技能 / 外来常驻（只读）；勾选即时写库 → 行随之在上段与中段间换位（无草稿态可缓冲，§5.7）
+            const rowOf = (r) => {
+              if (r.foreign) return h(RowShell, { key: 'f-' + r.name, t, name: r.name, gray: true, title: t('foreignRow') }); // N5：已在设置页内；段标题承载语义，长文案进 hover（§6.5）
+              const on = resident.includes(r.name);
+              // 描述第二行（用户反馈 2026-10-26：同行挤压显乱，与库 tab 同款回退口径）
+              const desc = r.descriptionZh
+                ? h('div', { className: 'ssm-p-desc', title: r.description ?? undefined }, r.descriptionZh)
+                : r.description
+                  ? h('div', { className: 'ssm-p-desc', title: r.description }, r.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
+                  : null;
+              return h(RowShell, {
+                key: r.name, t, name: r.name, desc,
+                // 在库又是外来常驻（§6.6）：库里那个技能体可勾选，盘上同名条目归他人所有——如实标注；勾选既不抢占也不会误删
+                badges: foreign.includes(r.name) ? [{ kind: 'muted', text: t('foreignSameName') }] : [],
+                // 复选胶囊（§6.6）：label 包住复选框即胶囊，选中态 brand 软底走新区变体 .ssm-p-check-on——
+                // 不动 composer 在用的 .ssm-p-check 基样（AC#14 composer 观感零变化）；setResident 勾选语义一字未动（AC#5）
+                leading: h('label', { className: 'ssm-p-check' + (on ? ' ssm-p-check-on' : '') },
+                  h('input', { type: 'checkbox', checked: on, disabled: locked, 'aria-label': r.name, onChange: () => run(`res:${r.name}`, async () => {
+                    const next = on ? resident.filter((n) => n !== r.name) : [...resident, r.name];
+                    await call(ctx, 'setResident', { names: next });
+                    await loadState();
+                  }) })),
+                // github 来源展示口径照旧：截断片段进第三行 muted 文本
+                sub: String(r.source).startsWith('github:') ? h('div', { className: 'ssm-p-desc' }, String(r.source).replace('github:', '').slice(0, 20)) : null,
+              });
+            };
+            return [
+              // 空态（§6.6 同款 .ssm-p-empty + 图标）：整表皆空才说话——分区后「没有常驻」只是隐藏一段，旧文案在那时不成立
+              grows.length === 0 ? h('div', { className: 'ssm-p-empty' }, h(Icon, { n: gq.trim() ? 'search' : 'box' }), gq.trim() ? t('emptySearch') : t('sEmptyGlobal')) : null,
+              ...SectionedRows([
+                { key: 'res', label: t('globalSecResident'), rows: grows.filter((r) => !r.foreign && resident.includes(r.name)).map(rowOf) },
+                { key: 'cand', label: t('candidates'), rows: grows.filter((r) => !r.foreign && !resident.includes(r.name)).map(rowOf) },
+                { key: 'foreign', label: t('foreignSec'), rows: grows.filter((r) => r.foreign).map(rowOf) },
+              ]),
+            ];
+          })(),
+        ) : null,
         tab === 'ops' ? h(React.Fragment, null, // 分节卡片化（spec §6.7）：GitHub 安装 / 两级迁移各一张 .ssm-p-card；动作按钮 = 新区品牌软底复刻 .ssm-s-btn（.ssm-p-row>button 特异性坑由已入库 .ssm-p-row>.ssm-s-btn 抬回规则接住）
           h('div', { className: 'ssm-p-card' },
             h('div', { className: 'ssm-p-card-title' }, t('installTitle')),
