@@ -2532,6 +2532,33 @@ const CASES = [
     },
   },
   {
+    id: 'members-grouping',
+    title: 'client.js：成员抽屉三段（当前成员 / 候选技能 / 常驻·不属于本集）+ 草稿差异可见 + 保存剔除常驻残留（设计 2026-11-20 §6.2–§6.4）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      ok(/\{ key: 'on', label: t\('memberSecOn'\)/.test(body) && /\{ key: 'cand', label: t\('candidates'\)/.test(body) && /\{ key: 'stray', label: t\('residentSecOut'\)/.test(body),
+        '成员抽屉三段：当前成员在上、候选技能在中、常驻残留只读段在末');
+      ok(/dim: kind === 'on' && !edit\.picked\[row\.name\]/.test(body), '上段未勾成员整行灰化（持久态分区：点击不重排，保存后才换位）');
+      ok(/t\('pendingRemove'\)/.test(body) && /t\('pendingAdd'\)/.test(body), '草稿差异徽章：待移除（warn）/ 待加入（muted）');
+      ok(/t\('draftDiff'\)/.test(body) && /t\('draftHidden'\)/.test(body), '改动计数行：含被过滤词藏起来的改动数（保存前可见）');
+      ok(/t\('residentSecHint'\)/.test(body), '常驻残留段带解释：保存后会从本集名单移除');
+      ok(/skills: Object\.keys\(edit\.picked\)\.filter\(\(n\) => edit\.picked\[n\] && !\(resident\.has\(n\) \|\| foreignRes\.has\(n\)\)\)/.test(body),
+        '保存名单剔除常驻残留（GLOSSARY「全局常驻」边界句的落点，不静默：上面有只读段与 hint）');
+      for (const copy of [
+        '当前成员', '常驻 · 不属于本集', 'Resident · not part of this set', '待加入', '待移除',
+        '本次改动：新增 {n} · 移除 {m}', 'This edit: add {n} · remove {m}',
+        '（含 {k} 项不在当前结果中）', '({k} not in the current results)',
+        '常驻技能在所有集自动包含，无需在集内点名；保存后这些名字将从本集名单移除。',
+        'Resident skills are auto-included in every set; these names are dropped from this set on save.',
+      ]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+      const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
+      ok(gl.includes('**候选技能（Candidate Skills）**'), 'GLOSSARY 收录「候选技能」词条（设计 2026-11-20 §9）');
+      ok(gl.includes('冗余引用'), 'GLOSSARY「全局常驻」补边界句：集名单里残留的常驻名是冗余引用');
+    },
+  },
+  {
     id: 'client-scope',
     title: 'client.js 分段作用域扫描：只在点击路径上炸的 ReferenceError（§10 UI 无 linter）',
     async run() {

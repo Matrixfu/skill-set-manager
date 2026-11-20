@@ -575,18 +575,18 @@ window.__ModuleLoader__.load({
         const title = l.source && l.source !== 'unknown' ? `${l.name} · ${l.source}${l.commit ? '@' + String(l.commit).slice(0, 7) : ''}` : (l.descriptionZh ?? l.name);
         return { l, badges, title };
       };
-      // 同款列表行（Task 4 成员抽屉复用）：on=null → 只读无复选框；ro → 灰区只读行；removed → 删除线
+      // 同款列表行（Task 4 成员抽屉复用）：on=null → 只读无复选框；ro → 灰区只读行；removed → 删除线；dim → 灰化但仍可点（成员抽屉「待移除」行）
       // Task 6.1 收口（spec 2026-11-07 §6.2）：骨架换成共享 RowShell——同一批 .ssm-p-* 原子件，DOM 由 rowwrap 换行卡；
       // 勾选语义照旧：原 label 包整行（点名字=勾选）现由行 onClick 承接——点复选框本身走 input onChange，
       // 点击目标命中 input 即跳过，绝不双跑 RPC；busy 时不挂 onClick=整行不可点，同「被禁 input 的 label 不激活」口径。
-      const SkillRow = ({ key, l, on, ro, removed, onChange, badges, title }) => {
+      const SkillRow = ({ key, l, on, ro, removed, onChange, badges, title, dim }) => {
         const desc = l.descriptionZh
           ? h('div', { className: 'ssm-p-desc', title: l.description ?? undefined }, l.descriptionZh)
           : l.description
             ? h('div', { className: 'ssm-p-desc', title: l.description }, l.description, ' ', h(PBadge, { kind: 'muted', text: t('pendingTag') }))
             : null;
         return h(RowShell, {
-          key, t, name: l.name, badges, desc, gray: !!ro, removed,
+          key, t, name: l.name, badges, desc, gray: !!ro || !!dim, removed,
           title: title ?? l.descriptionZh ?? undefined,
           leading: on == null ? null : h('input', { type: 'checkbox', checked: on === true, disabled: busy, 'aria-label': l.name, onChange: () => onChange?.() }),
           ...(on != null && !busy ? { onClick: (e) => { if (e.target?.closest?.('input')) return; onChange?.(); } } : {}),
@@ -676,27 +676,60 @@ window.__ModuleLoader__.load({
                   mq ? h('button', { className: 'ssm-p-icon-btn', disabled: busy, 'aria-label': t('none'), onClick: () => setMq('') }, h(Icon, { n: 'x', s: 12 })) : null),
                 h('div', { className: 'ssm-p-row' },
                   h('input', { className: 'ssm-input', placeholder: t('descPh'), value: edit.desc ?? '', disabled: busy, 'aria-label': t('descPh'), onChange: (e) => setEdit({ ...edit, desc: e.target.value }) })),
-                ...searchRows(
+                ...(() => { // 成员抽屉三段（设计 2026-11-20 §6.2/§6.3）：上段=打开抽屉时该集的成员（持久态：点击不重排，保存后才换位）；
+                  // 中段=候选技能；末段=集名单里残留的常驻名（只读，保存时移出名单）。
                   // 常驻 = 所有集自动包含（§17#3）→ 不进成员候选（用户报告 2026-10-26，与另存为 excludeResident 同口径）；
-                  // 已存进本集的常驻名仍列出并标注，避免保存时被静默剔除
-                  [...new Set([...(st.library ?? []).map((l) => l.name), ...(s.skills ?? [])])]
-                    .filter((n) => !(resident.has(n) || foreignRes.has(n)) || (s.skills ?? []).includes(n))
-                    .sort()
-                    .map((n) => {
-                      const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
-                      return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
-                    }),
-                  mq,
-                ).map((row) => SkillRow({ key: row.name, l: row, on: !!edit.picked[row.name],
-                  badges: [
-                    ...((st.library ?? []).some((l) => l.name === row.name) ? [] : [{ kind: 'warn', text: t('memberMissing') }]),
-                    ...((resident.has(row.name) || foreignRes.has(row.name)) ? [{ kind: 'muted', text: t('memberResidentTag') }] : []),
-                  ],
-                  onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [row.name]: !edit.picked[row.name] } }) })),
-                h('div', { className: 'ssm-hint' }, t('memberHint')),
+                  // 已存进本集的常驻名不再算成员，落到只读段并带解释，避免保存时被静默剔除（GLOSSARY「全局常驻」边界句）。
+                  const inSet = s.skills ?? [];
+                  const straySet = new Set(inSet.filter((n) => resident.has(n) || foreignRes.has(n)));
+                  const memberSet = new Set(inSet.filter((n) => !resident.has(n) && !foreignRes.has(n)));
+                  const listed = searchRows(
+                    [...new Set([...(st.library ?? []).map((l) => l.name), ...inSet])]
+                      .filter((n) => !(resident.has(n) || foreignRes.has(n)) || inSet.includes(n))
+                      .sort()
+                      .map((n) => {
+                        const l = (st.library ?? []).find((x) => x.name === n); // 语料带三字段 → 中文用途也能搜（§6.2）
+                        return { name: n, source: l?.source ?? '', description: l?.description ?? null, descriptionZh: l?.descriptionZh ?? null };
+                      }),
+                    mq,
+                  );
+                  const rowsOf = (list, kind) => list.map((row) => SkillRow({
+                    key: row.name, l: row,
+                    on: kind === 'stray' ? null : !!edit.picked[row.name],
+                    ...(kind === 'stray' ? { ro: true, title: resident.has(row.name) ? t('memberResidentTag') : t('foreignRow') } : {}),
+                    dim: kind === 'on' && !edit.picked[row.name],
+                    badges: [
+                      ...((st.library ?? []).some((l) => l.name === row.name) ? [] : [{ kind: 'warn', text: t('memberMissing') }]),
+                      ...(kind === 'on' && !edit.picked[row.name] ? [{ kind: 'warn', text: t('pendingRemove') }] : []),
+                      ...(kind === 'cand' && edit.picked[row.name] ? [{ kind: 'muted', text: t('pendingAdd') }] : []),
+                    ],
+                    ...(kind === 'stray' ? {} : { onChange: () => setEdit({ ...edit, picked: { ...edit.picked, [row.name]: !edit.picked[row.name] } }) }),
+                  }));
+                  const onRows = listed.filter((r) => memberSet.has(r.name));
+                  const strayRows = listed.filter((r) => straySet.has(r.name));
+                  const candRows = listed.filter((r) => !memberSet.has(r.name) && !straySet.has(r.name));
+                  const added = Object.keys(edit.picked).filter((n) => edit.picked[n] && !inSet.includes(n));
+                  const dropped = inSet.filter((n) => !edit.picked[n]);
+                  const hiddenN = [...added, ...dropped].filter((n) => !listed.some((r) => r.name === n)).length; // 改动行被过滤词藏起来仍会写库（§6.3）
+                  return [
+                    ...SectionedRows([
+                      { key: 'on', label: t('memberSecOn'), rows: rowsOf(onRows, 'on') },
+                      { key: 'cand', label: t('candidates'), rows: rowsOf(candRows, 'cand') },
+                      { key: 'stray', label: t('residentSecOut'), rows: rowsOf(strayRows, 'stray') },
+                    ]),
+                    strayRows.length ? h('div', { className: 'ssm-hint' }, t('residentSecHint')) : null,
+                    h('div', { className: 'ssm-hint' }, t('memberHint')),
+                    // 改动计数（§6.3）：零改动不显示；改动行被当前过滤词藏起来时追加提示——它们保存时照样写库
+                    added.length || dropped.length
+                      ? h('div', { className: 'ssm-hint' },
+                        t('draftDiff').replace('{n}', added.length).replace('{m}', dropped.length),
+                        hiddenN ? t('draftHidden').replace('{k}', hiddenN) : '')
+                      : null,
+                  ];
+                })(),
                 h('div', { className: 'ssm-row' },
                   h('button', { disabled: busy, onClick: () => run(async () => {
-                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: edit.desc ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n]) } }); // 描述随保存一并写回（§6.6 入口③，host 透传）
+                    await call(ctx, 'saveSet', { set: { slug: s.slug, name: s.name, description: edit.desc ?? '', skills: Object.keys(edit.picked).filter((n) => edit.picked[n] && !(resident.has(n) || foreignRes.has(n))) } }); // 描述随保存一并写回（§6.6 入口③，host 透传）；常驻残留顺手移出（§6.4）
                     if (st.binding?.setSlug === s.slug) await call(ctx, 'bind', { sessionId, slug: s.slug }); // 立即收敛生效清单，不留「改了但没生效」窗口
                     setEdit(null);
                   }) }, t('saveBtn')),
