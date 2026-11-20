@@ -22,7 +22,7 @@ import { openDomain, projectKey } from './lib/core/storage.js';
 import { startOverride, endOverride, endOverrideIfActive, restoreAllPending, pushUndo, applyUndo } from './lib/core/pending.js';
 import { syncResident, pruneLegacyResidentLinks, dropResidentName } from './lib/core/resident.js';
 import os from 'node:os';
-import { parseRepoSpec, fetchRepo, installSkills, cacheDirFor } from './lib/core/github.js';
+import { parseRepoSpec, fetchRepo, installSkills, cacheDirFor, makeGit } from './lib/core/github.js';
 import { probeProxy } from './lib/core/gitnet.js';
 import { resolveRepoSource } from './lib/core/source.js';
 import * as updates from './lib/core/updates.js';
@@ -82,7 +82,7 @@ export function apply(ctx, config) {
     'state', 'panelSnapshot', 'listSets', 'saveSet', 'deleteSet', 'renameSet', 'copySet', 'setResident', 'saveAsFromEffective', 'exportSet', 'importSets', 'importPreview', 'importApply', 'bind', 'switchSet', 'undoSwitch', 'startOverride', 'endOverride', 'libraryList',
     // P1a：技能生命周期 + 诊断 + 解绑
     'installApply', 'updateCheck', 'updateApply', 'updateCheckAll', 'cacheClear', 'uninstallSkill', 'backupsList', 'backupRestore',
-    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource', 'longStatus',
+    'diagnoseRun', 'reclaimDeadLinks', 'rebuildManaged', 'claimForeign', 'migratePreview', 'migrateApply', 'migrateUndo', 'migrateAgentsPreview', 'migrateAgentsApply', 'migrateAgentsUndo', 'unbind', 'claimSource', 'longStatus', 'longCancel',
     // P3：翻译数据面
     'translatePending', 'translateRun', 'translateModels',
   ];
@@ -396,17 +396,19 @@ export function apply(ctx, config) {
      * 检查路径超时 120s（活体实测 2026-11-17：vibe-knowledge 的 checkout blob 层经 PAC 代理
      * 实测 >60s，60s 必红；吊死才翻倍，常态增量不受影响）。
      */
-    _fetchFor(tmpDirs, urlOverride = null, timeoutMs = 120000) {
+    _fetchFor(tmpDirs, urlOverride = null, timeoutMs = 120000, onChild = null) {
       return async (source) => {
         // 单一口径走 core source.js：手拆 '/' 曾把 clone 地址尾部的 `.git` 当仓库名，
         // 拼出 owner/repo.git.git → 远端「Repository not found」（用户报告 2026-10-26，检查更新炸）
         const { spec } = resolveRepoSource(source);
+        // onChild（取消长任务 2026-11-20）：批量检查把在飞 git 收进集合当场 kill；其余调用方不传 = 零改动
+        const git = onChild ? makeGit(timeoutMs, { onChild }) : undefined;
         if (urlOverride) {
           const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssm-up-'));
           tmpDirs.push(tmpDir);
-          return fetchRepo(spec, { dir: tmpDir, url: urlOverride, timeoutMs, failLog: roots.failLog });
+          return fetchRepo(spec, { dir: tmpDir, url: urlOverride, timeoutMs, failLog: roots.failLog, ...(git ? { git } : {}) });
         }
-        return fetchRepo(spec, { dir: cacheDirFor(roots, spec), timeoutMs, failLog: roots.failLog });
+        return fetchRepo(spec, { dir: cacheDirFor(roots, spec), timeoutMs, failLog: roots.failLog, ...(git ? { git } : {}) });
       };
     }
 
@@ -453,15 +455,21 @@ export function apply(ctx, config) {
       });
     }
 
-    /** 批量检查更新（GLOSSARY「批量检查更新」）：按来源仓库分组每仓一拉；sources 子集 = 重试失败仓库。 */
+    /** 批量检查更新（GLOSSARY「批量检查更新」）：按来源仓库分组每仓一拉；sources 子集 = 重试失败仓库。
+     *  可取消（GLOSSARY「取消长任务」，2026-11-20）：取消当场 kill 在飞 git（含取消后才 spawn 的，
+     *  防 fetchRepo 内部重试竞态），协作标记让剩余仓不再拉；被 kill 的仓不算失败。 */
     async updateCheckAll(req) {
-      return await gate.run('updateCheckAll', { mutates: false }, async () => {
+      return await gate.run('updateCheckAll', { mutates: false, cancellable: true }, async (cancel) => {
         await this._netGate();
         const tmps = [];
+        const kids = new Set();
+        const kill = () => { for (const c of kids) { try { c.kill('SIGKILL'); } catch {} } };
+        cancel.onKill(kill);
         try {
           return await updates.checkUpdateAll(roots, {
-            fetch: this._fetchFor(tmps, req.url ?? null, 120000),
+            fetch: this._fetchFor(tmps, req.url ?? null, 120000, (c) => { kids.add(c); if (cancel.cancelled()) { try { c.kill('SIGKILL'); } catch {} } }),
             sources: req.sources ?? null,
+            cancelled: cancel.cancelled,
           });
         } finally { for (const t of tmps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} } }
       });
@@ -754,6 +762,12 @@ export function apply(ctx, config) {
     /** 长任务态的 host 真相源（GLOSSARY「长任务」：进行中与结果不随界面关闭而消失）。 */
     async longStatus() {
       return gate.status();
+    }
+
+    /** 取消长任务（GLOSSARY「取消长任务」）：只有标了 cancellable 的在飞任务可取消（批量检查更新），
+     *  其余返回 false 不改任何状态；收尾由任务体带部分结果自然完成，单飞随之释放。 */
+    async longCancel() {
+      return { cancelled: gate.cancel() };
     }
 
     /** 解绑（面板缺口）：回收托管条目 + 删 binding/managed；gitignore 行保留。 */
