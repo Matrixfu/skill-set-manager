@@ -2579,6 +2579,8 @@ const CASES = [
         '「只看常驻」不加分区特例分支：中段自然为空由渲染件隐藏');
       ok(/grows\.filter\(\(r\) => !r\.foreign && resident\.includes\(r\.name\)\)/.test(body) && /grows\.filter\(\(r\) => !r\.foreign && !resident\.includes\(r\.name\)\)/.test(body),
         '上中两段按**即时** resident 分流：勾选写库后行立即换位，无草稿态可缓冲（§5.7）');
+      ok(/rows: grows\.filter\(\(r\) => !r\.foreign && resident\.includes\(r\.name\)\)\.map\(rowOf\)/.test(body) && /rows: grows\.filter\(\(r\) => !r\.foreign && !resident\.includes\(r\.name\)\)\.map\(rowOf\)/.test(body),
+        '上两段按常驻名单分流写死（即时态：勾选写库后行立即换位，不靠乐观更新，也不按点击顺序凑段）');
       ok(/badges: foreign\.includes\(r\.name\) \? \[\{ kind: 'muted', text: t\('foreignSameName'\) \}\]/.test(body),
         '同名外来常驻徽章只挂「在库名同时命中 residentForeign」，其余行不带（§6.6）');
       ok(/grows\.length === 0 \? h\('div', \{ className: 'ssm-p-empty' \}/.test(body), '空态只在整表为空时说话（上段为空只是隐藏一段）');

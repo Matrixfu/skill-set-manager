@@ -15,6 +15,8 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      # 发布前跑齐机械护栏：此前这条 workflow 只 publish，一个回归能直接发成新版（retro 2026-11-20）
+      - run: node scripts/check.mjs
       # 包内 npmrc 不含凭据；发布身份由 npm 侧的 Trusted Publisher 配置（仓库 + publish.yml）授予。
       - run: npm publish
         working-directory: plugin/skill-set-manager

@@ -87,14 +87,6 @@ scripts/                      验收门禁：verify.mjs、ui-gates.mjs
 GLOSSARY.md                   领域术语表
 ```
 
-## 开发与验收
-
-- 无构建步骤，纯 ESM；改 `client.js` 后刷新页面生效，改 host 半（`index.js` / `lib/core/`）需重装或重启。
-- `node scripts/verify.mjs` 跑全部验收 case；`--list-cases` 列 case，`--case N` 只跑指定 case。
-- `node scripts/ui-gates.mjs` 跑语法与 UI 隔离门禁。
-- 两者都**必须在 DSH 文件沙箱外**、Windows 下运行：沙箱会把 junction 虚拟化成普通目录，link/junction 类 case 会假红。
-- 会话落盘是多帧 zstd：PATH 里有 `zstd`，或用环境变量 `ZSTD_BIN` 指定可执行文件；缺失时回退 Node 内置单帧解压（可能解不全）。
-
 ## 许可
 
 [MIT](LICENSE)

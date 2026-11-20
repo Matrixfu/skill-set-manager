@@ -8,6 +8,7 @@
  *   ⑤ CSS 隔离：旧 .ssm-* 规则区零 ssm-p- 污染、新区只含 .ssm-p- / .ssm-s- / .ssm-chip-btn 三类新前缀（同一视觉轨道的机械证明，spec 2026-11-07 §6.1），
  *      并证明退役旧类（§5.5 矩阵 + Task 6.3 清理清单）既没在 CSS 里长回来、也没被 JS className 字面引用。
  *   ⑥ 面板秒开：Panel 首屏吃 chip 预拉的 bus 快照（seed），且 seed 传入前比对 sessionId。
+ *   ⑦ 徽章词表：每个用到的 `kind:'…'` 必须在 CSS 里有 `.ssm-p-tag-<kind>` 规则（PBadge 直接拼类名，缺规则只静默渲染成裸文本）。
  * 用法: node scripts/ui-gates.mjs  （退出码 0=全绿；FAIL 列明细）
  */
 import fs from 'node:fs';
@@ -155,6 +156,23 @@ else {
 if (!/function Panel\(\{[^}]*\bseed\b/.test(src)) fails.push('fast-open: Panel 未接 seed 参数（开面板仍从 null 起，骨架屏必然等满一个来回）');
 if (!src.includes('React.useState(seed ?? null)')) fails.push('fast-open: Panel 首屏未用 seed 初始化（预拉快照被丢掉）');
 if (!src.includes('seed: b.state?.sessionId === b.sessionId ? b.state : null')) fails.push('fast-open: OverlayHost 传入 seed 未比对 sessionId（跨会话快照会串台）');
+
+// ⑦ 徽章词表（终审 2026-11-20 建议）：PBadge 把 kind 直接拼成 `ssm-p-tag-${kind}`——新造一个 CSS 里没有的
+//    kind 不报错，只渲染成无样式裸文本。词表以 CSS 为准（`.ssm-p-tag-*` 就是徽章语汇）：
+//    代码里出现的每个 `kind:'…'` 字面量，要么有对应类名（是徽章），要么在这条非徽章名单里（setConfirm/setMsg
+//    的 kind 不拼类名）——两头都不沾就红，逼新 kind 当场表态。PBadge 签名一并钉住：它改名后这条门禁会静默失效。
+if (!/function PBadge\(\{ kind, text \}\)/.test(src)) fails.push('badge-kinds: PBadge 签名变了（kind→ssm-p-tag-${kind} 的拼类口径要同步改这条门禁）');
+const BADGE_CSS = new Set([...src.matchAll(/\.ssm-p-tag-([a-z]+)(?![\w-])/g)].map((m) => m[1]));
+const NON_BADGE_KINDS = ['switch', 'del', 'err', 'ok']; // setConfirm（确认弹窗动作）/ setMsg（操作结果语态）的 kind
+const USED_KINDS = new Set([...src.matchAll(/kind:\s*'([a-z]+)'/g)].map((m) => m[1]));
+if (!USED_KINDS.size) fails.push("badge-kinds: 抽不到任何 kind:'…' 字面量（门禁口径失效，别当绿）");
+for (const k of USED_KINDS) {
+  if (BADGE_CSS.has(k) || NON_BADGE_KINDS.includes(k)) continue;
+  fails.push(`badge-kinds: 出现 kind:'${k}'——既不是徽章语汇（CSS 无 .ssm-p-tag-${k}，会渲染成裸文本），也不在非徽章 kind 名单里：新徽章先写 CSS 类，新非徽章 kind 要进 NON_BADGE_KINDS`);
+}
+for (const k of BADGE_CSS) {
+  if (!new RegExp(`kind:\\s*'${k}'`).test(src)) fails.push(`badge-kinds: CSS 有 .ssm-p-tag-${k} 但代码没用到（徽章语汇里的死类，删掉别留假词表）`);
+}
 
 if (fails.length) {
   console.log('UI GATES: FAIL');

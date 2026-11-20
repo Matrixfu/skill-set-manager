@@ -1,0 +1,17 @@
+name: check
+on:
+  push:
+    branches: ['**']
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # 本仓全部机械护栏（verify 全部 case + ui-gates 七项）此前没有任何自动挂载点：
+      # 只在本地手跑，一个回归能直接发布成新版（retro 2026-11-20，见 scripts/check.mjs 头注释）。
+      # 「必须在 DSH 沙箱外跑」这条在 CI 天然成立：Linux runner 没有 DSH 沙箱。
+      - run: node scripts/check.mjs
