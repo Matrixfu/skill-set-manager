@@ -27,16 +27,27 @@ export function createOpGate({ onMutated = null } = {}) {
   /**
    * 长任务：全局单飞；成功即发失效事件（mutates: false 的只读任务不发）。
    * 失败不吞——原样抛出，但最近结果如实记 err，界面据此说明。
+   * meta.cancellable（GLOSSARY「取消长任务」，2026-11-20）：任务体收 cancel token
+   * { cancelled(), onKill(h) }——cancel() 只置标记 + 触发 kill 钩子（杀在飞 git 子进程），
+   * 收尾由任务体带部分结果自然完成；取消后注册 onKill 立即补触发（防「先取消后 spawn」竞态）。
    */
   async function run(name, meta, fn) {
     if (state.running) throw busyError(state.running);
     const task = {
       id: (state.seq += 1), name, target: meta?.target ?? null, status: 'running',
       startedAt: Date.now(), doneAt: null, result: null, error: null, warnings: [],
+      cancellable: !!meta?.cancellable, cancelRequested: false, killHooks: [],
     };
     state.running = task; state.last = task;
+    const token = {
+      cancelled: () => task.cancelRequested,
+      onKill: (h) => {
+        if (!task.cancelRequested) { task.killHooks.push(h); return; }
+        try { h(); } catch {} // 已取消：晚到的子进程当场被杀
+      },
+    };
     try {
-      const value = await fn();
+      const value = await fn(token);
       task.status = 'ok'; task.doneAt = Date.now();
       task.result = value ?? null;
       task.warnings = Array.isArray(value?.warnings) ? value.warnings : [];
@@ -58,5 +69,14 @@ export function createOpGate({ onMutated = null } = {}) {
   /** 条件写（只有真改了才发）：事件机制仍收在这里，条件留在调用方。 */
   const touch = () => { if (onMutated) onMutated(); };
 
-  return { run, mutate, touch, status, isBusy: () => !!state.running };
+  /** 取消在飞长任务（GLOSSARY「取消长任务」）：只认标了 cancellable 的；其余一律 false，不改任何状态。 */
+  function cancel() {
+    const t = state.running;
+    if (!t || !t.cancellable) return false;
+    t.cancelRequested = true;
+    for (const h of t.killHooks) { try { h(); } catch {} }
+    return true;
+  }
+
+  return { run, mutate, touch, status, cancel, isBusy: () => !!state.running };
 }

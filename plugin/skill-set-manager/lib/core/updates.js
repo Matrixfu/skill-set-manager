@@ -152,8 +152,11 @@ export async function applyUpdate(roots, name, { fetch, backup, fs: fsImpl = fs 
  * failedSources，可经 `sources` 子集单独重试。无 manifest / 本地技能（source
  * unknown）不参与（§8.1，与单技能检查同口径）；`.` 开头目录（.backups）跳过。
  * 组内逐技能定位失败（上游删了该技能）不进 results，带 error 上报（行级失败）。
+ * `cancelled`（GLOSSARY「取消长任务」，2026-11-20）：协作标记只在仓边界起效——
+ * 见标记即停，已查完仓库的结论照常进 results；被打断/未轮到的仓不进 failedSources
+ * （取消不是失败），返回带 cancelled: true 与 unchecked（未检查仓数）。
  */
-export async function checkUpdateAll(roots, { fetch, sources = null, fs: fsImpl = fs } = {}) {
+export async function checkUpdateAll(roots, { fetch, sources = null, cancelled = null, fs: fsImpl = fs } = {}) {
   const groups = new Map();
   let entries = [];
   try { entries = fsImpl.readdirSync(roots.libraryRoot, { withFileTypes: true }); } catch {}
@@ -168,14 +171,25 @@ export async function checkUpdateAll(roots, { fetch, sources = null, fs: fsImpl 
   }
   const results = [];
   const failedSources = [];
-  for (const [source, members] of groups) {
+  const groupList = [...groups];
+  let checkedGroups = 0;
+  let wasCancelled = false;
+  for (const [source, members] of groupList) {
+    if (cancelled?.()) { wasCancelled = true; break; } // 仓边界见标记即停（取消不是失败）
     let got;
     try { got = await fetch(source); }
-    catch (e) { failedSources.push({ source, error: String(e?.message ?? e) }); continue; }
+    catch (e) {
+      if (cancelled?.()) { wasCancelled = true; break; } // 在飞 fetch 被 kill 同样归取消：不进失败名单
+      failedSources.push({ source, error: String(e?.message ?? e) }); continue;
+    }
+    // fetch 成功后的组内比对是纯本地同步计算（无 await，标记不可能中途翻）：跑完才算该仓 checked
     for (const m of members) {
       try { results.push({ name: m.name, chk: buildChk(m.name, m.manifest, got.commit, got.skillsDir, m.dir, fsImpl) }); }
       catch (e) { results.push({ name: m.name, chk: null, error: String(e?.message ?? e) }); }
     }
+    checkedGroups += 1;
   }
-  return { results, failedSources };
+  const out = { results, failedSources };
+  if (wasCancelled) { out.cancelled = true; out.unchecked = groupList.length - checkedGroups; }
+  return out;
 }

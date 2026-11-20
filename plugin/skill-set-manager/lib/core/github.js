@@ -21,13 +21,15 @@ export { parseRepoSpec, normalizeRepoSource } from './source.js';
  * 存活的孙进程仍归 sweepGitOrphans 口径管。resolve 与注入 git 夹具同形
  * {status,stdout,stderr}，调用方只多一个 await。
  */
-function spawnGit(args, cwd, timeoutMs) {
+function spawnGit(args, cwd, timeoutMs, onChild) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
     let child;
     try { child = spawn('git', args, { cwd, windowsHide: true }); }
     catch (e) { return finish({ status: 'spawn', stdout: '', stderr: String(e?.message ?? e) }); }
+    // onChild（取消长任务 2026-11-20）：host 收句柄用于当场 kill；钩子抛错不得影响 git 本身
+    if (onChild) { try { onChild(child); } catch {} }
     let stdout = ''; let stderr = '';
     child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (c) => { stdout += c; });
@@ -47,8 +49,8 @@ function spawnGit(args, cwd, timeoutMs) {
  * **不得回退 spawnSync**，它会占满 host 事件循环整段 git 时长）。注入 git 的调用方
  * （verify 夹具）自理超时；updates.js 的 ls-remote 也复用本工厂。
  */
-export function makeGit(timeoutMs) {
-  return (args, cwd) => spawnGit(args, cwd, timeoutMs || 0);
+export function makeGit(timeoutMs, opts = {}) {
+  return (args, cwd) => spawnGit(args, cwd, timeoutMs || 0, opts.onChild);
 }
 
 /** 上游缓存底（GLOSSARY「上游缓存」）：owner/repo(+ref) 哈希定键；同仓不同 ref 不串底。 */
