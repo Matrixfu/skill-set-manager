@@ -914,7 +914,8 @@ const CASES = [
             dir: held13, git: okGit([]),
             sweepOrphans: () => { swept13++; holder13.kill(); const kt = Date.now(); while (Date.now() - kt < 600) { /* 等释放 */ } },
           });
-          eq(swept13, 1, '半尸目录删不动触发行尸');
+          // 同 12)：Windows 独占句柄语义专属（POSIX advisory flock 下「锁能不能挪走」探测直接成功，本就不该清尸）
+          if (process.platform === 'win32') eq(swept13, 1, '半尸目录删不动触发行尸');
           eq(got13.commit, 'cafe', '清尸后重建 init 成功');
         } finally { holder13.kill(); }
       } finally { holder12.kill(); }
