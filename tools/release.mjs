@@ -6,7 +6,10 @@
 //   3. push master + tag（CI publish.yml 由 tag 触发）；
 //   4. 建 GitHub Release（make_latest）——历史 v1.1.2/v1.1.3 只打轻量 tag，
 //      Releases 侧栏会一直停在旧 Latest；
-//   5. 轮询 CI；失败自动下载 attempt 日志打印 npm error；成功验 npm latest。
+//   5. 轮询 CI 只当**快败通道**（advisory）：失败自动下载 attempt 日志打印 npm error；
+//      **权威完成信号 = npm dist-tag 出现新版本**（Trusted Publishing 只在 CI 成功时 publish）。
+//      runs API 被 MITM 代理吐空 body `{}` 是常态（2026-11-21 v1.3.2 实测：bump/tag/push/Release
+//      全成，轮询看不见 run 却 exit 1，npm 验证根本没跑到）——看不见 run 不拦发布，交给 npm 轮询判定。
 //
 // npm Trusted Publishing 事实（诊断口径）：
 //   - CI 报 `404 Not Found - PUT registry`＝「该 GitHub 来源未授权」，不是版本/tag 不存在；
@@ -93,9 +96,9 @@ for (let i = 0; i < 60 && !(run && run.status === "completed"); i++) {
 }
 console.log();
 if (!run) {
-  console.error(`没在最近 5 条 push run 里找到 tag ${`v${VER}`}（sha ${sha}）。${apiNote}\n` +
-    `手动核对：https://github.com/Matrixfu/skill-set-manager/actions?query=${sha}`);
-  process.exit(1);
+  // runs API 看不见 ≠ 发布失败（代理吐空 body 是常态）：这里只留痕，权威判定交给下方 npm dist-tag 轮询。
+  console.warn(`WARN runs API 没查到 tag v${VER} 对应 run（sha ${sha}）。${apiNote}\n` +
+    `CI 手动核对：https://github.com/Matrixfu/skill-set-manager/actions?query=${sha} —— 继续以 npm latest 为准`);
 }
 if (run.conclusion !== "success") {
   const buf = Buffer.from(await (await gh(`/repos/Matrixfu/skill-set-manager/actions/runs/${run.id}/logs?attempt=${run.run_attempt}`)).arrayBuffer());
@@ -111,12 +114,14 @@ if (run.conclusion !== "success") {
   process.exit(1);
 }
 
-// 5) 验 npm latest（registry 处理有几分钟延迟，重试窗口 3 分钟）
-let latest = "";
-for (let i = 0; i < 18; i++) {
-  latest = (await (await fetch("https://registry.npmjs.org/@matrixfu%2Fskill-set-manager/latest")).json()).version;
+// 5) 权威判定：npm dist-tag。runs API 缺席时 CI 还在路上，本窗口要罩住整段 CI 时长（10 分钟）；
+//    registry 处理本身也有几分钟延迟。
+let latest = "", note = "";
+for (let i = 0; i < 60; i++) {
+  try { latest = String((await (await fetch("https://registry.npmjs.org/@matrixfu%2Fskill-set-manager/latest")).json())?.version ?? ""); }
+  catch (e) { note = `registry 响应异常：${e?.message ?? e}`; } // MITM 代理偶发空 body/非 JSON，留痕下轮重试
   if (latest === VER) break;
   await new Promise(r => setTimeout(r, 10000));
 }
-if (latest !== VER) { console.error(`npm latest=${latest}，还没生效，稍后再查`); process.exit(1); }
+if (latest !== VER) { console.error(`npm latest=${latest || "?"}，还没到 ${VER}。${note} 稍后手查：npm view @matrixfu/skill-set-manager version`); process.exit(1); }
 console.log(`DONE: npm latest = ${VER}（OIDC provenance，Trusted Publishing）`);
