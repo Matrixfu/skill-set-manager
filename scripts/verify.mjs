@@ -2527,6 +2527,32 @@ const CASES = [
     },
   },
   {
+    id: 'client-chip-indicator',
+    title: 'client.js：芯片状态点/`!` 徽标统一口径——未绑定+临时覆盖也绿/红（设计 2026-11-21 状态矩阵）；「临时」标签上文字区；右栏 tab 徽标共用同一条件',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const raw = fs.readFileSync(file, 'utf8');
+      const body = raw.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      // 单一口径 helper：chip 徽标与右栏 tab 徽标是同一「自检异常」事实的两个出口，条件分叉即 bug 温床
+      ok(/const ovActive = \(st\) => !!st\?\.sessionOverrideActive;/.test(body), 'ovActive helper：覆盖进行中口径单一真相源');
+      ok(/const scBad = \(st\) => !!st\?\.selfCheck && !st\.selfCheck\.ok && \(!st\.selfCheck\.unbound \|\| ovActive\(st\)\);/.test(body),
+        'scBad 统一口径：未绑定仅覆盖进行中时参与红（矩阵 #4/#8）；未绑定无覆盖仍 idle（矩阵 #2）');
+      eq((body.match(/scBad\(/g) ?? []).length, 3, 'scBad 三处消费：Dot 三分支 + chip 徽标 + 右栏 tab 徽标（定义行不带括号）');
+      eq((body.match(/ovActive\(/g) ?? []).length, 3, 'ovActive 三处消费：scBad 体内 + Dot idle 守卫 + chip 临时标签（定义行不带括号）');
+      // 矩阵 #1-#7 的 Dot 三分支：idle 仅「无快照」或「未绑定且无覆盖」；其余按 scBad 红/绿
+      ok(/\(!ovActive\(st\) && sc\?\.unbound\) \? 'ssm-dot-idle' : scBad\(st\) \? 'ssm-dot-red' : 'ssm-dot-ok'/.test(body),
+        'Dot 新三分支：未绑定+覆盖不再被 unbound 短路成 idle（矩阵 #3/#4）');
+      ok(!/(b|bus)\.state\.selfCheck\.unbound/.test(body), '旧 unbound 短路徽标条件已退役（chip 与右栏 tab 都改走 scBad）');
+      // 「临时」标签：覆盖进行中一律渲染（绑定与否一致），位置在集名之后、徽标之前
+      ok(/h\(Name, \{ st: b\.state \}\),\s*ovActive\(b\.state\) \? h\('span', \{ className: 'ssm-temp' \}, t\('tempTag'\)\) : null,/.test(body),
+        '「临时」标签渲染在 Name 之后（矩阵 #3/#6 文字区口径）');
+      for (const copy of ["tempTag: '临时'", "tempTag: 'Temp'"]) ok(raw.includes(copy), `文案缺一份：${copy}`);
+      ok(/\.ssm-temp\{/.test(raw), '标签有 CSS（旧区中性软底语汇，复刻 .ssm-cur 轨道）');
+      const gl = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'GLOSSARY.md'), 'utf8');
+      ok(gl.includes('**芯片状态点（Chip Indicator）**'), 'GLOSSARY 收录「芯片状态点」词条（绿语义升级为「对本会话有生效技能」）');
+    },
+  },
+  {
     id: 'helper-callers',
     title: 'client.js：三处分段列表共用同一个渲染件（设计 2026-11-20 §6.1/§6.9）——Task 1 钉本体，Task 4 补三处复用计数',
     async run() {

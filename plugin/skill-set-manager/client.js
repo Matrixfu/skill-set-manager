@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
       zh: {
         chip: '技能集', panel: '技能集管理器', close: '关闭', sets: '技能集', projectRoot: '项目根',
         rootDrift: '（≠ 会话目录——切换影响该仓库全部会话）', // 「全局常驻」纯文本行口径随美化退役（死键 resident 已删，呈现见 residentRow/徽章族）
-        managedSec: '技能集提供（受管）', override: '临时覆盖', overrideOn: '临时覆盖中', endOverride: '结束覆盖',
+        managedSec: '技能集提供（受管）', override: '临时覆盖', overrideOn: '临时覆盖中', endOverride: '结束覆盖', tempTag: '临时',
         ovRemoved: '已被剔除', ovRestoreTip: '重新勾选即恢复本会话生效', overrideHint: '临时覆盖中：在「受管」区取消勾选 = 仅本会话剔除（不改技能集）；重新勾选或「结束覆盖」即恢复；要从集合里永久移除请用集合区「编辑成员」',
         undo: '撤销切换（回到上一份生效清单）', switchTo: '切换', current: '当前', saveAs: '另存为当前清单',
         newName: '新名称', copy: '复制', rename: '改名', del: '删除', confirmDel: '确认删除该技能集？受影响项目将冻结绑定',
@@ -96,7 +96,7 @@ window.__ModuleLoader__.load({
       en: {
         chip: 'Skill sets', panel: 'Skill Set Manager', close: 'Close', sets: 'Skill sets', projectRoot: 'Project root',
         rootDrift: '(≠ session dir — switching affects every session in this repo)', // 死键 resident 已删（无使用者，见 zh 侧同注）
-        managedSec: 'Set-provided (managed)', override: 'Session override', overrideOn: 'Override active', endOverride: 'End override',
+        managedSec: 'Set-provided (managed)', override: 'Session override', overrideOn: 'Override active', endOverride: 'End override', tempTag: 'Temp',
         ovRemoved: 'removed by override', ovRestoreTip: 'Tick again to restore for this session', overrideHint: 'Override active: unticking in the managed area removes it for this session only (the set is unchanged); tick again or "End override" to restore; to remove from the set permanently use "Edit members" in the sets area',
         undo: 'Undo switch (restore previous effective set)', switchTo: 'Switch', current: 'current', saveAs: 'Save current as set',
         newName: 'New name', copy: 'Copy', rename: 'Rename', del: 'Delete', confirmDel: 'Delete this set? Affected projects freeze their binding.',
@@ -905,9 +905,14 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ssm-hint' }, t('settingsHint'))));
     }
 
+    // chip 状态点/`!` 徽标统一口径（设计 2026-11-21 状态矩阵）：绿＝插件此刻对本会话有生效技能
+    // （绑定或仅临时覆盖皆算）；idle 仅「无快照」或「未绑定且无覆盖」（仅全局常驻不点亮）；
+    // 未绑定且覆盖进行中照样参与红/徽标——台账已落盘，异常必须可见。
+    const ovActive = (st) => !!st?.sessionOverrideActive;
+    const scBad = (st) => !!st?.selfCheck && !st.selfCheck.ok && (!st.selfCheck.unbound || ovActive(st));
     function Dot({ st }) {
       const sc = st?.selfCheck;
-      const cls = !st || st.unbound || sc?.unbound ? 'ssm-dot-idle' : sc && !sc.ok ? 'ssm-dot-red' : 'ssm-dot-ok';
+      const cls = !st || (!ovActive(st) && sc?.unbound) ? 'ssm-dot-idle' : scBad(st) ? 'ssm-dot-red' : 'ssm-dot-ok';
       return h('span', { className: `ssm-dot ${cls}` }, null);
     }
     function Name({ st }) {
@@ -925,7 +930,8 @@ window.__ModuleLoader__.load({
       }, [ctx, sessionId]);
       return h('button', { className: 'ssm-chip-btn', title: t('panel'), onClick: () => bus.setOpen(!b.open) },
         h(Dot, { st: b.state }), t('chip'), h(Name, { st: b.state }),
-        b.state?.selfCheck && !b.state.selfCheck.ok && !b.state.selfCheck.unbound ? h('span', { className: 'ssm-badge' }, '!') : null);
+        ovActive(b.state) ? h('span', { className: 'ssm-temp' }, t('tempTag')) : null,
+        scBad(b.state) ? h('span', { className: 'ssm-badge' }, '!') : null);
     }
 
     /**
@@ -1473,6 +1479,7 @@ window.__ModuleLoader__.load({
 .ssm-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
 .ssm-dot-ok{background:var(--dsw-alias-state-success-primary,#22c55e)}.ssm-dot-red{background:var(--dsw-alias-state-error-primary,#e5484d)}.ssm-dot-idle{background:var(--dsw-alias-label-secondary)}
 .ssm-cur{color:var(--dsw-alias-label-primary);font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ssm-temp{font-size:10px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);color:var(--dsw-alias-label-secondary);flex:none} /* 「临时」标签：中性软底胶囊（warn 语态留给冻结/自检异常，设计 2026-11-21 Q2） */
 .ssm-badge{min-width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-state-error-primary,#e5484d);color:#fff;font-size:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
 .ssm-grow{flex:1}
 .ssm-warn-inline{color:var(--dsw-alias-state-warn-primary,#f5a623)}
@@ -1654,7 +1661,7 @@ window.__ModuleLoader__.load({
               // 常驻挂载的 tab 体据此重载，不再停在旧集快照（手动 ⟳ 仍保留）。
               onOpen: (_tab, scope) => bus.refresh(scope?.sessionId),
               onActivate: (_tab, scope) => bus.refresh(scope?.sessionId),
-              badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && bus.state.selfCheck && !bus.state.selfCheck.ok && !bus.state.selfCheck.unbound) ? '!' : null,
+              badge: (_c, scope) => (bus.state && scope?.sessionId === bus.sessionId && scBad(bus.state)) ? '!' : null, // 与 chip 徽标共用 scBad 口径（设计 2026-11-21 矩阵 #8）
               component: (props) => h(RightPanel, { ctx, t, scope: props.scope, visible: props.visible, onOpenFile: props.onOpenFile }),
             }); } catch (e) {
               if (!warned) { warned = true; console.warn('[skill-set-manager] rightTab 注册失败，看门狗持续重试:', e?.message ?? e); }
