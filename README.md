@@ -40,14 +40,14 @@ DSH 默认让被扫描目录里的技能对所有项目开放，项目一多就�
 dsh plugin --profile desktop add "@matrixfu/skill-set-manager"
 ```
 
-装指定版本时加 `@<version>`（如 `@matrixfu/skill-set-manager@1.3.1`）。
+装指定版本时加 `@<version>`（如 `@matrixfu/skill-set-manager@1.3.2`）。
 
 ### 在 DSH desktop 中安装（添加插件）
 
 不想用命令行时，可直接在图形界面装同一份 npm 包：
 
 1. 打开左侧栏的「插件」页，点右上角「添加插件」（也可点箭头 →「安装第三方插件」）。
-2. 在包名输入框填 `@matrixfu/skill-set-manager`（可带版本，如 `@matrixfu/skill-set-manager@1.3.1`）。
+2. 在包名输入框填 `@matrixfu/skill-set-manager`（可带版本，如 `@matrixfu/skill-set-manager@1.3.2`）。
 3. 「安装源」保持「默认安装源」即可（公共 npm 源或本机已配置的镜像都能解析）。
 4. 点「安装」，跑完后点「立即启用」；重启 host 或刷新页面，插件生效。
 
