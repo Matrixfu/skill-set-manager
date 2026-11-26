@@ -100,7 +100,7 @@ if (!run) {
   console.warn(`WARN runs API 没查到 tag v${VER} 对应 run（sha ${sha}）。${apiNote}\n` +
     `CI 手动核对：https://github.com/Matrixfu/skill-set-manager/actions?query=${sha} —— 继续以 npm latest 为准`);
 }
-if (run.conclusion !== "success") {
+if (run && run.conclusion !== "success") {
   const buf = Buffer.from(await (await gh(`/repos/Matrixfu/skill-set-manager/actions/runs/${run.id}/logs?attempt=${run.run_attempt}`)).arrayBuffer());
   const dir = mkdtempSync(join(tmpdir(), "rellogs"));
   const z = join(dir, "l.zip"); writeFileSync(z, buf);
