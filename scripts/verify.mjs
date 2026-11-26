@@ -2832,6 +2832,26 @@ const CASES = [
     },
   },
   {
+    id: 'client-longop-transport-recovery',
+    title: 'client.js：长任务传输断开（Failed to fetch / WS 断）以 host longStatus 真相兜底——host 仍在跑该 op 绝不报操作失败（用户 2026-11-26 批量检查更新 Failed to fetch）',
+    async run() {
+      const file = path.resolve(import.meta.dirname, '..', 'plugin', 'skill-set-manager', 'client.js');
+      const src = fs.readFileSync(file, 'utf8');
+      const body = src.replace(/(^|[ \t])\/\/[^\n]*/gm, ''); // 注释里的历史说明不算在用逻辑
+      // ① 传输断开走 host 真相兜底函数，不再把传输层错误直接当成「操作失败」
+      ok(/async function recoverHostTask\(ctx, task, settle\)/.test(body), 'recoverHostTask：以 host 真相源兜底的恢复函数');
+      ok(/recoverHostTask\(ctx, task, settle\)/.test(body), 'startLong 失败分支调用 recoverHostTask');
+      // ② BUSY 仍单独处理（被别的长任务挡，不是传输断开）
+      ok(/if \(busy\)/.test(body), 'BUSY 分支保留（被挡≠传输断开）');
+      // ③ 兜底以 longStatus 为准：host 仍在跑该 op 就继续轮询、绝不报失败
+      ok(/st\?\.running && st\.running\.name === task\.op/.test(body), 'host 仍在跑该 op → 继续轮询不报失败');
+      ok(/last\.name === task\.op && last\.doneAt/.test(body), 'host 给出该 op 终态 → 用 host 结果收尾');
+      // ④ adoptHostTask 收尾：adopted 在飞（id=0）能被 host 完成态收尾，不再卡「运行中」
+      ok(/if \(tasks\.running && tasks\.running\.id !== 0\) return true;/.test(body), '本地自发起在飞（id>0）不被 host 覆盖；adopted（id=0）可刷新');
+      ok(/\(!tasks\.running \|\| tasks\.running\.id === 0\) && !sameAsLocal/.test(body), 'host 完成能收尾 adopted 在飞（修卡运行中）');
+    },
+  },
+  {
     id: 'long-gate',
     title: '长任务闸门：host 单飞（BUSY 点名在跑者）+ 改盘成功补发失效事件（只读不发）+ 进行中与最近结果留存',
     async run() {

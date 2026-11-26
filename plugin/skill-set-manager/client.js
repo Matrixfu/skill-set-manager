@@ -252,11 +252,53 @@ window.__ModuleLoader__.load({
         (error) => {
           // host 闸门说「别的长任务在跑」：置为该次被挡，并把在跑者拉回来（按钮 title/单飞随之校正）
           const busy = /^BUSY:/.test(String(error?.message ?? ''));
-          settle({ ok: false, value: null, error, warnings: [] });
-          if (busy) syncHostTasks(ctx);
+          if (busy) { settle({ ok: false, value: null, error, warnings: [] }); syncHostTasks(ctx); return; }
+          // 非 BUSY 的失败 = 传输抖动（Failed to fetch / WS 断开 / AbortError），不是操作失败：
+          // 以 host 真相源兜底（见 recoverHostTask）。host 仍在跑或已出结果就不报失败；
+          // 只有 host 既没在跑也没这个 op 的结果（重启丢了态）才认这次操作失败。
+          recoverHostTask(ctx, task, settle).then((recovered) => {
+            if (!recovered) settle({ ok: false, value: null, error, warnings: [] });
+          });
         },
       );
       return true;
+    }
+    /**
+     * 传输断开兜底（用户 2026-11-26：批量检查更新在飞的几分钟里 WS/fetch 断开，
+     * client 曾把传输层错误 "Failed to fetch" 直接当成「操作失败」，而 host 端其实仍在
+     * gate 里跑、最终会成功）。GLOSSARY「长任务」：host 是进行中与结果的唯一真相源——
+     * 传输抖动不该推翻它。以 host longStatus 为准：仍在跑该 op 就继续显示进度、轮询到终态；
+     * host 已给出该 op 的结果就用它收尾；host 既没在跑也没结果（重启丢了态）才认这次失败。
+     * 返回 true = 已按 host 真相收尾；false = host 也没这个 op（连试 3 轮后）→ 调用方报原错。
+     */
+    async function recoverHostTask(ctx, task, settle) {
+      let miss = 0;
+      for (;;) {
+        let st = null;
+        try { st = await call(ctx, 'longStatus'); } catch { st = null; } // 连 longStatus 都拉不到：host 可能整个没了
+        if (st?.running && st.running.name === task.op) {
+          // host 仍在跑该 op：进度条续到 host 的真实起点，继续轮询，绝不报失败
+          if (st.running.startedAt) task.startedAt = st.running.startedAt;
+          task.status = 'running'; emitTasks();
+          miss = 0;
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+        const last = st?.last;
+        if (last && last.name === task.op && last.doneAt && last.doneAt >= task.startedAt) {
+          // host 给出该 op 的终态：以它收尾（cancelled 语态由 settle 内 s.value.cancelled 决定）
+          settle({
+            ok: last.status === 'ok',
+            value: last.status === 'err' ? null : (last.result ?? null),
+            error: last.status === 'err' ? { message: last.error ?? '' } : null,
+            warnings: last.warnings ?? [],
+          });
+          return true;
+        }
+        // host 既没在跑也没该 op 的结果：可能尚未登记或 host 重启丢了态——连试几轮再放弃
+        if (++miss >= 3) return false;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
     /** 清除已结束的任务。在飞不提供清除：隐藏一个还在跑的任务，等于回到本次要修的「点了没反应」。 */
     function clearTask() { if (!tasks.running) { tasks.last = null; emitTasks(); } }
@@ -274,9 +316,11 @@ window.__ModuleLoader__.load({
         status: rec.status === 'ok' && rec.result?.cancelled ? 'cancelled' : rec.status, result: rec.result ?? null,
         error: rec.error ? { message: rec.error } : null, warnings: rec.warnings ?? [],
       };
-      if (running) { if (tasks.running) return true; tasks.running = t2; tasks.last = t2; emitTasks(); return true; }
+      // 本地有「自己发起」的在飞任务（id>0，带进度/收尾回调）才不被 host 态覆盖；adopted（id=0）
+      // 只是 host 真相的镜像，可被 host 最新态无缝刷新/收尾——修「host 完成后仍卡运行中」。
+      if (running) { if (tasks.running && tasks.running.id !== 0) return true; tasks.running = t2; tasks.last = t2; emitTasks(); return true; }
       const sameAsLocal = tasks.last && tasks.last.doneAt && tasks.last.doneAt === rec.doneAt;
-      if (!tasks.running && !sameAsLocal) { tasks.last = t2; emitTasks(); }
+      if ((!tasks.running || tasks.running.id === 0) && !sameAsLocal) { tasks.running = null; tasks.last = t2; emitTasks(); }
       return false;
     }
     /** 拉一次 host 长任务态；返回 host 是否仍在跑（调用方据此继续轮询）。旧 host 无此 RPC 时静默降级。 */
